@@ -12,11 +12,11 @@ Framework iplug2
 
 | Note Editor | Song Generator |
 | :---: | :---: |
-| ![Note Editor](img/dg_note_editor.png) | ![Song Generator](dg_song_generator.png) |
+| ![Note Editor](img/dg_note_editor.png) | ![Song Generator](img/dg_song_generator.png) |
 
 | Mixer | Drum Engine |
 | :---: | :---: |
-| ![Mixer](img/dg_mixer.png) | ![Drum Engine](dg_drum_engine.png) |
+| ![Mixer](img/dg_mixer.png) | ![Drum Engine](img/dg_drum_engine.png) |
 
 ## What it does
 
