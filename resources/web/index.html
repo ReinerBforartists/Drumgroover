@@ -1,0 +1,762 @@
+<!--
+  PROJECT: Drum Groove Generator (DGG) — Prototype v0.3
+  Three-layer model: Blocks -> Sequence -> Song.
+  Playback/export follow the visible sequence exactly.
+-->
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drum Groove Generator — Prototype</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+<!-- ============================================
+     CONSOLIDATED TOP BAR
+     ============================================ -->
+<div class="compact-toolbar">
+  <div class="toolbar-row-top">
+    <div class="toolbar-left-menus">
+      <div class="palette-add-buttons" id="fileMenuWrap" style="position:relative;">
+        <button class="btn btn-refresh" id="fileMenuBtn">☰ File ▾</button>
+        <div id="fileMenu" class="add-block-menu" style="display:none;">
+          <button class="add-block-menu-item" id="exportSongBtn" data-tooltip="Export Song&#10;Exports the whole assembled song as one .mid file.">⇩ Export Song</button>
+          <button class="add-block-menu-item" id="exportBlocksBtn" data-tooltip="Export All Blocks&#10;Exports every block (not just the open one) as its own .mid file — useful before you've built a full song sequence, or to edit parts elsewhere. The name you choose is used as a prefix for each file.">⇩ Export All Blocks</button>
+          <div class="add-block-menu-sep"></div>
+          <button class="add-block-menu-item" id="newProjectBtn" data-tooltip="New&#10;Starts a new, empty project. Discards the current one (with confirmation if there are unsaved changes).">🆕 New</button>
+          <button class="add-block-menu-item" id="saveProjectBtn" data-tooltip="Save&#10;Saves the whole project — blocks, song sequence, settings — as a .json file.">💾 Save</button>
+          <button class="add-block-menu-item" id="loadProjectBtn" data-tooltip="Load&#10;Loads a previously saved .json project file.">📂 Load</button>
+        </div>
+        <input type="file" id="loadProjectInput" accept="application/json,.json" style="display:none;">
+      </div>
+
+      <!-- Edit menu — Copy/Cut/Paste, Undo/Redo, Snap to Grid -->
+      <div class="palette-add-buttons" id="editMenuWrap" style="position:relative;">
+        <button class="btn btn-refresh" id="editMenuBtn">✎ Edit ▾</button>
+        <div id="editMenu" class="add-block-menu" style="display:none;">
+          <button class="add-block-menu-item" id="editSelectAllBtn" data-tooltip="Select All&#10;Selects every note in the current block (the locked groove-copy zone in a Break is excluded)."><span>▦ Select All</span><span class="menu-hotkey" data-hotkey="Ctrl+A"></span></button>
+          <button class="add-block-menu-item" id="editSelectNoneBtn" data-tooltip="Select None&#10;Clears the current selection."><span>▢ Select None</span><span class="menu-hotkey" data-hotkey="Alt+A"></span></button>
+          <button class="add-block-menu-item" id="editInvertSelectionBtn" data-tooltip="Invert Selection&#10;Selects every eligible note that isn't currently selected, and deselects the ones that are."><span>▥ Invert Selection</span><span class="menu-hotkey" data-hotkey="Ctrl+I"></span></button>
+          <div class="add-block-menu-sep"></div>
+          <button class="add-block-menu-item edit-menu-ne-only" id="editCopyBtn" data-tooltip="Copy&#10;Copies the selected note(s)."><span>⧉ Copy</span><span class="menu-hotkey" data-hotkey="Ctrl+C"></span></button>
+          <button class="add-block-menu-item edit-menu-ne-only" id="editCutBtn" data-tooltip="Cut&#10;Cuts the selected note(s)."><span>✂ Cut</span><span class="menu-hotkey" data-hotkey="Ctrl+X"></span></button>
+          <button class="add-block-menu-item edit-menu-ne-only" id="editPasteBtn" data-tooltip="Paste&#10;Pastes at the playhead."><span>📋 Paste</span><span class="menu-hotkey" data-hotkey="Ctrl+V"></span></button>
+          <div class="add-block-menu-sep edit-menu-ne-only"></div>
+          <button class="add-block-menu-item" id="undoBtn" disabled data-tooltip="Undo&#10;Nothing to undo."><span>↶ Undo</span><span class="menu-hotkey" data-hotkey="Ctrl+Z"></span></button>
+          <button class="add-block-menu-item" id="redoBtn" disabled data-tooltip="Redo&#10;Nothing to redo."><span>↷ Redo</span><span class="menu-hotkey" data-hotkey="Ctrl+Shift+Z"></span></button>
+          <div class="add-block-menu-sep edit-menu-ne-only"></div>
+          <button class="add-block-menu-item edit-menu-ne-only" id="snapToGridBtn" data-tooltip="Snap to Grid&#10;Snaps the selected note(s) back onto the current grid. A post-processing tool on your Note Editor selection — does nothing without a selection.">🧲 Snap to Grid</button>
+          <div class="add-block-menu-sep edit-menu-ne-only"></div>
+          <div class="add-block-menu-item has-submenu edit-menu-ne-only">
+            <span>🎲 Reroll</span><span class="menu-hotkey">▸</span>
+            <div class="add-block-menu submenu-flyout" id="rerollSubmenu">
+              <button class="add-block-menu-item" id="rerollActiveBlockMenuBtn" data-tooltip="Active Block&#10;Rerolls every unlocked instrument group in the current block (Break/Intro/Outro: Fill + Kick). Locked groups are skipped.">Active Block</button>
+              <button class="add-block-menu-item" id="rerollAllBlocksMenuBtn" data-tooltip="All Blocks&#10;Rerolls every unlocked instrument group across all regular blocks. Break and Intro/Outro Fill blocks are skipped — reroll those individually.">All Blocks</button>
+            </div>
+          </div>
+          <div class="add-block-menu-item has-submenu edit-menu-ne-only">
+            <span>🔓 Discard</span><span class="menu-hotkey">▸</span>
+            <div class="add-block-menu submenu-flyout" id="discardSubmenu">
+              <button class="add-block-menu-item" id="discardAllEditsBlockBtn" data-tooltip="All Edits (Block)&#10;Unlocks every manually-edited group in the current block (incl. Turnaround) — or, for a Break/Intro/Outro block, discards its hand-edited tail/fill — and hands it back to the knobs.">All Edits (Block)</button>
+              <button class="add-block-menu-item" id="discardAllEditsGlobalBtn" data-tooltip="All Edits (Global)&#10;Same as above, but for every block in this project — regular blocks, Breaks, and Intro/Outro fills alike.">All Edits (Global)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- + Add Block — only on Note Editor tab -->
+      <div class="palette-add-buttons" id="addBlockMenuWrap" style="position:relative;">
+        <button class="btn btn-refresh" id="addBlockBtn">+ Add Block ▾</button>
+        <div id="addBlockMenu" class="add-block-menu" style="display:none;">
+          <button class="add-block-menu-item" data-kind="empty" data-tooltip="Empty Block&#10;Blank, no notes.">Empty Block</button>
+          <button class="add-block-menu-item" data-kind="intro" data-tooltip="Intro-style Fill&#10;Resolves into what follows.">Intro-style Fill</button>
+          <button class="add-block-menu-item" data-kind="outro" data-tooltip="Outro-style Fill&#10;Sits at bar 1 and trails silent.">Outro-style Fill</button>
+          <div class="add-block-menu-sep"></div>
+          <button class="add-block-menu-item" data-kind="duplicate" data-tooltip="Duplicate Current&#10;A copy of whatever's open.">Duplicate Current</button>
+          <div class="add-block-menu-sep"></div>
+          <button class="add-block-menu-item" id="clearAllBlocksBtn" data-tooltip="Clear All&#10;Deletes every block (and removes them from the timeline of the Song Generator).">🗑 Clear All</button>
+        </div>
+      </div>
+
+      <!-- Note Editor Options menu -->
+      <div class="palette-add-buttons" id="neSettingsMenuWrap" style="position:relative;">
+        <button class="btn btn-refresh" id="neSettingsBtn" data-tooltip="Options&#10;Note Editor settings.">Options ⚙</button>
+        <div class="add-block-menu ne-settings-panel" id="neSettingsPanel" style="display:none;">
+          <label class="gm-toggle" id="gmToggleLabel" data-tooltip="Show GM Notes&#10;Adds an editable MIDI/GM note-number field to every instrument row — lets you remap a track to a different sample/note without touching your DAW mapping."><input type="checkbox" id="gmNotesToggle"> Show GM Notes</label>
+          <label class="gm-toggle" id="infoStringToggleLabel" data-tooltip="Show Info String&#10;Shows or hides the info strip above the grid (genre and feel, time signature and snap, number of blocks and notes, seed). Purely cosmetic."><input type="checkbox" id="infoStringToggle" checked> Show Info String</label>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" id="showConfirmDialogsToggleLabel" data-tooltip="Show confirmation dialogs&#10;Asks before actions that throw work away: discarding hand edits, rerolling all blocks, clearing all blocks or the timeline. Turn off to skip straight to the action."><input type="checkbox" id="showConfirmDialogsToggle"> Show confirmation dialogs</label>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" id="tooltipsToggleLabel" data-tooltip="Show tooltips&#10;Shows the hover tooltips across the whole app. Turn off if they get in the way."><input type="checkbox" id="tooltipsToggle" checked> Show tooltips</label>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" id="devToolsToggleLabel" data-tooltip="Developer tools&#10;Enables right-click Inspect for the web view (debugging). Leave off unless you need it."><input type="checkbox" id="devToolsToggle"> Developer tools</label>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" id="a11yToggleLabel" data-tooltip="Accessible Zoom&#10;Enlarges a knob cluster under the cursor on hover — helps reading small controls."><input type="checkbox" id="a11yHoverZoomToggle"> Accessible Zoom</label>
+          <label class="gm-toggle a11y-zoom-select-row" id="a11yZoomSelectLabel" data-tooltip="Zoom Factor&#10;How much larger a knob cluster gets under the cursor when Accessible Zoom is on.">
+            <span class="a11y-zoom-select-indent"></span>
+            <select id="a11yZoomFactorSelect" disabled>
+              <option value="1">100%</option>
+              <option value="1.25">125%</option>
+              <option value="1.5" selected>150%</option>
+              <option value="1.75">175%</option>
+              <option value="2">200%</option>
+              <option value="2.25">225%</option>
+              <option value="2.5">250%</option>
+              <option value="2.75">275%</option>
+              <option value="3">300%</option>
+            </select>
+          </label>
+          <div class="add-block-menu-sep"></div>
+          <div class="add-block-menu-item has-submenu">
+            <span>🔍 UI Scale</span><span class="menu-hotkey">▸</span>
+            <div class="add-block-menu submenu-flyout" id="uiScaleSubmenu">
+              <button class="add-block-menu-item" data-scale="0.75">75%</button>
+              <button class="add-block-menu-item" data-scale="1" data-tooltip="100%&#10;The default UI scale.">100%</button>
+              <button class="add-block-menu-item" data-scale="1.25">125%</button>
+              <button class="add-block-menu-item" data-scale="1.5">150%</button>
+              <button class="add-block-menu-item" data-scale="1.75">175%</button>
+              <button class="add-block-menu-item" data-scale="2">200%</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Generate Song — only on Song Generator tab -->
+      <div class="palette-add-buttons" id="generateSongMenuWrap" style="position:relative; display:none;">
+        <button class="btn btn-refresh" id="generateSongBtn">Generate Song ▾</button>
+        <div id="generateSongMenu" class="add-block-menu" style="display:none;">
+          <button class="add-block-menu-item" data-structure="12_bar_basic" data-tooltip="12 Bar Basic&#10;Intro → A A A A B B A B B B → Outro. A = 3× Verse + Verse Break, B = 3× Chorus + Chorus Break. Verse-heavy, blues-style repeat.">12 Bar Basic</button>
+          <button class="add-block-menu-item" data-structure="aaa" data-tooltip="AAA&#10;Intro → A A A → Outro. A = 3× Verse + Verse Break. No Chorus or Bridge — the simplest structure, good for a steady groove or a quick sketch.">AAA</button>
+          <button class="add-block-menu-item" data-structure="aaba_short" data-tooltip="AABA Short&#10;Intro → A A B A → Outro. A = 3× Verse + Verse Break, B = 3× Chorus + Chorus Break. Classic 32-bar shape: two Verses, a contrasting Chorus, back to the Verse.">AABA Short</button>
+          <button class="add-block-menu-item" data-structure="aaba_long" data-tooltip="AABA Long&#10;Intro → A A B A A A B A → Outro. A = 3× Verse + Verse Break, B = 3× Chorus + Chorus Break. The AABA form repeated for a longer song.">AABA Long</button>
+          <button class="add-block-menu-item" data-structure="abab_short" data-tooltip="ABAB Short&#10;Intro → A B A B → Outro. A = 3× Verse + Verse Break, B = 3× Chorus + Chorus Break. Alternating Verse and Chorus, no Bridge.">ABAB Short</button>
+          <button class="add-block-menu-item" data-structure="abab_long" data-tooltip="ABAB Long&#10;Intro → A B A B A B A B → Outro. A = 3× Verse + Verse Break, B = 3× Chorus + Chorus Break. Alternating Verse and Chorus, doubled in length.">ABAB Long</button>
+          <button class="add-block-menu-item" data-structure="abcabc_short" data-tooltip="ABCABC Short&#10;Intro → A B C A B C → Outro. A = 3× Verse + Verse Break, B = 3× Chorus + Chorus Break, C = 3× Bridge + Bridge Break. A full Verse / Chorus / Bridge cycle, repeated twice.">ABCABC Short</button>
+          <button class="add-block-menu-item" data-structure="abcabc_long" data-tooltip="ABCABC Long&#10;Intro → (A B C) four times → Outro. A = 3× Verse + Verse Break, B = 3× Chorus + Chorus Break, C = 3× Bridge + Bridge Break. The cycle repeated four times, for an extended arrangement.">ABCABC Long</button>
+          <button class="add-block-menu-item" data-structure="chorus_first" data-tooltip="Chorus First&#10;Intro → B A B C B → Outro. A = 3× Verse + Verse Break, B = 3× Chorus + Chorus Break, C = 3× Bridge + Bridge Break. Opens on the Chorus (the hook) before the first Verse.">Chorus First</button>
+          <button class="add-block-menu-item" data-structure="standard_pop" data-tooltip="Standard Pop&#10;Intro → A B A B C B → Outro. A = 3× Verse + Verse Break, B = 3× Chorus + Chorus Break, C = 3× Bridge + Bridge Break. The common radio-pop shape: two Verse/Chorus pairs, a Bridge, then a final Chorus.">Standard Pop</button>
+          <button class="add-block-menu-item" data-structure="extended_pop" data-tooltip="Extended Pop&#10;Intro → A B A B C B B → Outro. A = 3× Verse + Verse Break, B = 3× Chorus + Chorus Break, C = 3× Bridge + Bridge Break. Standard pop with a doubled closing Chorus.">Extended Pop</button>
+          <div class="add-block-menu-sep"></div>
+          <button class="add-block-menu-item" id="consolidateSongBtn" data-tooltip="Consolidate&#10;Closes every gap — shifts each clip left in order, right after the one before it, without changing their order.">↤ Consolidate</button>
+          <div class="add-block-menu-sep"></div>
+          <button class="add-block-menu-item" id="clearSongBtn" data-tooltip="Clear All&#10;Removes every clip from the timeline. Blocks themselves are untouched.">🗑 Clear All</button>
+        </div>
+      </div>
+
+      <!-- Song Generator Options menu -->
+      <div class="palette-add-buttons" id="tlOptionsMenuWrap" style="position:relative; display:none;">
+        <button class="btn btn-refresh" id="tlOptionsMenuBtn" data-tooltip="Options&#10;Song Generator settings.">Options ⚙</button>
+        <div id="tlOptionsMenu" class="add-block-menu" style="display:none;">
+          <label class="gm-toggle" id="tooltipsToggleLabelSG" data-tooltip="Show tooltips&#10;Shows the hover tooltips across the whole app. Turn off if they get in the way."><input type="checkbox" id="tooltipsToggleSG" checked> Show tooltips</label>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" id="devToolsToggleLabelSG" data-tooltip="Developer tools&#10;Enables right-click Inspect for the web view (debugging). Leave off unless you need it."><input type="checkbox" id="devToolsToggleSG"> Developer tools</label>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" id="a11yToggleLabelSG" data-tooltip="Accessible Zoom&#10;Enlarges a knob cluster under the cursor on hover — helps reading small controls."><input type="checkbox" id="a11yHoverZoomToggleSG"> Accessible Zoom</label>
+          <label class="gm-toggle a11y-zoom-select-row" id="a11yZoomSelectLabelSG" data-tooltip="Zoom Factor&#10;How much larger a knob cluster gets under the cursor when Accessible Zoom is on.">
+            <span class="a11y-zoom-select-indent"></span>
+            <select id="a11yZoomFactorSelectSG" disabled>
+              <option value="1">100%</option>
+              <option value="1.25">125%</option>
+              <option value="1.5" selected>150%</option>
+              <option value="1.75">175%</option>
+              <option value="2">200%</option>
+              <option value="2.25">225%</option>
+              <option value="2.5">250%</option>
+              <option value="2.75">275%</option>
+              <option value="3">300%</option>
+            </select>
+          </label>
+          <div class="add-block-menu-sep"></div>
+          <div class="add-block-menu-item has-submenu">
+            <span>🔍 UI Scale</span><span class="menu-hotkey">▸</span>
+            <div class="add-block-menu submenu-flyout" id="uiScaleSubmenu">
+              <button class="add-block-menu-item" data-scale="0.75">75%</button>
+              <button class="add-block-menu-item" data-scale="1" data-tooltip="100%&#10;The default UI scale.">100%</button>
+              <button class="add-block-menu-item" data-scale="1.25">125%</button>
+              <button class="add-block-menu-item" data-scale="1.5">150%</button>
+              <button class="add-block-menu-item" data-scale="1.75">175%</button>
+              <button class="add-block-menu-item" data-scale="2">200%</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Drum Engine Options menu -->
+      <div class="palette-add-buttons" id="deOptionsMenuWrap" style="position:relative; display:none;">
+        <button class="btn btn-refresh" id="deOptionsMenuBtn" data-tooltip="Options&#10;Drum Engine settings.">Options ⚙</button>
+        <div id="deOptionsMenu" class="add-block-menu" style="display:none;">
+          <label class="gm-toggle de-retrigger-row" data-tooltip="Retrigger&#10;How often the Morph Pads and the knob preview repeat the sound while the mouse button is held, in milliseconds.">
+            Retrigger (ms)
+            <input type="number" id="deRetrigger" min="150" max="1000" step="50" value="450">
+          </label>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" data-tooltip="Meter Peak Hold&#10;How long the peak marker and the peak value above the meter stay at the loudest level before they fall back, in seconds.">
+            Meter Peak Hold
+            <select id="dggMeterPeakHoldSelect">
+              <option value="0.5">0.5 s</option>
+              <option value="1">1 s</option>
+              <option value="2" selected>2 s</option>
+              <option value="5">5 s</option>
+              <option value="10">10 s</option>
+            </select>
+          </label>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" id="deKnobPreviewToggleLabel" data-tooltip="Preview sound on knob turn&#10;Plays the instrument while you turn one of its knobs, repeating at the Retrigger rate as long as you hold it. Turn off if it's annoying.">
+            <input type="checkbox" id="deKnobPreviewToggle"> Preview sound on knob turn
+          </label>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" id="tooltipsToggleLabelDE" data-tooltip="Show tooltips&#10;Shows the hover tooltips across the whole app. Turn off if they get in the way."><input type="checkbox" id="tooltipsToggleDE" checked> Show tooltips</label>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" id="devToolsToggleLabelDE" data-tooltip="Developer tools&#10;Enables right-click Inspect for the web view (debugging). Leave off unless you need it."><input type="checkbox" id="devToolsToggleDE"> Developer tools</label>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" id="a11yToggleLabelDE" data-tooltip="Accessible Zoom&#10;Enlarges a knob cluster under the cursor on hover — helps reading small controls."><input type="checkbox" id="a11yHoverZoomToggleDE"> Accessible Zoom</label>
+          <label class="gm-toggle a11y-zoom-select-row" id="a11yZoomSelectLabelDE" data-tooltip="Zoom Factor&#10;How much larger a knob cluster gets under the cursor when Accessible Zoom is on.">
+            <span class="a11y-zoom-select-indent"></span>
+            <select id="a11yZoomFactorSelectDE" disabled>
+              <option value="1">100%</option>
+              <option value="1.25">125%</option>
+              <option value="1.5" selected>150%</option>
+              <option value="1.75">175%</option>
+              <option value="2">200%</option>
+              <option value="2.25">225%</option>
+              <option value="2.5">250%</option>
+              <option value="2.75">275%</option>
+              <option value="3">300%</option>
+            </select>
+          </label>
+          <div class="add-block-menu-sep"></div>
+          <div class="add-block-menu-item has-submenu">
+            <span>🔍 UI Scale</span><span class="menu-hotkey">▸</span>
+            <div class="add-block-menu submenu-flyout" id="uiScaleSubmenu">
+              <button class="add-block-menu-item" data-scale="0.75">75%</button>
+              <button class="add-block-menu-item" data-scale="1" data-tooltip="100%&#10;The default UI scale.">100%</button>
+              <button class="add-block-menu-item" data-scale="1.25">125%</button>
+              <button class="add-block-menu-item" data-scale="1.5">150%</button>
+              <button class="add-block-menu-item" data-scale="1.75">175%</button>
+              <button class="add-block-menu-item" data-scale="2">200%</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Drum Engine Cache panel (expert settings: baking can take a long time) -->
+      <div class="palette-add-buttons" id="deCacheMenuWrap" style="position:relative; display:none;">
+        <button class="btn btn-refresh" id="deCacheMenuBtn" data-tooltip="Cache&#10;Expert settings for the baked sound variants: how many variants per sound, and clearing the cache.">Cache 🗄</button>
+        <div id="deCacheMenu" class="add-block-menu" style="display:none; min-width:280px;">
+          <div class="de-cache-row" data-tooltip="Variants per sound&#10;How many independently baked recordings per sound setting are played back in rotation. This is the count currently in effect; it only changes once all samples for a new count are baked.">
+            <span>Variants per sound</span><span class="de-cache-value" id="deCacheVariantCurrent">7</span>
+          </div>
+          <div class="de-cache-row" data-tooltip="Change variants&#10;Enter a new count (1-20) and press Apply. More variants = more sound variance, but longer bake time and more storage. Shows an estimate first; the new count takes effect when all its samples are baked.">
+            <span>Change to</span>
+            <span class="de-cache-edit">
+              <input type="number" id="deCacheVariantInput" min="1" max="20" step="1" value="7">
+              <button class="btn btn-sm btn-refresh" id="deCacheApplyBtn">Apply</button>
+            </span>
+          </div>
+          <div id="deCacheBakeProgressRow" style="display:none; padding:6px 8px;">
+            <div id="deCacheBakeProgressLabel" style="font-size:13px; font-weight:600; opacity:0.95; white-space:nowrap; margin-bottom:3px;"></div>
+            <div style="width:100%; height:5px; background:rgba(255,255,255,0.15); border-radius:2px; overflow:hidden;">
+              <div id="deCacheBakeProgressBar" style="height:100%; width:0%; background:var(--accent, #6ac); transition:width 0.15s linear;"></div>
+            </div>
+          </div>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" data-tooltip="Cache Size Limit&#10;Maximum disk space for baked sound variants (machine-wide, all projects). When it is exceeded, the least recently used sets are deleted; the factory defaults are never deleted.&#10;Lowering the limit deletes sets immediately if the cache is larger.">
+            Size limit
+            <select id="deCacheLimitSelect">
+              <option value="2">2 GB</option>
+              <option value="5" selected>5 GB</option>
+              <option value="10">10 GB</option>
+              <option value="20">20 GB</option>
+              <option value="50">50 GB</option>
+            </select>
+          </label>
+          <div id="deCacheUsageLabel" class="de-cache-usage"></div>
+          <label class="gm-toggle de-cache-check" data-tooltip="Rebake at value change&#10;Bakes a completely new set of variants each time a knob is released and replaces the cached one, even if that setting was baked before.">
+            <input type="checkbox" id="deRebakeOnChangeCheck"> Rebake at value change
+          </label>
+          <label class="gm-toggle de-cache-check" data-tooltip="Hi-Hat cache off&#10;Nothing is played from or baked into the cache for the hi-hats; every hit is synthesised live. Costs more processor load, every hit gets its own oscillator phase.">
+            <input type="checkbox" id="deCacheOffHiHatCheck"> Hi-Hat: cache off (live)
+          </label>
+          <label class="gm-toggle de-cache-check" data-tooltip="Cymbal / Ride cache off&#10;Nothing is played from or baked into the cache for the cymbals and the ride; every hit is synthesised live. This costs a lot of processor load (the cymbal is the most expensive instrument), every hit gets its own oscillator phase.">
+            <input type="checkbox" id="deCacheOffRideCheck"> Cymbal / Ride: cache off (live)
+          </label>
+          <div class="de-cache-usage" data-tooltip="Instruments without a cache&#10;All other instruments are fast enough to be synthesised live on every hit, so they have no cache and nothing to switch here.">The other instruments have no cache: they always play live.</div>
+          <div class="add-block-menu-sep"></div>
+          <button class="add-block-menu-item" id="deClearCacheAllBtn" data-tooltip="Clear Cache&#10;Deletes all baked sound variants except the factory defaults. They rebake automatically as needed.">🗑 Clear Cache (keep defaults)…</button>
+          <button class="add-block-menu-item" id="deClearDefaultCacheBtn" data-tooltip="Reset Defaults&#10;Deletes the factory-default sound variants and bakes them again. Use only if you suspect they're corrupted.">🗑 Reset Defaults…</button>
+        </div>
+      </div>
+
+      <!-- Mixer presets menu (next to the mixer Options) -->
+      <div class="palette-add-buttons" id="mxPresetMenuWrap" style="position:relative; display:none;">
+        <button class="btn btn-refresh" id="mixerPresetBtn" data-tooltip="Mixer presets&#10;Loads or saves the whole mixer (faders, pan, sends, effects, kit gain). Default is the mixer of the selected engine.">Preset: Default &#9662;</button>
+        <div id="mixerPresetMenu" class="add-block-menu" style="display:none;"></div>
+      </div>
+
+      <!-- Mixer Options menu -->
+      <div class="palette-add-buttons" id="mxOptionsMenuWrap" style="position:relative; display:none;">
+        <button class="btn btn-refresh" id="mxOptionsMenuBtn" data-tooltip="Options&#10;Mixer settings.">Options ⚙</button>
+        <div id="mxOptionsMenu" class="add-block-menu" style="display:none;">
+          <label class="gm-toggle" data-tooltip="Meter Peak Hold&#10;How long the peak marker and the peak value above the meter stay at the loudest level before they fall back, in seconds.">
+            Meter Peak Hold
+            <select id="dggMeterPeakHoldSelectMixer">
+              <option value="0.5">0.5 s</option>
+              <option value="1">1 s</option>
+              <option value="2" selected>2 s</option>
+              <option value="5">5 s</option>
+              <option value="10">10 s</option>
+            </select>
+          </label>
+          <label class="gm-toggle" data-tooltip="Auto Gain Time&#10;Minimum time Auto measures before it sets the fader. Longer catches rarer loud hits.">
+            Auto Gain Time
+            <select id="dggAutoGainMinSelect">
+              <option value="5">5 s</option>
+              <option value="10" selected>10 s</option>
+              <option value="15">15 s</option>
+              <option value="20">20 s</option>
+              <option value="30">30 s</option>
+              <option value="60">60 s</option>
+            </select>
+          </label>
+          <div class="add-block-menu-sep"></div>
+          <button class="add-block-menu-item" id="closeAllFxBtn" data-tooltip="Close all effect panels&#10;Closes every open effect panel (Limiter, EQ, ...) at once.">Close all effect panels</button>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" id="tooltipsToggleLabelMixer" data-tooltip="Show tooltips&#10;Shows the hover tooltips across the whole app. Turn off if they get in the way."><input type="checkbox" id="tooltipsToggleMixer" checked> Show tooltips</label>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" id="devToolsToggleLabelMixer" data-tooltip="Developer tools&#10;Enables right-click Inspect for the web view (debugging). Leave off unless you need it."><input type="checkbox" id="devToolsToggleMixer"> Developer tools</label>
+          <div class="add-block-menu-sep"></div>
+          <label class="gm-toggle" id="a11yToggleLabelMixer" data-tooltip="Accessible Zoom&#10;Enlarges a knob cluster under the cursor on hover — helps reading small controls."><input type="checkbox" id="a11yHoverZoomToggleMixer"> Accessible Zoom</label>
+          <label class="gm-toggle a11y-zoom-select-row" id="a11yZoomSelectLabelMixer" data-tooltip="Zoom Factor&#10;How much larger a knob cluster gets under the cursor when Accessible Zoom is on.">
+            <span class="a11y-zoom-select-indent"></span>
+            <select id="a11yZoomFactorSelectMixer" disabled>
+              <option value="1">100%</option>
+              <option value="1.25">125%</option>
+              <option value="1.5" selected>150%</option>
+              <option value="1.75">175%</option>
+              <option value="2">200%</option>
+              <option value="2.25">225%</option>
+              <option value="2.5">250%</option>
+              <option value="2.75">275%</option>
+              <option value="3">300%</option>
+            </select>
+          </label>
+          <div class="add-block-menu-sep"></div>
+          <div class="add-block-menu-item has-submenu">
+            <span>🔍 UI Scale</span><span class="menu-hotkey">▸</span>
+            <div class="add-block-menu submenu-flyout" id="uiScaleSubmenu">
+              <button class="add-block-menu-item" data-scale="0.75">75%</button>
+              <button class="add-block-menu-item" data-scale="1" data-tooltip="100%&#10;The default UI scale.">100%</button>
+              <button class="add-block-menu-item" data-scale="1.25">125%</button>
+              <button class="add-block-menu-item" data-scale="1.5">150%</button>
+              <button class="add-block-menu-item" data-scale="1.75">175%</button>
+              <button class="add-block-menu-item" data-scale="2">200%</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-bar" id="mainTabBar">
+      <button class="tab-btn active" data-tab="noteEditor">Note Editor</button>
+      <button class="tab-btn" data-tab="timeline">Song Generator</button>
+      <button class="tab-btn" data-tab="mixer">Mixer</button>
+      <button class="tab-btn" data-tab="drumEngine">Drum Engine</button>
+      <button class="tab-btn" data-tab="howto">How To</button>
+    </div>
+
+    <div class="status-area" id="statusArea">
+      <div class="dot"></div><span id="statusText">ready</span><span id="muteMarquee" aria-hidden="true"><span class="mute-marquee-track" id="muteMarqueeTrack"></span></span>
+      <div class="de-engine-select-wrap">
+        <div class="de-engine-select-label">Engine</div>
+        <select id="deEngineSelect" class="de-engine-select" data-tooltip="Engine&#10;Selects the sound engine for the whole kit — 808: models of the TR-808 circuits, Lo-Fi: simple synthesized sounds without adjustable parameters. Each engine starts with its own default mixer.">
+          <option value="internal">808</option>
+          <option value="lofi">Lo-Fi</option>
+        </select>
+      </div>
+      <button class="tab-btn" id="muteBtn" data-tooltip="Mute&#10;Mutes DrumGroover's output — works regardless of the host's own enable/disable state.">Mute</button>
+    </div>
+  </div>
+
+  <div id="blockPaletteWrap">
+    <div class="transport-group">
+      <button class="btn primary" id="playBtn">▶ Play</button>
+      <button class="btn stop-btn" id="stopBtn" disabled>■ Stop</button>
+      <button class="btn" id="mxAutoAllBtn" style="display:none;" data-tooltip="Auto All&#10;Runs Auto gain on Kit Gain first, then on every instrument channel, then on Master. Channels without signal are skipped. Starts playback if it is not running; click again to cancel.">Auto All</button>
+    </div>
+    <!-- Read-only view of the song timeline, shown on the Mixer tab only (see renderMixerTimeline in mixer-tab.js). -->
+    <div id="mxTimeline" style="display:none;"></div>
+    <!-- Instrument sub-tabs live in the transport row (centered) to save a vertical row.
+         Only shown on the Drum Engine tab (see switchToTab). -->
+    <div class="de-inline-tabs de-param-tabs" id="deParamTabs" style="display:none;">
+      <button class="de-param-tab-btn active" data-family="kick">Kick</button>
+      <button class="de-param-tab-btn" data-family="snare">Snare</button>
+      <button class="de-param-tab-btn" data-family="hihat">Hi-Hat</button>
+      <button class="de-param-tab-btn" data-family="tom">Tom</button>
+      <button class="de-param-tab-btn" data-family="cymbal">Cymbal</button>
+      <button class="de-param-tab-btn" data-family="ride">Ride</button>
+      <button class="de-param-tab-btn" data-family="custom" data-tooltip="Custom&#10;Extra 808 percussion: High Conga, Claves, Hand Clap, Maracas, Cowbell, PC-2. An instrument plays once you add it as a track with + Add Track in the Note Editor.">Custom</button>
+    </div>
+    <div class="toolbar-sep"></div>
+    <div id="blockPalette"></div>
+    <div id="blockPaletteScrollTrack" class="palette-scroll-track"><div id="blockPaletteScrollThumb" class="palette-scroll-thumb"></div></div>
+  </div>
+</div>
+
+<!-- ============================================
+     NOTE EDITOR TAB
+     ============================================ -->
+<div class="tab-panel grid-section active" data-tab-panel="noteEditor">
+  
+  <div class="ne-layout" id="neLayout">
+    <div class="ne-grid-col">
+            <div class="ne-editing-toolbar">
+          <div class="controls">
+            <div class="knob-cluster">
+              <div class="cluster-title">Main <span id="rerollAllBtn" class="group-lock-icon" style="cursor:pointer" data-tooltip="Reroll All&#10;Rerolls everything unlocked in this block — regular blocks: all six instrument groups. Break/Intro/Outro: Fill + Kick. Locked parts are skipped.">🎲</span></div>
+              <div class="cluster-knobs">
+                <div class="ctrl" data-tooltip="Randomize&#10;Randomizes the selected note(s)' timing and velocity by this amount. A post-processing tool on your Note Editor selection, applied on release — does nothing without a selection."><div class="ctrl-label">Rnd <span class="val" id="randomizeAmtVal">0%</span></div><input type="range" id="randomizeAmt" min="0" max="100" value="0"></div>
+                <div class="ctrl" id="nudgeCtrl" data-tooltip="Nudge&#10;Nudges the selected note(s) by 1/8 of the current Snap step per turn — fine timing feel, independent of the Snap grid (not quantized). Select a note first."><div class="ctrl-label">Nudge</div><div class="knob-visual" id="nudgeKnob"><div class="knob-marker" id="nudgeKnobMarker"><div class="marker-dot"></div></div></div><span class="val" id="nudgeVal">0</span></div>
+              </div>
+            </div>
+
+            <div class="knob-cluster">
+              <div class="cluster-title">Kick <span id="kickLockIcon" class="group-lock-icon" style="display:none" data-tooltip="Discard Edits&#10;This group was manually edited. Click to discard that and hand it back to the knobs.">🔒</span><span id="kickRerollBtn" class="group-lock-icon" style="cursor:pointer" data-tooltip="Reroll&#10;Generates a new pattern with a fresh seed — same Density/Subdivision. Skipped if this group is locked.">🎲</span></div>
+              <div class="cluster-knobs">
+                <div class="ctrl" data-tooltip="Subdivision&#10;Which grid this instrument's pattern is generated on — coarser (8th) keeps it simple, finer (up to 64th) allows busier, more detailed patterns."><div class="ctrl-label">Subdiv <span class="val" id="kickSubdivisionVal">16th</span></div><input type="range" id="kickSubdivision" min="0" max="3" step="1" value="1"></div>
+                <div class="ctrl" data-tooltip="Density&#10;How many of the grid's steps actually get a hit — higher = busier."><div class="ctrl-label">Dens <span class="val" id="kickDensityVal">50%</span></div><input type="range" id="kickDensity" min="0" max="100" value="50"></div>
+                <div class="ctrl" data-tooltip="Variation&#10;Chance of an alternate articulation (Open) instead of the plain hit on a given step — weighted, not a hard split."><div class="ctrl-label">Var <span class="val" id="kickVariationVal">0%</span></div><input type="range" id="kickVariation" min="0" max="100" value="0"></div>
+                <div class="ctrl" style="display:none" data-tooltip="Phrase length&#10;How many bars are generated independently before the pattern repeats"><div class="ctrl-label">Phr <span class="val" id="kickPhraseVal">1</span></div><input type="range" id="kickPhrase" min="1" max="32" step="1" value="1"></div>
+              </div>
+            </div>
+
+            <div class="knob-cluster">
+              <div class="cluster-title">Snare <span id="snareLockIcon" class="group-lock-icon" style="display:none" data-tooltip="Discard Edits&#10;This group was manually edited. Click to discard that and hand it back to the knobs.">🔒</span><span id="snareRerollBtn" class="group-lock-icon" style="cursor:pointer" data-tooltip="Reroll&#10;Generates a new pattern with a fresh seed — same Density/Subdivision. Skipped if this group is locked.">🎲</span></div>
+              <div class="cluster-knobs">
+                <div class="ctrl" data-tooltip="Subdivision&#10;Which grid this instrument's pattern is generated on — coarser (8th) keeps it simple, finer (up to 64th) allows busier, more detailed patterns."><div class="ctrl-label">Subdiv <span class="val" id="snareSubdivisionVal">16th</span></div><input type="range" id="snareSubdivision" min="0" max="3" step="1" value="1"></div>
+                <div class="ctrl" data-tooltip="Density&#10;How many of the grid's steps actually get a hit — higher = busier."><div class="ctrl-label">Dens <span class="val" id="snareDensityVal">50%</span></div><input type="range" id="snareDensity" min="0" max="100" value="50"></div>
+                <div class="ctrl" data-tooltip="Ghost Notes&#10;Density of extra quiet notes filling the gaps between the main hits."><div class="ctrl-label">Ghost <span class="val" id="snareGhostDensityVal">20%</span></div><input type="range" id="snareGhostDensity" min="0" max="100" value="20"></div>
+                <div class="ctrl" data-tooltip="Variation&#10;Chance of an alternate articulation (Rimshot, Edge, Off-Center, …) instead of a plain center hit — weighted, not a hard split."><div class="ctrl-label">Var <span class="val" id="snareRimVal">0%</span></div><input type="range" id="snareRim" min="0" max="100" value="0"></div>
+                <div class="ctrl" style="display:none" data-tooltip="Phrase length&#10;How many bars are generated independently before the pattern repeats"><div class="ctrl-label">Phr <span class="val" id="snarePhraseVal">1</span></div><input type="range" id="snarePhrase" min="1" max="32" step="1" value="1"></div>
+              </div>
+            </div>
+
+            <div class="knob-cluster">
+              <div class="cluster-title">Hi-Hat <span id="hihatLockIcon" class="group-lock-icon" style="display:none" data-tooltip="Discard Edits&#10;This group was manually edited. Click to discard that and hand it back to the knobs.">🔒</span><span id="hihatRerollBtn" class="group-lock-icon" style="cursor:pointer" data-tooltip="Reroll&#10;Generates a new pattern with a fresh seed — same Density/Subdivision. Skipped if this group is locked.">🎲</span></div>
+              <div class="cluster-knobs">
+                <div class="ctrl" data-tooltip="Subdivision&#10;Which grid this instrument's pattern is generated on — coarser (8th) keeps it simple, finer (up to 64th) allows busier, more detailed patterns."><div class="ctrl-label">Subdiv <span class="val" id="hihatSubdivisionVal">16th</span></div><input type="range" id="hihatSubdivision" min="0" max="3" step="1" value="1"></div>
+                <div class="ctrl" data-tooltip="Density&#10;How many of the grid's steps actually get a hit — higher = busier."><div class="ctrl-label">Dens <span class="val" id="hihatDensityVal">50%</span></div><input type="range" id="hihatDensity" min="0" max="100" value="50"></div>
+                <div class="ctrl" data-tooltip="Variation&#10;Chance of an alternate articulation (Open, tight/closed variants) instead of a plain closed hit — weighted, not a hard split."><div class="ctrl-label">Var <span class="val" id="hihatOpenVal">0%</span></div><input type="range" id="hihatOpen" min="0" max="100" value="0"></div>
+                <div class="ctrl" style="display:none" data-tooltip="Phrase length&#10;How many bars are generated independently before the pattern repeats"><div class="ctrl-label">Phr <span class="val" id="hihatPhraseVal">1</span></div><input type="range" id="hihatPhrase" min="1" max="32" step="1" value="1"></div>
+              </div>
+            </div>
+
+            <div class="knob-cluster">
+              <div class="cluster-title">Ride <span id="rideLockIcon" class="group-lock-icon" style="display:none" data-tooltip="Discard Edits&#10;This group was manually edited. Click to discard that and hand it back to the knobs.">🔒</span><span id="rideRerollBtn" class="group-lock-icon" style="cursor:pointer" data-tooltip="Reroll&#10;Generates a new pattern with a fresh seed — same Density/Subdivision. Skipped if this group is locked.">🎲</span></div>
+              <div class="cluster-knobs">
+                <div class="ctrl" data-tooltip="Subdivision&#10;Which grid this instrument's pattern is generated on — coarser (8th) keeps it simple, finer (up to 64th) allows busier, more detailed patterns."><div class="ctrl-label">Subdiv <span class="val" id="rideSubdivisionVal">16th</span></div><input type="range" id="rideSubdivision" min="0" max="3" step="1" value="1"></div>
+                <div class="ctrl" data-tooltip="Density&#10;How many of the grid's steps actually get a hit — higher = busier."><div class="ctrl-label">Dens <span class="val" id="rideDensityVal">50%</span></div><input type="range" id="rideDensity" min="0" max="100" value="50"></div>
+                <div class="ctrl" data-tooltip="Variation&#10;Chance of an alternate articulation (Bow Shank, Edge, Bell, Mute) instead of the plain hit — weighted, not a hard split."><div class="ctrl-label">Var <span class="val" id="rideVariationVal">0%</span></div><input type="range" id="rideVariation" min="0" max="100" value="0"></div>
+                <div class="ctrl" style="display:none" data-tooltip="Phrase length&#10;How many bars are generated independently before the pattern repeats"><div class="ctrl-label">Phr <span class="val" id="ridePhraseVal">1</span></div><input type="range" id="ridePhrase" min="1" max="32" step="1" value="1"></div>
+              </div>
+            </div>
+
+            <div class="knob-cluster">
+              <div class="cluster-title">Toms <span id="tomsLockIcon" class="group-lock-icon" style="display:none" data-tooltip="Discard Edits&#10;This group was manually edited. Click to discard that and hand it back to the knobs.">🔒</span><span id="tomsRerollBtn" class="group-lock-icon" style="cursor:pointer" data-tooltip="Reroll&#10;Generates a new pattern with a fresh seed — same Density/Subdivision. Skipped if this group is locked.">🎲</span></div>
+              <div class="cluster-knobs">
+                <div class="ctrl" data-tooltip="Subdivision&#10;Which grid this instrument's pattern is generated on — coarser (8th) keeps it simple, finer (up to 64th) allows busier, more detailed patterns."><div class="ctrl-label">Subdiv <span class="val" id="tomsSubdivisionVal">16th</span></div><input type="range" id="tomsSubdivision" min="0" max="3" step="1" value="1"></div>
+                <div class="ctrl" data-tooltip="Density&#10;How many of the grid's steps actually get a hit — higher = busier."><div class="ctrl-label">Dens <span class="val" id="tomsDensityVal">0%</span></div><input type="range" id="tomsDensity" min="0" max="100" value="0"></div>
+                <div class="ctrl" data-tooltip="Variation&#10;Chance of an alternate voice (Hi/Mid/Low/Floor) instead of the default one on a given hit — weighted, not a hard split."><div class="ctrl-label">Var <span class="val" id="tomsVariationVal">15%</span></div><input type="range" id="tomsVariation" min="0" max="100" value="15"></div>
+                <div class="ctrl" style="display:none" data-tooltip="Phrase length&#10;How many bars are generated independently before the pattern repeats"><div class="ctrl-label">Phr <span class="val" id="tomsPhraseVal">1</span></div><input type="range" id="tomsPhrase" min="1" max="32" step="1" value="1"></div>
+              </div>
+            </div>
+
+            <div class="knob-cluster">
+              <div class="cluster-title">Cymbals <span id="cymbalsLockIcon" class="group-lock-icon" style="display:none" data-tooltip="Discard Edits&#10;This group was manually edited. Click to discard that and hand it back to the knobs.">🔒</span><span id="cymbalsRerollBtn" class="group-lock-icon" style="cursor:pointer" data-tooltip="Reroll&#10;Generates a new pattern with a fresh seed — same Density/Subdivision. Skipped if this group is locked.">🎲</span></div>
+              <div class="cluster-knobs">
+                <div class="ctrl" data-tooltip="Subdivision&#10;Which grid this instrument's pattern is generated on — coarser (8th) keeps it simple, finer (up to 64th) allows busier, more detailed patterns."><div class="ctrl-label">Subdiv <span class="val" id="cymbalsSubdivisionVal">16th</span></div><input type="range" id="cymbalsSubdivision" min="0" max="3" step="1" value="1"></div>
+                <div class="ctrl" data-tooltip="Density&#10;How many of the grid's steps actually get a hit — higher = busier."><div class="ctrl-label">Dens <span class="val" id="cymbalsDensityVal">0%</span></div><input type="range" id="cymbalsDensity" min="0" max="100" value="0"></div>
+                <div class="ctrl" data-tooltip="Variation&#10;Chance of an alternate Crash voice instead of the default one on a given hit — weighted, not a hard split."><div class="ctrl-label">Var <span class="val" id="cymbalsVariationVal">15%</span></div><input type="range" id="cymbalsVariation" min="0" max="100" value="15"></div>
+                <div class="ctrl" style="display:none" data-tooltip="Phrase length&#10;How many bars are generated independently before the pattern repeats"><div class="ctrl-label">Phr <span class="val" id="cymbalsPhraseVal">1</span></div><input type="range" id="cymbalsPhrase" min="1" max="32" step="1" value="1"></div>
+              </div>
+            </div>
+
+            <!-- Custom instrument cluster: single articulation, so only Subdiv/Dens/Phr (no Var).
+                 Hidden by default — neSyncCustomCluster() shows it while a custom track is focused. -->
+            <div class="knob-cluster" id="customKnobCluster" style="display:none;">
+              <div class="cluster-title"><select id="customTrackSelect" data-tooltip="Instrument&#10;Which custom instrument these knobs control — also follows clicks on custom track rows in the grid."></select> <span id="customLockIcon" class="group-lock-icon" style="display:none" data-tooltip="Discard Edits&#10;This group was manually edited. Click to discard that and hand it back to the knobs.">🔒</span><span id="customRerollBtn" class="group-lock-icon" style="cursor:pointer" data-tooltip="Reroll&#10;Generates a new pattern with a fresh seed — same Density/Subdivision. Skipped if this group is locked.">🎲</span></div>
+              <div class="cluster-knobs">
+                <div class="ctrl" data-tooltip="Subdivision&#10;Which grid this instrument's pattern is generated on — coarser (8th) keeps it simple, finer (up to 64th) allows busier, more detailed patterns."><div class="ctrl-label">Subdiv <span class="val" id="customSubdivisionVal">16th</span></div><input type="range" id="customSubdivision" min="0" max="3" step="1" value="1"></div>
+                <div class="ctrl" data-tooltip="Density&#10;How many of the grid's steps actually get a hit — higher = busier."><div class="ctrl-label">Dens <span class="val" id="customDensityVal">50%</span></div><input type="range" id="customDensity" min="0" max="100" value="50"></div>
+                <div class="ctrl" style="display:none" data-tooltip="Phrase length&#10;How many bars are generated independently before the pattern repeats"><div class="ctrl-label">Phr <span class="val" id="customPhraseVal">1</span></div><input type="range" id="customPhrase" min="1" max="32" step="1" value="1"></div>
+              </div>
+            </div>
+
+
+                </div>
+        </div>
+    <div class="ne-grid-toolbar">
+        <div class="ne-toolbar-corner">
+          <button class="btn ne-add-track-btn" id="neAddTrackTopBtn" data-tooltip="Add Track&#10;Opens the setup dialog (instrument, GM note). On confirm the track is added under the instrument's name.">+ Add Track</button>
+        </div>
+        <div class="stat-pills" id="statPills"></div>
+        <div class="ne-zoom-ctrl" data-tooltip="Zoom&#10;Zooms the note grid. Ctrl+scroll over the grid does the same.">
+          <span class="ne-ctl-label">Zoom</span>
+          <input type="range" id="neZoomSlider" class="ne-mini-slider" min="0.25" max="4" step="0.05" value="1">
+          <span class="ne-mini-val" id="neZoomVal">100%</span>
+          <button class="ne-barnav-btn" id="neZoomFitBtn" data-tooltip="Fit&#10;Hotkey F&#10;Fits the selected content into view. If nothing is selected, the whole content gets centered.">⤢</button>
+        </div>
+      </div>
+      <div class="drum-grid" id="drumGrid"></div>
+    </div>
+    <div class="ne-sidebar-col">
+      <button class="ne-sidebar-toggle" id="neSidebarToggle" data-tooltip="Sidebar&#10;Hotkey Tab&#10;Toggles the note-editor sidebar.">›</button>
+      <div class="ne-sidebar-top">
+      <div class="ctrl w-snap select-only" data-tooltip="Snap&#10;The Note Editor's snap grid — how finely hand-placed/dragged/painted notes snap to the beat. Independent from each instrument's Subdiv knob, which only affects generated patterns.">
+          <div class="ctrl-label">Snap</div>
+          <select id="subdivision">
+            <optgroup label="Straight">
+              <option value="2">8th</option>
+              <option value="4" selected>16th</option>
+              <option value="8">32nd</option>
+              <option value="16">64th</option>
+            </optgroup>
+            <optgroup label="Triplet">
+              <option value="3">8th Triplet</option>
+              <option value="6">16th Triplet</option>
+            </optgroup>
+          </select>
+        </div>
+      <div class="ctrl w-genre select-only" data-tooltip="Genre&#10;A starting point, not a lock-in — sets the time signature and a baseline Feel, and applies matching preset values to Verse/Chorus/Bridge. Everything it sets can be freely overridden afterward.">
+          <div class="ctrl-label">Genre</div>
+          <select id="genreSelect">
+            <option value="straight" selected>Straight</option>
+            <option value="three_four">3/4</option>
+            <option value="swing">Swing</option>
+          </select>
+        </div>
+      <div class="ctrl w-timesig select-only">
+          <div class="ctrl-label">Time Signature</div>
+          <div class="timesig-row">
+            <select id="numerator" data-tooltip="Numerator&#10;Pulses per bar — the top number of the time signature.">
+              <option value="2">2</option><option value="3">3</option>
+              <option value="4" selected>4</option><option value="5">5</option>
+              <option value="6">6</option><option value="7">7</option>
+              <option value="8">8</option><option value="9">9</option>
+              <option value="10">10</option><option value="11">11</option>
+              <option value="12">12</option><option value="13">13</option>
+              <option value="14">14</option><option value="15">15</option>
+              <option value="16">16</option>
+            </select>
+            <span class="timesig-slash">/</span>
+            <select id="denominator" data-tooltip="Denominator&#10;Note value of one pulse — the bottom number. Pure note-value scaling, not compound-time regrouping.">
+              <option value="2">2</option>
+              <option value="4" selected>4</option>
+              <option value="8">8</option>
+              <option value="16">16</option>
+            </select>
+          </div>
+        </div>
+    </div><div class="ne-sidebar" id="neSidebar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================
+     SONG GENERATOR TAB
+     ============================================ -->
+<div class="panel-row seq-panel tab-panel" data-tab-panel="timeline">
+  <div class="tl-header">
+    <div class="panel-title">Song Generator — this plays/exports back to back. Drag a block from the row above to insert it anywhere; drag a clip to reorder it, hold Shift while dragging to duplicate it instead. <span id="tlSongTypeLabel"></span></div>
+    <div class="ne-ctl-group">
+      <span class="ne-ctl-label">Zoom</span>
+      <input type="range" id="tlZoomSlider" class="ne-mini-slider" min="0.25" max="4" step="0.05" value="1" data-tooltip="Zoom&#10;Zooms the Song Generator. Ctrl+scroll over it does the same.">
+      <span class="ne-mini-val" id="tlZoomVal">100%</span>
+      <button class="ne-barnav-btn" id="tlZoomFitBtn" data-tooltip="Fit&#10;Hotkey F&#10;Fits the selected clip into view. If none is selected, it resets to 100%.">⤢</button>
+    </div>
+  </div>
+  <div class="tl-wrap">
+    <div class="tl-main" id="tlMain">
+      <div class="tl-ruler" id="tlRuler"></div>
+      <div class="tl-loop-ruler" id="tlLoopRuler"></div>
+      <div class="tl-track" id="tlTrack"></div>
+    </div>
+  </div>
+  <div class="tl-resize-handle" id="tlResizeHandle" data-tooltip="Height&#10;Drag to make the clips taller or shorter. Double-click resets it."></div>
+</div>
+
+<!-- ============================================
+     MIXER TAB
+     ============================================ -->
+<div class="tab-panel mixer-panel" data-tab-panel="mixer">
+  <div class="mixer-container">
+    <div class="mixer-rack master-group" id="rack-master"></div>
+    <div class="mixer-rack instrument-group" id="rack-instruments"></div>
+  </div>
+</div>
+<!-- Mixer FX panels are created dynamically (one per open effect, appended to
+     <body>) - see makeFxPanel() in mixer-tab.js. -->
+
+<!-- ============================================
+     DRUM ENGINE TAB
+     ============================================ -->
+<div class="tab-panel drum-engine-panel" data-tab-panel="drumEngine">
+  <!-- The instrument sub-tabs (Kick/Snare/...) live in the transport row (#blockPaletteWrap's .transport-group). -->
+  <div class="de-body">
+    <!-- Polyphony is a kit-wide engine setting (voice stealing across the
+         whole kit), not a per-instrument detail — so it sits ABOVE the
+         articulation panels, full width. The output meter below starts at
+         the same line as the articulations, so both live in .de-lower. -->
+    <div id="dePolyRow">
+        <div class="knob-cluster de-cluster">
+          <div class="cluster-knobs">
+            <div class="subgroup-unit-wrapper">
+              <div class="subgroup-vertical-stack">
+                <div class="cluster-title">Polyphony</div>
+                <div style="display:flex; flex-direction:row; gap:6px; align-items:flex-end;">
+                  <div class="ctrl" data-tooltip="Polyphony&#10;How many Kick hits can overlap at once before the oldest gets stolen.">
+                    <div class="ctrl-label">Kick <span class="val" id="dePolyKickVal">2</span></div>
+                    <input type="range" id="dePolyKick" min="1" max="4" step="1" value="2">
+                  </div>
+                  <div class="ctrl" data-tooltip="Polyphony&#10;How many Snare hits (incl. ghost notes/flams) can overlap at once.">
+                    <div class="ctrl-label">Snare <span class="val" id="dePolySnareVal">4</span></div>
+                    <input type="range" id="dePolySnare" min="1" max="8" step="1" value="4">
+                  </div>
+                  <div class="ctrl" data-tooltip="Polyphony&#10;How many Tom hits can overlap at once — applies to all five toms (Rack Tom 1–3, Floor Tom 1–2) together.">
+                    <div class="ctrl-label">Tom <span class="val" id="dePolyTomVal">3</span></div>
+                    <input type="range" id="dePolyTom" min="1" max="6" step="1" value="3">
+                  </div>
+                  <div class="ctrl" data-tooltip="Polyphony&#10;How many Ride articulations (Bow/Bell/Edge/Mute) can overlap at once.">
+                    <div class="ctrl-label">Ride <span class="val" id="dePolyRideVal">3</span></div>
+                    <input type="range" id="dePolyRide" min="1" max="6" step="1" value="3">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+    </div>
+
+    <div class="de-lower">
+      <div class="de-main">
+        <div class="de-param-panels" id="deParamPanels"></div>
+      </div>
+
+      <div class="de-side" id="deSide">
+        <!-- Read-only peak value above the meter; driven by the meter itself
+             (readoutEl, see db-meter.js) — hidden while no audio is playing. -->
+        <div class="de-peak-row">
+          <div class="de-peak-readout" id="dePeakReadout"></div>
+        </div>
+        <div id="deSideMeter"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="de-keyboard-wrap" id="deKeyboardWrap">
+    <div class="de-keyboard" id="deKeyboard"></div>
+  </div>
+  <div class="de-legend" id="deLegend"></div>
+</div>
+
+<!-- ============================================
+     HOW TO TAB
+     ============================================ -->
+<div class="tab-panel howto-panel" data-tab-panel="howto">
+  <div class="howto-head">
+    <img class="howto-logo" src="drumgrooverlogo.png" alt="DrumGroover" draggable="false">
+    <div class="howto-credits" id="howtoCredits">
+      <div>DrumGroover Version 0.8.0</div>
+      <div>Copyright &copy;2026 by Reiner Prokein</div>
+      <div>This software is under MIT License</div>
+      <div>Find newest versions at GitHub: <a href="https://github.com/ReinerBforartists/Drumgroover" target="_blank" rel="noopener">https://github.com/ReinerBforartists/Drumgroover</a></div>
+      <div class="howto-warn">Alpha version &mdash; use at your own risk.</div>
+    </div>
+    <button class="btn btn-refresh btn-sm" id="howtoExportBtn" data-tooltip="Export How-To&#10;Saves this page, with every section open, as a standalone HTML file.">⇩ Export as HTML</button>
+  </div>
+  <details class="howto-section" open>
+    <summary>What DrumGroover is</summary>
+    <div class="howto-body" id="howto-overview"></div>
+  </details>
+  <details class="howto-section">
+    <summary>Quick start</summary>
+    <div class="howto-body" id="howto-quickstart"></div>
+  </details>
+  <details class="howto-section">
+    <summary>Playing &amp; DAW sync</summary>
+    <div class="howto-body" id="howto-playback"></div>
+  </details>
+  <details class="howto-section">
+    <summary>Note Editor — generating patterns</summary>
+    <div class="howto-body" id="howto-generator"></div>
+  </details>
+  <details class="howto-section">
+    <summary>Note Editor — editing by hand</summary>
+    <div class="howto-body" id="howto-ne-edit"></div>
+  </details>
+  <details class="howto-section">
+    <summary>Blocks, Breaks &amp; Fills</summary>
+    <div class="howto-body" id="howto-blocks"></div>
+  </details>
+  <details class="howto-section">
+    <summary>Song Generator</summary>
+    <div class="howto-body" id="howto-song"></div>
+  </details>
+  <details class="howto-section">
+    <summary>Mixer</summary>
+    <div class="howto-body" id="howto-mixer"></div>
+  </details>
+  <details class="howto-section">
+    <summary>Drum Engine &amp; sound engines</summary>
+    <div class="howto-body" id="howto-engine"></div>
+  </details>
+  <details class="howto-section">
+    <summary>Sound cache</summary>
+    <div class="howto-body" id="howto-cache"></div>
+  </details>
+  <details class="howto-section">
+    <summary>Export, drag to DAW &amp; projects</summary>
+    <div class="howto-body" id="howto-export"></div>
+  </details>
+  <details class="howto-section">
+    <summary>Options &amp; accessibility</summary>
+    <div class="howto-body" id="howto-options"></div>
+  </details>
+  <details class="howto-section">
+    <summary>Hotkeys &amp; shortcuts</summary>
+    <div class="howto-body" id="howto-hotkeys"></div>
+  </details>
+  <details class="howto-section">
+    <summary>Troubleshooting</summary>
+    <div class="howto-body" id="howto-troubleshooting"></div>
+  </details>
+</div>
+</div>
+
+<!-- ============================================
+     SCRIPTS
+     ============================================ -->
+<script src="bridge.js"></script>
+<script src="params.js"></script>
+<script src="db-meter.js"></script>
+<script src="rhythm-logic.js"></script>
+<script src="audio-engine.js"></script>
+<script src="generator-core.js"></script>
+<script src="ui-controller.js"></script>
+<script src="note-editor-data.js"></script>
+<script src="note-editor-panels.js"></script>
+<script src="note-editor-render.js"></script>
+<script src="note-editor-interactions.js"></script>
+<script src="timeline.js"></script>
+<script src="project-io.js"></script>
+<script src="howto-content.js"></script>
+<script src="drum-engine-tab.js"></script>
+<script src="mixer-tab.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1419 @@
+@charset "UTF-8";
+/* No text selection anywhere in the plugin UI, except in the How-To tab. */
+* { -webkit-user-select:none; -moz-user-select:none; -ms-user-select:none; user-select:none; }
+
+.howto-panel * { -webkit-user-select:text; -moz-user-select:text; -ms-user-select:text; user-select:text; }
+
+.howto-panel pre, .howto-panel code, .howto-panel p { user-select:text; -webkit-user-select:text; cursor:text; }
+
+:root {
+  --bg:#0f172a;
+  --panel:#1e293b;
+  --raised:#334155;
+  --border:#475569;
+  --border2:#64748b;
+  --text:#e2e8f0;
+  --muted:#cbd5e1;
+  --amber:#fdd04d;
+  --cyan:#0ea5e9;
+  --cyan-dim:#0b4060;
+  --green:#10b981;
+  --red:#ef4444;
+  --text-bright:#f8fafc;
+  --r:3px;
+}
+*, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+html, body { min-height:100%; background:var(--bg); color:var(--text); }
+body { font-family:'Inter','SF Pro Text',-apple-system,system-ui,sans-serif; font-size:14px; line-height:1.45; }
+/* Global checkbox look */
+input[type="checkbox"] {
+  appearance:none;
+  -webkit-appearance:none;
+  width:12px;
+  height:12px;
+  margin:0;
+  flex-shrink:0;
+  border:1.5px solid var(--muted);
+  border-radius:3px;
+  background:var(--bg);
+  cursor:pointer;
+  position:relative;
+  vertical-align:middle;
+  transition:background .1s,border-color .1s;
+}
+input[type="checkbox"]:hover:not(:disabled) { border-color:var(--text-bright); }
+input[type="checkbox"]:checked { background:var(--green); border-color:var(--green); }
+input[type="checkbox"]:checked::after { content:''; position:absolute; left:3px; top:-0.5px; width:3px; height:7px; border:solid var(--bg); border-width:0 2px 2px 0; transform:rotate(45deg); }
+input[type="checkbox"]:disabled { opacity:.4; cursor:not-allowed; }
+.mono,
+.ctrl-label,
+.val,
+.btn,
+.ctrl select,
+summary,
+.pill,
+.tl-clip,
+.ne-select {
+  font-family:'SF Mono','Fira Code',Consolas,Menlo,'DejaVu Sans Mono',monospace;
+}
+
+/* Fixed 1440x810 canvas. --ui-scale (set by JS from the actual WebView viewport, see fitToViewport in ui-controller.js)
+   scales it to fill the client area, anchored top-left. overflow:hidden keeps the unscaled layout box from producing scrollbars. */
+body { overflow:hidden; }
+.app { display:flex; flex-direction:column; width:1440px; height:810px; margin:0; padding:0; gap:0; overflow-y:auto; overflow-x:hidden; transform:scale(var(--ui-scale, 1)); transform-origin:top left; }
+
+.header { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; border-bottom:1px solid var(--border); padding-bottom:10px; }
+
+.transport { display:flex; align-items:center; gap:8px; flex-wrap:wrap; border-bottom:1px solid var(--border); padding-bottom:10px; }
+.btn {
+  font-size:10px;
+  letter-spacing:.08em;
+  padding:9px 18px;
+  border-radius:var(--r);
+  border:1px solid var(--border2);
+  background:var(--panel);
+  color:var(--text);
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  gap:7px;
+  transition:all .12s;
+  text-transform:uppercase;
+}
+.btn:hover:not(:disabled) { border-color:var(--amber); color:var(--amber); }
+.btn:disabled { opacity:.3; cursor:not-allowed; }
+.btn.primary { padding:8px 14px; font-weight:600; min-width:0; justify-content:center; border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
+.btn.primary:hover:not(:disabled) { background:#0c4a6e; }
+.btn.stop-btn { border-color:var(--red); color:var(--red); }
+.btn-refresh { border:1px solid var(--cyan-dim) !important; color:var(--cyan) !important; background:transparent !important; }
+.btn-refresh:hover:not(:disabled) { border-color:var(--cyan) !important; background:rgba(14,165,233,.1) !important; }
+.btn-sm { padding:4px 8px; font-size:9px; }
+
+.status-area { margin-left:auto; display:flex; align-items:center; gap:8px; font-size:10px; letter-spacing:.08em; color:var(--muted); }
+.dot { width:7px; height:7px; border-radius:50%; background:var(--muted); transition:background .2s; }
+.status-area.playing .dot { background:var(--green); box-shadow:0 0 8px var(--green); }
+.status-area.playing { color:var(--green); }
+
+.panel-row { background:var(--panel); border:1px solid var(--border); border-radius:var(--r); padding:6px 8px; }
+.panel-row.seq-panel { display:flex; flex-direction:column; gap:8px; overflow:hidden; }
+/* Editing toolbar (Main/Kick/Snare/.../Time Signature/Snap/Genre) */
+.ne-editing-toolbar { padding-bottom:10px; margin-bottom:10px; border-bottom:1px solid var(--border); }
+.panel-title { font-size:9px; letter-spacing:.1em; color:var(--muted); text-transform:uppercase; }
+.controls { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; }
+
+/* Time Signature / Snap / Genre at the top of the Note Editor sidebar, styled as the panel's cap so both read as one box. */
+.ne-sidebar-top {
+  width:234px;
+  box-sizing:border-box;
+  flex-shrink:0;
+  display:grid;
+  grid-template-columns:auto auto;
+  align-items:start;
+  justify-content:start;
+  gap:6px;
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-bottom:none;
+  border-radius:var(--r) var(--r) 0 0;
+  padding:10px 10px 8px 24px;
+  transition:width .15s ease, padding .15s ease, border-color .15s ease;
+}
+.ne-sidebar-top + .ne-sidebar { border-radius:0 0 var(--r) var(--r); }
+.ne-sidebar-top .ctrl { width:100%; min-width:0; align-items:stretch; padding:0 1px; }
+.ne-sidebar-top .ctrl.select-only { padding-top:0; } /* beat the toolbar-era alignment padding */
+.ne-sidebar-top .ctrl select { width:100%; }
+.ne-layout.ne-sidebar-collapsed .ne-sidebar-top { width:0; max-height:0; overflow:hidden; padding-left:0; padding-right:0; border-color:transparent; }
+/* Compact instrument selector in the Custom cluster title (about two knob widths, so the dice and lock icons still fit). */
+#customTrackSelect { font-size:10px; background:var(--bg); border:1px solid var(--border2); color:var(--text); padding:1px 3px; border-radius:2px; max-width:80px; text-overflow:ellipsis; cursor:pointer; }
+#customTrackSelect:focus { outline:1px solid var(--amber); border-color:var(--amber); }
+.knob-cluster { display:flex; flex-direction:column; gap:2px; }
+/* Accessible hover zoom: a knob cluster scales up in place under the cursor. Padding plus an equal negative
+   margin keep its layout box unchanged. */
+body.a11y-hover-zoom .ne-editing-toolbar .knob-cluster,
+body.a11y-hover-zoom .ne-sidebar .ne-dial-row,
+body.a11y-hover-zoom #dePolyRow .knob-cluster,
+body.a11y-hover-zoom #deParamPanels .knob-cluster,
+body.a11y-hover-zoom .mixer-rack .strip-knobs,
+body.a11y-hover-zoom .fx-pop .ne-dial-row,
+body.a11y-hover-zoom .fx-pop .lim-knobs-inner {
+  position:relative;
+  padding:4px;
+  margin:-4px;
+  background:transparent;
+  transition:transform .12s ease;
+}
+/* content width, not stretched to the full sidebar */
+body.a11y-hover-zoom .ne-sidebar .ne-dial-row { align-self:flex-start; }
+/* the divider padding of non-last dial rows (.ne-ctl-group:not(:last-child)) is kept */
+body.a11y-hover-zoom .ne-sidebar .ne-dial-row:not(:last-child) { padding-bottom:10px; margin-bottom:0; }
+body.a11y-hover-zoom .ne-sidebar .ne-dial-row.ne-ctl-nosep:not(:last-child) { padding-bottom:4px; margin-bottom:-4px; }
+/* popover rows hug the knobs: only they zoom */
+body.a11y-hover-zoom .fx-pop .ne-dial-row { width:fit-content; margin:-4px auto; }
+/* EQ/Limiter knob rows have their own selectors: the .ne-dial-row class would pull in the ".ne-dial-row .ctrl"
+   restyle even with Accessible Zoom off. The top padding keeps each row's original spacing. */
+body.a11y-hover-zoom .fx-pop .eq-knobs { position:relative; width:fit-content; padding:6px 4px 4px; margin:-4px auto; background:transparent; transition:transform .12s ease; }
+/* Pan-only strips (Master/Reverb/Delay): only the Pan row zooms; the empty second row (it keeps the faders aligned) stays out. */
+body.a11y-hover-zoom .mixer-rack .strip-knobs.pan-only .strip-knobs-row:first-child { position:relative; width:fit-content; margin:-4px auto; padding:4px; transition:transform .12s ease; }
+
+body.a11y-hover-zoom .ne-editing-toolbar .knob-cluster:hover,
+body.a11y-hover-zoom .ne-sidebar .ne-dial-row:hover,
+body.a11y-hover-zoom #dePolyRow .knob-cluster:hover,
+body.a11y-hover-zoom #deParamPanels .knob-cluster.a11y-zoomed,
+body.a11y-hover-zoom .mixer-rack .strip-knobs:hover,
+body.a11y-hover-zoom .mixer-rack .strip-knobs.pan-only .strip-knobs-row:first-child:hover,
+body.a11y-hover-zoom .fx-pop .ne-dial-row:hover,
+body.a11y-hover-zoom .fx-pop .eq-knobs:hover,
+body.a11y-hover-zoom .fx-pop .lim-knobs-inner:hover {
+  transform:scale(var(--a11y-zoom-factor, 1.5));
+  z-index:40;
+  background:var(--raised);
+  border-radius:6px;
+  box-shadow:0 6px 20px rgba(0,0,0,.55);
+}
+body.a11y-hover-zoom .mixer-rack .strip-knobs.pan-only:hover { transform:none; background:transparent; box-shadow:none; }
+/* A zoomed container paints its raised background; each knob cell (.ctrl) would stay a darker patch with its own --panel background. */
+body.a11y-hover-zoom .ne-editing-toolbar .knob-cluster:hover .ctrl,
+body.a11y-hover-zoom #dePolyRow .knob-cluster:hover .ctrl,
+body.a11y-hover-zoom #deParamPanels .knob-cluster.a11y-zoomed .ctrl,
+body.a11y-hover-zoom .mixer-rack .strip-knobs:hover .ctrl,
+body.a11y-hover-zoom .mixer-rack .strip-knobs.pan-only .strip-knobs-row:first-child:hover .ctrl,
+body.a11y-hover-zoom .ne-sidebar .ne-dial-row:hover .ctrl,
+body.a11y-hover-zoom .fx-pop .ne-dial-row:hover .ctrl,
+body.a11y-hover-zoom .fx-pop .eq-knobs:hover .ctrl,
+body.a11y-hover-zoom .fx-pop .lim-knobs-inner:hover .ctrl {
+  background:transparent;
+}
+
+/* Placeholder reserving a popped-out cluster's spot so its siblings don't jump. */
+.de-param-cluster-placeholder { flex-shrink:0; visibility:hidden; pointer-events:none; }
+
+.cluster-title { font-size:9px; font-weight:600; color:var(--amber); text-transform:uppercase; letter-spacing:.03em; }
+.group-lock-icon { cursor:pointer; font-size:10px; margin-left:3px; }
+.group-lock-icon:hover { filter:brightness(1.4); }
+.knob-cluster input:disabled { opacity:.35; cursor:not-allowed; }
+.ctrl.knob-disabled .knob-visual { opacity:.35; cursor:not-allowed; }
+/* Locked groups dim only the interactive elements — never the label or the lock
+   icon, which must stay visible and clickable. */
+.ne-ctl-group.ne-ctl-locked .ne-mini-slider,
+.ne-ctl-group.ne-ctl-locked select,
+.ne-ctl-group.ne-ctl-locked input[type=checkbox],
+.ne-ctl-group.ne-ctl-locked input[type=number],
+.ne-ctl-group.ne-ctl-locked .ne-ctl-row-items,
+.ne-ctl-group.ne-ctl-locked .ne-dial-row-items {
+  opacity:.45;
+  cursor:not-allowed;
+}
+.cluster-knobs { display:flex; gap:3px; align-items:flex-start; }
+
+.ctrl {
+  background:var(--panel);
+  border:none !important;
+  box-shadow:none !important;
+  border-radius:var(--r);
+  padding:3px 1px;
+  min-width:28px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:2px;
+  text-align:center;
+  position:relative;
+}
+.ctrl.active .knob-visual { border-color:var(--amber); }
+
+.ctrl-label { font-size:7px; letter-spacing:.03em; color:var(--muted); text-transform:uppercase; width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ctrl-label .val { color:var(--amber); font-size:10px; }
+.ctrl select {
+  width:100%;
+  font-size:11px;
+  background:var(--bg);
+  border:1px solid var(--border2);
+  color:var(--text);
+  padding:5px 4px;
+  border-radius:2px;
+  cursor:pointer;
+  appearance:none;
+  -webkit-appearance:none;
+  text-overflow:ellipsis;
+  overflow:hidden;
+  white-space:nowrap;
+}
+/* Dropdown widths sized to each list's longest option: Time Signature "9/4",
+   Genre "Straight", Snap "16th Triplet". */
+.ctrl.w-timesig { min-width:78px; }
+.timesig-row { display:flex; align-items:center; gap:2px; width:100%; }
+.ctrl .timesig-row select { width:auto; flex:1 1 0; min-width:0; padding:5px 2px; }
+.timesig-slash { color:var(--muted); font-size:11px; flex:0 0 auto; }
+.ctrl.w-genre { min-width:84px; }
+.ctrl.w-snap { min-width:88px; }
+.ctrl.select-only { padding-top:14px; }
+
+.ctrl input[type="range"] { width:20px; height:20px; opacity:0; cursor:ns-resize; position:absolute; z-index:0; pointer-events:none; -webkit-appearance:none; appearance:none; touch-action:none; }
+.knob-visual {
+  width:20px;
+  height:20px;
+  border-radius:50%;
+  background:radial-gradient(circle at 30% 30%, var(--raised), var(--bg));
+  border:2px solid var(--border2);
+  position:relative;
+  z-index:1;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  cursor:ns-resize;
+  touch-action:none;
+  transition:border-color .2s;
+}
+/* Knob driven by the instrument's XY pad (DE_FAMILY_PAD_AXIS in drum-engine-tab.js); cyan = engaged, as in .btn.primary. */
+.knob-visual.pad-linked { background:radial-gradient(circle at 30% 30%, var(--cyan-dim), var(--bg)); border-color:var(--cyan); }
+.knob-marker { position:absolute; top:0; left:0; width:100%; height:100%; transform-origin:center center; pointer-events:none; z-index:3; }
+.marker-dot { position:absolute; top:1px; left:50%; width:2px; height:7px; border-radius:1px; background:var(--amber); transform:translateX(-50%); }
+.knob-tick { display:none; }
+.knob-input {
+  display:none;
+  position:absolute;
+  bottom:2px;
+  left:50%;
+  transform:translateX(-50%);
+  width:32px;
+  text-align:center;
+  background:var(--bg);
+  border:1px solid var(--amber);
+  color:var(--amber);
+  font-size:9px;
+  padding:1px 0;
+  z-index:10;
+  outline:none;
+  border-radius:2px;
+}
+.ctrl .val { color:var(--amber); font-size:10px; display:block; margin-top:2px; cursor:pointer; text-align:center; min-width:30px; margin-left:auto; margin-right:auto; }
+.ctrl select:focus, .ctrl input:focus { outline:1px solid var(--amber); border-color:var(--amber); }
+.custom-select-open { outline:1px solid var(--amber); border-color:var(--amber); } /* mirrors :focus above while the popup is open */
+
+.custom-select-list {
+  position:fixed;
+  z-index:9999;
+  background:var(--panel);
+  border:1px solid var(--border2);
+  border-radius:6px;
+  box-shadow:0 4px 16px rgba(0,0,0,.4);
+  padding:4px;
+  max-height:min(320px, 60vh);
+  overflow-y:auto;
+  font-family:'SF Mono','Fira Code',Consolas,Menlo,'DejaVu Sans Mono',monospace;
+  font-size:11px;
+}
+.custom-select-item { padding:6px 10px; border-radius:4px; cursor:pointer; color:var(--text); white-space:nowrap; }
+.custom-select-item:hover { background:rgba(14,165,233,.12); }
+.custom-select-item.selected { color:var(--amber); }
+.custom-select-item.disabled { color:var(--muted); cursor:not-allowed; opacity:.5; }
+.custom-select-item.disabled:hover { background:transparent; }
+.ctrl input[type="range"]::-webkit-slider-thumb, .ne-mini-slider::-webkit-slider-thumb { -webkit-appearance:none; width:12px; height:12px; border-radius:50%; background:var(--amber); cursor:pointer; box-shadow:0 0 6px #92400e; }
+body.knob-dragging { user-select:none; cursor:ns-resize; }
+
+/* Block Palette */
+#blockPaletteWrap { display:flex; align-items:stretch; gap:10px; height:36px; position:relative; }
+#blockPaletteWrap.mx-timeline-on { height:50px; }
+#blockPaletteWrap.mx-timeline-on .transport-group { align-self:flex-start; height:36px; }
+/* Mixer tab: read-only song timeline in the transport row (ruler on top, clips below). */
+#mxTimeline { position:relative; flex:1 1 auto; min-width:0; overflow:hidden; background:var(--bg); border:1px solid var(--border); border-radius:var(--r); cursor:pointer; touch-action:none; user-select:none; }
+.mx-tl-ruler { position:absolute; left:0; right:0; top:0; height:16px; border-bottom:1px solid var(--border); }
+.mx-tl-mark { position:absolute; top:0; bottom:0; padding-left:3px; border-left:1px solid var(--border2); font-size:9px; line-height:16px; color:var(--text-bright); font-weight:700; pointer-events:none; }
+.mx-tl-loopbar { position:absolute; left:0; right:0; top:16px; height:10px; border-bottom:1px solid var(--border); background:var(--bg); cursor:crosshair; z-index:3; }
+.mx-tl-clip {
+  position:absolute;
+  top:29px;
+  bottom:3px;
+  border-radius:2px;
+  overflow:hidden;
+  font-size:8px;
+  line-height:12px;
+  padding:1px 3px;
+  color:rgba(0,0,0,.7);
+  font-weight:700;
+  text-transform:uppercase;
+  white-space:nowrap;
+  pointer-events:none;
+}
+.mx-tl-head { position:absolute; top:0; bottom:0; width:0; border-left:1px solid var(--amber); pointer-events:none; z-index:4; }
+.mx-tl-head::before { content:''; position:absolute; top:0; left:-6px; border-left:6px solid transparent; border-right:6px solid transparent; border-top:8px solid var(--amber); }
+
+.palette-scroll-track {
+  position:absolute; top:45px; height:7px; border-radius:4px;
+  opacity:0; pointer-events:none; transition:opacity .15s;
+  /* left/width are set from JS (updatePaletteScrollbar) to match #blockPalette's horizontal extent. */
+}
+.palette-scroll-track.visible { opacity:1; pointer-events:auto; background:var(--bg); }
+.palette-scroll-thumb { position:absolute; top:0; height:100%; border-radius:4px; background:var(--border2); border:2px solid var(--bg); background-clip:padding-box; cursor:pointer; }
+.palette-scroll-track:hover .palette-scroll-thumb { background:var(--muted); background-clip:padding-box; }
+.palette-scroll-thumb.dragging { background:var(--amber); background-clip:padding-box; }
+#blockPaletteWrap .toolbar-sep { align-self:center; }
+.palette-add-buttons { position:relative; flex-shrink:0; display:flex; }
+.add-block-menu { position:absolute; top:calc(100% + 4px); left:0; z-index:20; background:var(--panel); border:1px solid var(--border2); border-radius:6px; box-shadow:0 4px 16px rgba(0,0,0,.4); min-width:170px; padding:4px; }
+.add-block-menu-item {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  width:100%;
+  background:transparent;
+  border:none;
+  border-radius:4px;
+  padding:6px 8px;
+  cursor:pointer;
+  text-align:left;
+  color:var(--text);
+  font-size:12px;
+}
+.add-block-menu-item:hover { background:rgba(14,165,233,.12); }
+.menu-hotkey { color:var(--border2); font-size:11px; flex-shrink:0; }
+.add-block-menu-sep { height:1px; background:var(--border2); margin:4px 2px; }
+/* Submenu flyout. It is a DOM descendant of its parent row, so moving the pointer into it does not trigger the toolbar
+   menu's mouseleave close timer (registerToolbarMenu in ui-controller.js). */
+.has-submenu { position:relative; cursor:default; }
+.has-submenu > .submenu-flyout { display:none; }
+.has-submenu:hover > .submenu-flyout, .has-submenu:focus-within > .submenu-flyout { display:block; }
+.submenu-flyout { position:absolute; top:-4px; left:100%; margin-left:2px; }
+
+#blockPalette {
+  flex:1;
+  display:flex; align-items:center; gap:8px; flex-wrap:nowrap; padding:0 6px; background:transparent; border-radius:6px;
+  align-self:center; height:52px;
+  overflow-x:auto; overflow-y:hidden;
+  scrollbar-width:none; -ms-overflow-style:none; /* Firefox / old Edge — real scrollbar drawn separately below */
+}
+#blockPalette::-webkit-scrollbar { display:none; } /* Chromium / WebView2 */
+.palette-item {
+  position:relative;
+  user-select:none;
+  font-size:12px;
+  font-weight:500;
+  border-radius:4px;
+  white-space:nowrap;
+  display:flex;
+  flex-direction:column;
+  box-sizing:border-box;
+  height:36px;
+  flex-shrink:0;
+  transition:all .15s;
+  color:#0f172a;
+  touch-action:none;
+}
+.palette-item.active { box-shadow:0 0 0 2px #0f172a, 0 0 0 4px var(--amber); }
+.palette-item.silence { background:transparent !important; border:2px dashed var(--border2) !important; color:var(--muted) !important; cursor:default; }
+.palette-item:hover { opacity:0.85; }
+
+.palette-item-name { flex:0 0 auto; padding:1px 13px; font-size:10px; cursor:grab; }
+.palette-item:active .palette-item-name, .palette-item:active .palette-item-body { cursor:grabbing; }
+.palette-item-body { flex:1 1 auto; cursor:grab; padding:0 13px; display:flex; align-items:center; min-height:8px; }
+/* Hidden and non-interactive until the chip is hovered, so it cannot steal a click/drag meant for the chip (attachPaletteDrag). */
+.palette-item-trigger {
+  position:absolute;
+  top:-6px;
+  right:-6px;
+  width:18px;
+  height:18px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:50%;
+  background:#0f172a;
+  color:#fff;
+  font-size:12px;
+  line-height:1;
+  border:1px solid rgba(255,255,255,.25);
+  cursor:pointer;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .12s;
+}
+.palette-item:hover .palette-item-trigger { opacity:1; pointer-events:auto; }
+.palette-item-trigger:hover { background:var(--amber); color:#0f172a; }
+
+/* Timeline (bottom) — DAW-style arrangement view */
+.tl-wrap { display:flex; gap:0; border:1px solid var(--border); border-radius:var(--r); overflow:hidden; }
+.tl-header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+
+.tl-main { flex:1; overflow-x:auto; padding-bottom:3px; }
+.tl-ruler { position:relative; height:20px; border-bottom:1px solid var(--border); background:var(--bg); cursor:pointer; touch-action:none; }
+.tl-ruler-mark, .ne-ruler-mark { position:absolute; top:0; bottom:0; display:flex; align-items:center; padding-left:4px; font-size:9px; color:var(--muted); border-left:1px solid var(--border); }
+.tl-ruler-bar, .ne-ruler-bar { border-left:2px solid var(--border2); color:var(--text-bright); font-weight:700; }
+.tl-ruler-endless, .ne-ruler-endless { opacity:.35; }
+.tl-loop-ruler { position:relative; height:10px; border-bottom:1px solid var(--border); margin-bottom:2px; cursor:crosshair; touch-action:none; background:var(--bg); }
+.tl-loop-overlay, .ne-loop-overlay, .mx-tl-loop { position:absolute; top:0; bottom:0; background:rgba(251,191,36,.4); border-left:2px solid var(--amber); border-right:2px solid var(--amber); pointer-events:none; z-index:1; }
+.tl-ruler-playhead, .ne-ruler-playhead {
+  position:absolute;
+  top:0;
+  bottom:0;
+  width:0;
+  border-left:6px solid transparent;
+  border-right:6px solid transparent;
+  border-top:8px solid var(--amber);
+  transform:translateX(-6px);
+  pointer-events:none;
+  z-index:6;
+}
+.tl-track { position:relative; height:80px; }
+/* Small centered grip (three lines), same look as .ne-sidebar-toggle. */
+.tl-resize-handle {
+  width:30px;
+  height:16px;
+  margin:3px auto 0;
+  box-sizing:border-box;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--panel);
+  border:1px solid var(--border2);
+  border-radius:4px;
+  color:var(--muted);
+  cursor:ns-resize;
+  touch-action:none;
+}
+.tl-resize-handle::before { content:''; width:12px; height:2px; background:currentColor; box-shadow:0 -4px 0 currentColor, 0 4px 0 currentColor; }
+.tl-resize-handle:hover { color:var(--amber); border-color:var(--amber); }
+.tl-clip-notes { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+.tl-grid-cell { position:absolute; top:0; bottom:0; border-right:1px solid var(--border2); background:var(--bg); }
+.tl-grid-cell:first-child { border-left:1px solid var(--border2); }
+.tl-grid-endless { opacity:.4; }
+.tl-clip {
+  position:absolute;
+  top:4px;
+  bottom:4px;
+  border-radius:3px;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  text-align:center;
+  font-size:10px;
+  letter-spacing:.03em;
+  color:#0f172a;
+  font-weight:600;
+  text-transform:uppercase;
+  border:2px solid transparent;
+  opacity:.92;
+  transition:opacity .12s, box-shadow .12s;
+  user-select:none;
+  touch-action:none;
+}
+.tl-clip:hover { opacity:1; }
+.tl-clip-name { flex:0 0 auto; box-sizing:border-box; height:16px; line-height:12px; padding:2px 6px; cursor:grab; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tl-clip-name:active { cursor:grabbing; }
+.tl-clip-body { position:relative; flex:1 1 auto; cursor:grab; min-height:8px; }
+.tl-clip.selected { border-color:var(--text-bright); box-shadow:0 0 0 2px var(--bg), 0 0 0 3px var(--text-bright); }
+.tl-clip.dragging { cursor:grabbing; opacity:.85; z-index:20; box-shadow:0 4px 14px rgba(0,0,0,.5); transition:none; }
+.tl-clip.duplicating { outline:2px dashed var(--amber); outline-offset:2px; }
+.tl-drop-marker { position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--amber); box-shadow:0 0 0 1.5px #000, 0 0 6px 2px rgba(0,0,0,.6); z-index:15; pointer-events:none; display:none; }
+.tl-lasso-rect { position:absolute; top:2px; bottom:2px; background:rgba(14,165,233,.18); border:1px solid var(--cyan); pointer-events:none; z-index:12; display:none; }
+.tl-clip.paint-marked, .palette-item.paint-marked { opacity:.3; outline:2px dashed var(--red); outline-offset:-2px; }
+.tl-drag-ghost {
+  position:fixed;
+  z-index:9999;
+  pointer-events:none;
+  font-size:11px;
+  font-weight:500;
+  padding:8px 12px;
+  border-radius:4px;
+  color:#0f172a;
+  opacity:.9;
+  font-family:'SF Mono','Fira Code',Consolas,Menlo,'DejaVu Sans Mono',monospace;
+}
+.tl-clip.silence { background:transparent !important; border:2px dashed var(--border2); color:var(--muted); }
+
+.grid-section { background:var(--panel); border:1px solid var(--border); border-radius:var(--r); padding:12px; display:flex; flex-direction:column; gap:8px; }
+.stat-pills { display:flex; flex-wrap:wrap; }
+.pill { font-size:10px; color:var(--muted); }
+.pill:not(:first-child)::before { content:'·'; margin:0 8px; color:var(--muted); opacity:.6; }
+
+.drum-grid { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
+.ne-controls { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:6px 4px 9px; margin-bottom:4px; border-bottom:1px solid var(--border); }
+.ne-ctl-group { display:flex; align-items:center; gap:7px; }
+/* Note Editor layout: note area left, settings sidebar right. A grid, so both columns match the taller one's height. */
+.ne-layout { display:grid; grid-template-columns:1fr 234px; align-items:stretch; gap:12px; flex:1 1 auto; min-height:0; transition:grid-template-columns .15s ease; }
+.ne-layout.ne-sidebar-collapsed { grid-template-columns:1fr 0px; gap:20px; }
+.ne-grid-col { min-width:0; min-height:0; display:flex; flex-direction:column; }
+/* The toolbar spans the note area's width: settings gear left, zoom right. */
+.ne-grid-toolbar { display:flex; align-items:center; margin-bottom:6px; }
+.ne-toolbar-corner { width:170px; flex-shrink:0; display:flex; align-items:center; }
+
+.ne-settings-panel.add-block-menu { min-width:150px; }
+.ne-settings-panel .gm-toggle,
+#deOptionsMenu .gm-toggle,
+#tlOptionsMenu .gm-toggle,
+#mxOptionsMenu .gm-toggle {
+  padding:6px 8px;
+}
+#deCacheMenu .gm-toggle { padding:6px 8px; justify-content:space-between; gap:14px; }
+#deCacheMenu .gm-toggle.de-cache-check { justify-content:flex-start; gap:4px; }
+.de-cache-row { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:6px 8px; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
+.de-cache-value { font-size:12px; color:var(--amber); font-variant-numeric:tabular-nums; }
+.de-cache-edit { display:flex; align-items:center; gap:6px; }
+.de-cache-edit input[type="number"] { width:52px; height:24px; padding:0 6px; font-size:12px; background:var(--bg); border:1px solid var(--border2); color:var(--amber); border-radius:3px; text-align:center; }
+.de-cache-usage { padding:2px 8px 6px 20px; font-size:11px; color:var(--muted); }
+#deCacheMenu .add-block-menu-item { padding:6px 8px; }
+/* The zoom-level select is a child setting of the Accessible toggle, indented to show that. */
+.a11y-zoom-select-row { gap:0; }
+.a11y-zoom-select-indent { width:16px; flex-shrink:0; }
+.a11y-zoom-select-row select { margin-left:6px; background:var(--bg); color:var(--text); border:1px solid var(--border2); border-radius:3px; font-size:11px; padding:4px 6px; }
+.a11y-zoom-select-row select:disabled { opacity:.4; cursor:not-allowed; }
+
+.de-retrigger-row input[type="number"] { height:24px; padding:5px 8px; font-size:11px; background:var(--bg); border:1px solid var(--border2); color:var(--text); border-radius:3px; }
+.ne-grid-toolbar .stat-pills { flex:1; min-width:0; margin:0; }
+.ne-zoom-ctrl { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+/* Anchors the toggle button to the column's left edge, vertically centered. */
+.ne-sidebar-col { position:relative; min-width:0; min-height:0; }
+.ne-sidebar-toggle {
+  position:absolute;
+  top:50%;
+  left:0;
+  transform:translate(-50%, -50%);
+  width:20px;
+  height:36px;
+  padding:0;
+  z-index:7;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--panel);
+  border:1px solid var(--border2);
+  border-radius:4px;
+  color:var(--muted);
+  font-size:12px;
+  cursor:pointer;
+}
+.ne-sidebar-toggle:hover { color:var(--amber); border-color:var(--amber); }
+.ne-sidebar {
+  min-height:0;
+  width:234px;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:var(--r);
+  padding:10px 10px 10px 24px;
+  overflow-y:auto;
+  overflow-x:hidden;
+  transition:width .15s ease, padding .15s ease, border-color .15s ease;
+}
+.ne-sidebar.ne-zoom-noscroll { overflow-y:hidden; }
+.ne-layout.ne-sidebar-collapsed .ne-sidebar { width:0; max-height:0; overflow:hidden; padding-left:0; padding-right:0; border-color:transparent; }
+.ne-sidebar:empty { display:none; }
+
+.ne-sidebar .ne-controls { flex-direction:column; align-items:stretch; flex-wrap:nowrap; gap:12px; border-bottom:none; padding:0; margin-bottom:0; }
+.ne-sidebar .ne-ctl-group { flex-direction:column; align-items:stretch; gap:5px; }
+.ne-sidebar .ne-ctl-label { font-size:9px; }
+.ne-sidebar .ne-len-input, .ne-sidebar .ne-select { width:100%; }
+.ne-sidebar .ne-mini-slider { width:100%; }
+.ne-sidebar .ne-ctl-group:not(:last-child) { padding-bottom:10px; border-bottom:1px solid var(--border); }
+/* Opt-out for adjacent groups that belong together (e.g. Length (Bars) + Feel,
+   or a Fill dial row above its instrument picker): same gap, no dividing line. */
+.ne-sidebar .ne-ctl-group.ne-ctl-nosep:not(:last-child) { padding-bottom:0; border-bottom:none; }
+/* Inline variant (e.g. Length (Bars)/Break Length): label + input on one line
+   instead of the stacked sidebar layout. */
+.ne-sidebar .ne-ctl-group.ne-ctl-inline { flex-direction:row; align-items:center; justify-content:space-between; gap:8px; }
+.ne-sidebar .ne-ctl-inline .ne-len-input { width:56px; flex:none; }
+.ne-sidebar .ne-ctl-inline .ne-select { width:84px; flex:none; }
+@media (max-width: 900px) {
+      .ne-layout { grid-template-columns:1fr; }
+      .ne-sidebar { width:100%; }
+
+}
+.ne-ctl-label { font-size:8px; letter-spacing:.1em; color:var(--muted); text-transform:uppercase; white-space:nowrap; }
+.ne-len-input { font-size:12px; background:var(--bg); border:1px solid var(--border2); color:var(--amber); padding:4px 6px; border-radius:2px; width:52px; text-align:center; }
+select.ne-len-input { appearance:none; -webkit-appearance:none; } /* "Turnaround Every" reuses this class as a <select> — strip its native arrow to match Genre/Feel */
+.ne-len-input:focus { outline:1px solid var(--amber); border-color:var(--amber); }
+.ne-len-readonly { display:inline-block; background:transparent; border:1px solid transparent; color:var(--muted); cursor:default; }
+.ne-select {
+  font-size:11px;
+  background:var(--bg);
+  border:1px solid var(--border2);
+  color:var(--text);
+  padding:5px 4px;
+  border-radius:2px;
+  cursor:pointer;
+  appearance:none;
+  -webkit-appearance:none;
+  text-overflow:ellipsis;
+  overflow:hidden;
+  white-space:nowrap;
+}
+.ne-select:focus { outline:1px solid var(--amber); border-color:var(--amber); }
+.ne-mini-slider { width:80px; height:3px; -webkit-appearance:none; appearance:none; background:var(--border2); border-radius:2px; accent-color:var(--amber); cursor:pointer; }
+.ne-mini-val { font-size:10px; color:var(--amber); min-width:32px; text-align:right; }
+/* Dial rows (Turnaround, Break, Fill panels): small rotary dials side by side (neCreateDial/neDialRow in note-editor-panels.js). */
+.ne-dial-row-items { display:flex; flex-direction:row; gap:5px; align-items:flex-start; flex-wrap:wrap; }
+.ne-dial-row .ctrl { min-width:0; padding:2px 1px; }
+.ne-barnav-btn {
+  font-size:13px;
+  line-height:1;
+  background:var(--panel);
+  border:1px solid var(--border2);
+  color:var(--text);
+  width:26px;
+  height:24px;
+  border-radius:2px;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.ne-barnav-btn:hover:not(:disabled) { border-color:var(--amber); color:var(--amber); }
+.ne-barnav-btn:disabled { opacity:.35; cursor:default; }
+
+.ne-ruler { position:relative; flex:none; height:20px; border-bottom:1px solid var(--border); margin-left:170px; cursor:pointer; touch-action:none; }
+.ne-loop-ruler { position:relative; flex:none; height:10px; border-bottom:1px solid var(--border); margin-left:170px; margin-bottom:2px; cursor:crosshair; touch-action:none; background:var(--bg); }
+/* The block's end (Length boundary): heavier than bar dividers, so the endless padding past it reads as a deliberate boundary. */
+.ne-block-end-line { position:absolute; top:0; bottom:0; width:2px; background:var(--amber); opacity:.6; z-index:2; }
+.ne-bar-line { position:absolute; top:0; bottom:0; width:1px; background:var(--border2); opacity:.55; pointer-events:none; }
+
+/* Stretches to fill the Note Editor's height; 440px is the minimum. */
+.ne-rows-wrap { display:flex; align-items:flex-start; flex:1 1 auto; min-height:440px; overflow-y:auto; }
+
+.ne-row-labels { width:170px; flex-shrink:0; align-self:stretch; min-height:440px; background:repeating-linear-gradient(to bottom, transparent 0 25px, #1e293b 25px 26px); }
+.ne-row-label {
+  height:26px;
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:6px;
+  padding-right:6px;
+  font-size:9px;
+  letter-spacing:.05em;
+  color:var(--muted);
+  text-transform:uppercase;
+  border-bottom:1px solid #1e293b;
+  cursor:pointer;
+  user-select:none;
+}
+.ne-row-label:hover { color:var(--text-bright); }
+.ne-row-label.focused { color:var(--amber); background:rgba(251,191,36,.06); }
+.ne-row-label.muted { color:var(--red); text-decoration:line-through; opacity:.6; }
+.ne-row-label.soloed { color:var(--green); }
+.ne-row-label.solo-silenced { opacity:.45; }
+.ne-row-label.custom { color:var(--text-bright); justify-content:flex-start; }
+.ne-group-header { justify-content:flex-start; gap:5px; cursor:pointer; font-weight:600; color:var(--text-bright); background:var(--panel); }
+.ne-group-header:hover { color:var(--amber); }
+.ne-group-header-row { background:var(--panel); }
+.ne-group-arrow { display:inline-block; width:0; height:0; border-top:4px solid transparent; border-bottom:4px solid transparent; border-left:5px solid var(--text-bright); transition:transform .12s; flex-shrink:0; }
+.ne-group-header .ne-preview-btn { margin-left:auto; } /* first of the ▶/M/S button cluster — pushes the whole cluster to the row's right edge */
+.ne-sub-label { justify-content:flex-start; padding-left:20px; }
+.ne-control-row-label { justify-content:flex-start; padding-left:20px; font-style:italic; color:var(--muted); }
+.ne-control-row { background:repeating-linear-gradient(45deg, rgba(255,255,255,.02), rgba(255,255,255,.02) 6px, transparent 6px, transparent 12px); cursor:crosshair; }
+.ne-control-row.locked { cursor:not-allowed; opacity:.5; }
+.ne-triplet-range { position:absolute; top:3px; bottom:3px; background:rgba(251,191,36,.25); border:1px solid var(--amber); border-radius:3px; cursor:default; }
+.ne-triplet-range:hover { background:rgba(251,191,36,.4); }
+.ne-triplet-range.dragging { pointer-events:none; }
+.ne-phrase-seg {
+  position:absolute;
+  top:3px;
+  bottom:3px;
+  box-sizing:border-box;
+  border-radius:3px;
+  padding-left:5px;
+  display:flex;
+  align-items:center;
+  font-size:9px;
+  color:var(--muted);
+  background:rgba(148,163,184,.12);
+  pointer-events:none;
+  overflow:hidden;
+}
+.ne-phrase-seg.ne-phrase-first { color:var(--cyan); background:var(--cyan-dim); border:1px solid var(--cyan); font-weight:700; overflow:visible; }
+.ne-phrase-edited .ne-phrase-seg { opacity:.35; }
+.ne-phrase-handle { position:absolute; top:0; right:0; bottom:0; width:8px; cursor:ew-resize; pointer-events:auto; touch-action:none; }
+.ne-phrase-handle:hover { background:var(--cyan); opacity:.5; }
+.ne-triplet-handle { position:absolute; top:0; bottom:0; width:9px; cursor:ew-resize; z-index:1; }
+.ne-triplet-handle-left { left:-4px; }
+.ne-triplet-handle-right { right:-4px; }
+.ne-triplet-handle:hover, .ne-triplet-handle.resizing { background:rgba(255,255,255,.25); }
+.ne-mute-btn, .ne-solo-btn, .ne-delete-btn, .ne-preview-btn {
+  font-size:8px;
+  border:1px solid var(--border2);
+  border-radius:2px;
+  padding:1px 4px;
+  cursor:pointer;
+  color:var(--muted);
+}
+.ne-mute-btn:hover { color:var(--text-bright); border-color:var(--text-bright); }
+.ne-solo-btn:hover { color:var(--green); border-color:var(--green); }
+.ne-delete-btn:hover { color:var(--red); border-color:var(--red); }
+.ne-row-label.soloed .ne-solo-btn { color:var(--green); border-color:var(--green); background:rgba(16,185,129,.12); }
+.ne-preview-btn { line-height:1; }
+.ne-preview-btn:hover { color:var(--amber); border-color:var(--amber); }
+/* overflow-y must be explicit: overflow-x:auto alone computes overflow-y to auto and re-opens vertical scroll. */
+.ne-rows { position:relative; flex:1; min-height:440px; overflow-x:auto; overflow-y:hidden; }
+
+.ne-grid-filler { pointer-events:none; border-bottom:none; background:repeating-linear-gradient(to bottom, transparent 0 25px, #1e293b 25px 26px); }
+.ne-row { position:relative; height:26px; border-bottom:1px solid #1e293b; }
+.ne-row.focused { background:rgba(251,191,36,.04); }
+.ne-tick { position:absolute; top:0; bottom:0; width:1px; pointer-events:none; }
+.ne-snap-line { position:absolute; top:0; bottom:0; width:1px; background:#1e40af; opacity:.3; pointer-events:none; }
+.ne-triplet-zone-bg { position:absolute; top:0; bottom:0; background:rgba(251,191,36,.08); pointer-events:none; }
+.ne-triplet-grid-line { position:absolute; top:0; bottom:0; width:1px; background:var(--amber); opacity:.35; pointer-events:none; }
+.ne-note { position:absolute; width:12px; height:12px; transform:translate(-6px,-6px) rotate(45deg); cursor:grab; border:1px solid #0f172a; z-index:2; touch-action:none; }
+.ne-note-turnaround { transform:translate(-6px,-6px) rotate(0deg); border-radius:2px; }
+.ne-note-summary { cursor:pointer; }
+.ne-vel-mini-ctrl { display:flex; align-items:center; gap:5px; padding:0 4px 0 0; }
+.ne-vel-mini-label { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; width:20px; flex-shrink:0; text-align:right; }
+.ne-vel-mini-slider { flex:1; min-width:0; height:3px; -webkit-appearance:none; appearance:none; background:var(--border2); border-radius:2px; accent-color:var(--amber); cursor:pointer; }
+.ne-vel-mini-slider::-webkit-slider-thumb { -webkit-appearance:none; width:9px; height:9px; border-radius:50%; background:var(--amber); cursor:pointer; box-shadow:0 0 4px #92400e; }
+.ne-vel-mini-val { width:26px; flex-shrink:0; height:16px; background:transparent; border:none; color:var(--amber); font-size:10px; padding:0; text-align:right; appearance:textfield; -moz-appearance:textfield; }
+.ne-vel-mini-val::-webkit-outer-spin-button, .ne-vel-mini-val::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+.ne-vel-mini-val:hover, .ne-vel-mini-val:focus { background:var(--bg); border-radius:2px; }
+.ne-vel-labels input:disabled { opacity:.35; cursor:not-allowed; }
+.ne-note.selected { box-shadow:0 0 0 2px var(--amber), 0 0 8px 1px rgba(251,191,36,0.7); z-index:3; }
+.ne-note-locked { cursor:default; opacity:.55; }
+.ne-note-locked:hover { opacity:.75; }
+/* Stand-in diamond shown during a pencil drag (attachRowPaintDrag); it must not intercept the dragging pointer. */
+.ne-note-painting { pointer-events:none; opacity:.85; }
+/* Break block groove-copy zone: gray wash behind the copied bars (neBuildRows), plus the grayed .ne-note-locked notes. */
+.ne-break-lock-overlay {
+  position:absolute;
+  top:0;
+  background:repeating-linear-gradient(135deg, rgba(148,163,184,.06), rgba(148,163,184,.06) 8px, rgba(148,163,184,.12) 8px, rgba(148,163,184,.12) 16px);
+  pointer-events:none;
+  z-index:1;
+  border-right:1px dashed var(--border2);
+}
+.ne-turnaround-zone { position:absolute; top:0; background:rgba(167,139,250,.08); pointer-events:none; z-index:1; border-left:1px dashed rgba(167,139,250,.35); border-right:1px dashed rgba(167,139,250,.35); }
+/* Endless padding past the block's Length: inert, plainer than the Break lock overlay. */
+.ne-endless-overlay { position:absolute; top:0; background:rgba(15,23,42,.35); pointer-events:none; z-index:1; }
+.ne-lock-pill { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--amber); }
+.ne-lock-pill b { color:var(--text-bright); }
+.ne-select-rect { position:fixed; border:1px solid var(--amber); background:rgba(251,191,36,0.12); pointer-events:none; z-index:100; }
+.ne-select-rect.delete-mode { border-color:var(--red); background:rgba(239,68,68,0.15); }
+.ne-playhead { position:absolute; top:0; bottom:0; width:1px; background:var(--amber); box-shadow:0 0 4px var(--amber); z-index:5; pointer-events:none; }
+.tl-playhead { position:absolute; top:0; bottom:0; width:2px; background:var(--amber); box-shadow:0 0 6px var(--amber); z-index:15; pointer-events:none; }
+.ne-vel-wrap { display:flex; border-top:2px solid var(--border); flex-shrink:0; }
+.ne-vel-labels { width:170px; flex-shrink:0; display:flex; flex-direction:column; justify-content:center; gap:6px; padding:10px 8px 4px 0; }
+.ne-vel-lane { position:relative; min-height:80px; flex:1; overflow-x:auto; background:var(--bg); }
+.ne-vel-handle { position:absolute; width:11px; height:11px; border-radius:50%; border:1px solid #0f172a; cursor:ns-resize; z-index:3; touch-action:none; }
+.ne-vel-line { position:absolute; bottom:0; width:1px; opacity:.6; }
+.ne-vel-line-gray { background:var(--muted); opacity:.35; cursor:pointer; z-index:1; }
+.ne-vel-handle-gray { background:var(--muted); opacity:.45; cursor:pointer; z-index:2; }
+.ne-vel-line-gray:hover, .ne-vel-handle-gray:hover { opacity:.8; }
+.ne-msg-pill { color:var(--amber); }
+
+.gm-toggle { display:flex; align-items:center; gap:4px; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; cursor:pointer; user-select:none; }
+.ne-articulation-enable-wrap { display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; flex-shrink:0; }
+.ne-gm-input {
+  width:34px;
+  margin-left:auto;
+  background:var(--bg);
+  border:1px solid var(--border2);
+  border-radius:3px;
+  color:var(--amber);
+  font-size:9px;
+  padding:1px 3px;
+  text-align:center;
+  appearance:textfield;
+  -moz-appearance:textfield;
+}
+.ne-gm-input::-webkit-outer-spin-button, .ne-gm-input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+/* Global output mute: red pulsing button plus a scrolling "MUTED" next to the status text. */
+#muteBtn.active { background:#dc2626; border-color:#ef4444; color:#fff; animation:mutePulse 1.4s ease-in-out infinite; }
+@keyframes mutePulse { 0%,100% { box-shadow:0 0 0 0 rgba(239,68,68,.55); } 50% { box-shadow:0 0 0 5px rgba(239,68,68,0); } }
+#muteMarquee { display:none; width:170px; overflow:hidden; white-space:nowrap; color:#f87171; font-weight:700; letter-spacing:.12em; }
+body.plugin-muted #muteMarquee { display:inline-block; }
+body.plugin-muted .status-area .dot, body.plugin-muted .status-area.playing .dot { background:#ef4444; box-shadow:none; }   /* never green while muted */
+body.plugin-muted #statusText { display:none; }   /* the marquee takes its place: "ready" would be wrong while muted */
+.mute-marquee-track { display:inline-flex; animation:muteMarquee 6s linear infinite; }
+@keyframes muteMarquee { from { transform:translateX(0); } to { transform:translateX(-50%); } }
+.app-modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:5000; display:flex; align-items:center; justify-content:center; }
+
+/* Custom tooltip (initTooltips in ui-controller.js): native title tooltips are positioned by the OS and drift out of sync with the scaled content. */
+.dgg-tooltip {
+  position: fixed; z-index: 9999; display: none; pointer-events: none;
+  max-width: 320px; padding: 5px 8px; border-radius: 4px;
+  background: #0b1220; border: 1px solid var(--border2); color: var(--text);
+  font-family: 'Inter','SF Pro Text',-apple-system,system-ui,sans-serif;
+  font-size: 11.5px; line-height: 1.4; box-shadow: 0 4px 14px rgba(0,0,0,.5);
+
+  white-space: pre-line;
+  /* The tooltip lives outside .app (appended to body), so it applies --ui-scale itself; transform-origin top left matches how
+     left/top are computed in initTooltips(). */
+  transform-origin: top left;
+  transform: scale(var(--ui-scale, 1));
+}
+/* Live value badge while dragging (dggShowValueTip in ui-controller.js). */
+.dgg-value-tip { font-size:13px; font-weight:600; color:var(--amber); padding:4px 9px; border-color:var(--amber); }
+.app-modal-box { background:var(--panel); border:1px solid var(--border2); border-radius:8px; padding:20px; min-width:320px; max-width:90vw; box-shadow:0 12px 40px rgba(0,0,0,.5); }
+.app-modal-title { font-size:14px; font-weight:600; color:var(--text-bright); margin-bottom:10px; }
+.app-modal-message { font-size:12px; color:var(--muted); margin-bottom:14px; line-height:1.5; }
+.app-modal-label { display:block; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin:10px 0 4px; }
+.app-modal-checkbox-label { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text); text-transform:none; letter-spacing:normal; cursor:pointer; margin:12px 0 2px; }
+.app-modal-input { width:100%; background:var(--bg); border:1px solid var(--border2); border-radius:4px; color:var(--text-bright); font-size:13px; padding:8px 10px; box-sizing:border-box; }
+.app-modal-input:focus { outline:none; border-color:var(--amber); }
+.app-modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+.btn-danger { background:var(--red); border-color:var(--red); color:#fff; }
+.btn-danger:hover { opacity:.85; }
+
+.howto-body { margin-top:8px; font-size:12px; color:var(--muted); line-height:1.6; }
+.howto-body b { color:var(--text-bright); }
+.howto-body i { color:var(--text); }
+
+.howto-section { border-bottom:1px solid var(--border); }
+.howto-section:last-child { border-bottom:none; }
+.howto-section summary {
+  padding:10px 2px;
+  cursor:pointer;
+  list-style:none;
+  user-select:none;
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+  color:var(--text-bright);
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.howto-section summary::-webkit-details-marker { display:none; }
+.howto-section summary::before { content:'▸'; color:var(--amber); font-size:10px; transition:transform .12s; flex-shrink:0; }
+.howto-section[open] summary::before { transform:rotate(90deg); }
+.howto-section summary:hover { color:var(--amber); }
+.howto-section .howto-body { padding:0 2px 12px 18px; margin-top:0; }
+
+/* Top-level view tabs: swap which main panel is visible. */
+.tab-bar { display:flex; justify-content:center; gap:6px; margin:2px 0 0; }
+.tab-btn { background:var(--panel); border:1px solid var(--border); color:var(--muted); font-size:10px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; padding:5px 11px; border-radius:var(--r); cursor:pointer; }
+.tab-btn:hover { color:var(--text); border-color:var(--border2); }
+.tab-btn.active { color:var(--amber); border-color:var(--amber); background:var(--raised); }
+/* Hides the inactive panel; :not(.active) outranks the panels' own single-class rules regardless of order. */
+.tab-panel:not(.active) { display:none; }
+/* The active tab fills the remaining .app height. */
+.app > .tab-panel { flex:1 1 auto; min-height:0; border-width:0; }
+/* .app has no padding or gap, so toolbar and active panel sit flush; their borders would form a gray frame and a doubled line
+   at the junction. Both surfaces share the panel background and merge into one area. */
+.app > .compact-toolbar { border-width:0; }
+.howto-panel { background:var(--panel); border:1px solid var(--border); border-radius:var(--r); padding:10px 14px; display:flex; flex-direction:column; overflow-y:auto; }
+.howto-head { position:relative; flex-shrink:0; }
+.howto-head .btn { position:absolute; right:0; top:50%; transform:translateY(-50%); }
+.howto-logo { display:block; height:56px; width:auto; margin:6px auto 8px; }
+.howto-credits { text-align:center; font-size:12px; line-height:1.5; color:var(--text-dim, #94a3b8); margin:0 0 16px; user-select:text; }
+.howto-credits a { color:#fdd04d; }
+.howto-credits .howto-warn { color:#f59e0b; font-weight:600; margin-top:4px; }
+
+.drum-engine-panel { background:var(--panel); border:1px solid var(--border); border-radius:var(--r); padding:10px 14px; display:flex; flex-direction:column; gap:10px; flex:1; min-height:0; }
+.de-legend { display:flex; flex-wrap:wrap; gap:14px; font-size:9px; letter-spacing:.05em; color:var(--muted); text-transform:uppercase; }
+.de-legend-item { display:flex; align-items:center; gap:5px; }
+.de-legend-swatch { width:10px; height:10px; border-radius:2px; border:1px solid var(--border2); }
+
+/* Kick's knob clusters side by side (like the Note Editor toolbar's .controls, which is scoped to .ne-editing-toolbar). */
+
+.de-knob-groups-row { display:flex; flex-direction:row; flex-wrap:wrap; gap:16px; align-items:flex-start; }
+/* display:flex makes .knob-cluster a content-sized flex item instead of a full-width block. */
+#dePolyRow { display:flex; gap:28px; }
+
+/* flex-shrink:0 only in this row: in the narrow #deParamPanels card a wide cluster would otherwise be squeezed below its content width and wrap. */
+.de-knob-groups-row > .knob-cluster { flex-shrink:0; }
+
+.de-param-tabs { display:flex; gap:4px; flex-wrap:wrap; }
+
+.de-engine-select-wrap { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.de-engine-select-label { font-size:11px; font-weight:600; color:var(--text-bright); white-space:nowrap; }
+.de-engine-select { background:var(--panel); border:1px solid var(--border2); border-radius:var(--r); color:var(--text); font-size:11px; padding:5px 8px; }
+.de-engine-select option:disabled { color:var(--muted); }
+.de-param-tab-btn { padding:6px 14px; border:1px solid var(--border); border-radius:var(--r) var(--r) 0 0; background:var(--panel); color:var(--text); cursor:pointer; font-size:12px; }
+.de-param-tab-btn.active { background:var(--panel); color:var(--amber); border:1px solid var(--amber); font-weight:600; }
+.de-param-tab-btn:hover:not(.active) { background:var(--panel); color:var(--text-bright); border-color:var(--border2); }
+.de-param-tab-btn.active:hover { box-shadow:0 0 8px var(--amber); }
+
+/* The scroll area fills the space left in .de-main, leaving the 10px panel gap between articulations and keyboard at any window size or UI scale. */
+.de-param-panels { padding:4px 0; flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; }
+.de-param-panel { display:none; }
+
+.de-param-panel.active { display:flex; flex-direction:column; gap:8px; min-height:100%; }
+.de-param-instance-row { display:grid; grid-template-columns:110px 1fr 44px; align-items:center; gap:8px; }
+.de-param-instance-row .lbl { font-size:12px; color:var(--text); }
+.de-param-instance-row .val { font-size:12px; text-align:right; }
+.de-param-group-title { font-size:12px; font-weight:600; margin:10px 0 2px; opacity:0.8; }
+.de-param-group-title:first-child { margin-top:0; }
+/* Kick XY pad: macro control over the Kick parameters (KICK_PAD_CORNERS, deInitKickPad); it drives the same range sliders as the knobs
+   (deKickPadApply). Visible only on the Kick sub-tab. */
+
+.de-kick-pad-unit { display:flex; flex-direction:column; gap:6px; align-items:center; }
+
+.de-kick-pad-body { display:flex; align-items:center; gap:10px; }
+.de-kick-pad-vol { display:flex; align-items:flex-end; gap:6px; flex-wrap:wrap; }
+
+.de-kick-pad { position:relative; width:250px; height:250px; max-width:100%; margin:0 auto; border:1px solid var(--border); border-radius:var(--r); background:var(--bg); cursor:crosshair; touch-action:none; }
+
+.de-kick-pad-label { position:absolute; font-size:7px; line-height:1.3; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); pointer-events:none; white-space:pre-line; }
+.de-kick-pad-label.tl { top:8px; left:8px; }
+.de-kick-pad-label.tr { top:8px; right:8px; text-align:right; }
+.de-kick-pad-label.bl { bottom:8px; left:8px; }
+.de-kick-pad-label.br { bottom:8px; right:8px; text-align:right; }
+
+.de-kick-pad-dot { position:absolute; width:7px; height:7px; margin:-3.5px; border-radius:50%; background:var(--amber); left:50%; top:50%; box-shadow:0 0 6px #92400e; pointer-events:none; }
+.de-kick-pad-dot.unsynced { background:transparent; border:2px solid var(--muted); box-shadow:none; }
+
+.de-instance-cards { display:flex; flex-direction:column; gap:10px; flex:1; min-width:0; }
+.de-instance-card { display:flex; flex-direction:row; align-items:stretch; gap:12px; border:1px solid var(--border); border-radius:var(--r); padding:8px 10px; background:var(--panel); }
+.de-instance-card-main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:6px; }
+.de-instance-card-title { font-size:12px; font-weight:600; opacity:0.85; }
+
+.de-instance-card-knobs { min-width:0; }
+
+.de-instance-card-title-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.de-instance-card-reset { flex-shrink:0; }
+
+.de-instance-card-reset .btn-refresh { padding:5px 10px; font-size:10px; }
+/* In the card, the .de-kick-pad-vol child is center-aligned, overriding the
+   flex-end alignment used by Kick's side-by-side layout. */
+.de-instance-card-vol { flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+.de-instance-card-vol .de-kick-pad-vol { align-items:center; }
+
+.de-instance-card-pad-zoom { flex-shrink:0; margin-left:12px; }
+.de-instance-card-pad-zoom .de-kick-pad { width:130px; height:130px; }
+
+.de-keyboard-wrap { overflow:hidden; width:100%; border:1px solid var(--border); border-radius:var(--r); background:var(--bg); }
+.de-keyboard { position:relative; height:110px; width:100%; }
+
+.de-body { display:flex; flex-direction:column; gap:10px; flex:1; min-height:0; }
+.de-lower { display:flex; gap:12px; align-items:flex-start; flex:1; min-height:0; }
+/* height:100%: .de-body aligns items flex-start, so without a definite height .de-main would grow to its content and the panel
+   below could overflow under the keyboard. */
+.de-main { flex:1; min-width:0; min-height:0; height:100%; display:flex; flex-direction:column; gap:10px; }
+/* .de-side carries the output meter and its read-only peak value; it sits next to .de-main so its top aligns with the articulations. */
+.de-side { width:70px; flex-shrink:0; display:flex; flex-direction:column; align-items:center; gap:8px; background:var(--panel); border:1px solid var(--border); border-radius:var(--r); padding:10px 6px 12px; }
+/* Read-only peak value above the meter; text, color and visibility are driven by the meter itself (readoutEl in db-meter.js). */
+.de-peak-row { height:14px; display:flex; align-items:flex-end; justify-content:center; }
+.de-peak-readout { font-size:10px; line-height:1; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; display:none; }
+
+.db-meter { position:relative; width:18px; height:140px; }
+/* The Drum Engine side meter is taller than the mixer's (360px); selected by ID so the mixer meters keep their height. */
+#deSideMeter { height:360px; }
+.db-meter-bar { position:absolute; inset:0; overflow:hidden; border:1px solid var(--border2); border-radius:2px; background:var(--bg); }
+.db-meter-track, .db-meter-fill { position:absolute; inset:0; }
+.db-meter-fill { transition:clip-path .03s linear; }
+
+.db-meter-peak { position:absolute; left:0; right:0; height:2px; bottom:0; background:#fff; box-shadow:0 0 2px rgba(0,0,0,.6); pointer-events:none; }
+
+.db-meter-ticks { position:absolute; left:100%; top:0; bottom:0; margin-left:3px; pointer-events:none; }
+.db-meter-tick { position:absolute; left:0; transform:translateY(50%); font-size:8px; line-height:1; color:var(--muted); white-space:nowrap; }
+.db-meter-tick::before { content:''; position:absolute; right:100%; top:50%; width:4px; height:1px; background:var(--border2); margin-right:2px; }
+/* Sign-less ticks (0, +6 ... +18) would otherwise sit left of the others' digits —
+   nudge them right by roughly one minus-sign's width so every number's first
+   digit lines up in the same column. */
+.db-meter-tick-nosign span { margin-left:0.5em; }
+
+.db-meter-stereo { display:flex; gap:2px; align-items:stretch; }
+.de-key {
+  position:absolute;
+  top:0;
+  box-sizing:border-box;
+  border:1px solid var(--border);
+  border-radius:0 0 2px 2px;
+  cursor:pointer;
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+  padding-bottom:4px;
+  font-size:7px;
+  letter-spacing:.02em;
+  color:var(--bg);
+  text-align:center;
+  line-height:1.2;
+  user-select:none;
+  transition:filter .08s;
+}
+.de-key:hover { filter:brightness(1.15); }
+.de-key.active { filter:brightness(1.4); }
+.de-key-white { height:110px; background:#e8e8ec; z-index:1; }
+.de-key-black { height:66px; background:#20232a; color:var(--text); z-index:2; }
+/* Family/articulation colors are set per key inline by drum-engine-tab.js
+   (deArticulationColor/deFamilyLegendColor): the family sets hue + saturation,
+   the articulation within the family sets lightness. */
+
+::-webkit-scrollbar { width:4px; height:4px; }
+::-webkit-scrollbar-track { background:var(--bg); }
+::-webkit-scrollbar-thumb { background:var(--border2); border-radius:2px; }
+
+/* Scroll areas the user drags get a wider, grabbable scrollbar. .ne-rows is scroll-synced with .ne-vel-lane (syncScroll
+   in renderNoteEditor), so its own scrollbar is hidden and the lane's stays. */
+.de-param-panels, .ne-vel-lane, .ne-rows-wrap, .tl-main {
+  scrollbar-width:auto;
+  scrollbar-color:var(--border2) var(--bg);
+}
+.de-param-panels::-webkit-scrollbar, .ne-rows-wrap::-webkit-scrollbar { width:14px; }
+.ne-vel-lane::-webkit-scrollbar, .tl-main::-webkit-scrollbar { height:14px; }
+.de-param-panels::-webkit-scrollbar-track,
+.ne-vel-lane::-webkit-scrollbar-track,
+.ne-rows-wrap::-webkit-scrollbar-track,
+.tl-main::-webkit-scrollbar-track {
+  background:var(--bg);
+}
+.de-param-panels::-webkit-scrollbar-thumb,
+.ne-vel-lane::-webkit-scrollbar-thumb,
+.ne-rows-wrap::-webkit-scrollbar-thumb,
+.tl-main::-webkit-scrollbar-thumb {
+  background:var(--border2);
+  border-radius:7px;
+  border:3px solid var(--bg);
+  background-clip:padding-box;
+}
+.de-param-panels::-webkit-scrollbar-thumb:hover,
+.ne-vel-lane::-webkit-scrollbar-thumb:hover,
+.ne-rows-wrap::-webkit-scrollbar-thumb:hover,
+.tl-main::-webkit-scrollbar-thumb:hover {
+  background:var(--muted);
+}
+.ne-rows { scrollbar-width:none; -ms-overflow-style:none; }
+.ne-rows::-webkit-scrollbar { display:none; }
+
+.compact-toolbar { display:flex; flex-direction:column; gap:6px; padding:6px 12px; background:var(--panel); border:1px solid var(--border); border-radius:var(--r); font-size:12px; }
+.toolbar-row-top {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr; /* left/right columns balance each other so the middle (tabs) stays visually centered regardless of the left column's width */
+  align-items: center;
+}
+.toolbar-row-top .toolbar-left-menus { grid-column:1; justify-self:start; display:flex; align-items:center; gap:8px; }
+/* Header menu buttons: a bit slimmer than the generic .btn so the whole row
+   (menus + tabs + status) fits without colliding in a narrow window. */
+.toolbar-left-menus .btn { padding:7px 11px; gap:5px; }
+.toolbar-row-top .tab-bar { grid-column:2; margin:0; justify-self:center; }
+.toolbar-row-top .status-area { grid-column:3; justify-self:end; }
+
+.toolbar-sep { width:1px; height:22px; background:var(--border); flex-shrink:0; }
+.transport-group { display:flex; align-items:stretch; gap:6px; flex-shrink:0; }
+
+.add-block-menu-item:disabled { opacity:.3; cursor:not-allowed; }
+.add-block-menu-item:hover:not(:disabled) { background:rgba(14,165,233,.12); }
+/* Safety fallback for very narrow viewports */
+@media (max-width: 1100px) {
+
+      .toolbar-sep { display:none; }
+
+}
+
+/* Drum Engine label/knob alignment: both label classes share font and color; only the gap to the knobs is adjusted. */
+.knob-cluster.de-cluster .cluster-knobs { display:flex !important; flex-direction:row !important; align-items:flex-end !important; }
+
+.subgroup-unit-wrapper { display:contents !important; }
+
+.subgroup-vertical-stack { display:flex !important; flex-direction:column !important; align-items:flex-start !important; justify-content:flex-end !important; }
+
+/* Both labels use the same base class for Font/Color */
+.knob-cluster.de-cluster .cluster-title { color:var(--amber) !important; font-size:8px !important; margin-bottom:2px !important; flex-shrink:0 !important; }
+
+/* Mixer tab. .mixer-panel gives the tab the same panel chrome as the other tabs. */
+.mixer-panel { background:var(--panel); border:1px solid var(--border); border-radius:var(--r); padding:10px 12px; display:flex; flex-direction:column; flex:1 1 0; min-height:0; }
+
+.mixer-container { display:flex; gap:5px; }
+
+.mixer-rack { display:flex; align-items:stretch; gap:5px; overflow-x:auto; padding:10px 6px; background:var(--panel); border-radius:var(--r); position:relative; }
+
+.mixer-rack.master-group { flex:0 0 auto; width:auto; }
+
+.mixer-rack.instrument-group { flex:1 1 auto; }
+
+/* The strips fill the tab's height (.app is a fixed-height flex column; the rack's align-items:stretch sizes the strips). The fader row
+   absorbs the extra room; fader and meter stretch to the row height with 10px above and below. */
+.mixer-panel .mixer-container { flex:1 1 0; min-height:0; }
+.mixer-panel .mixer-rack { min-height:0; }
+.mixer-panel .strip { height:auto; }
+.mixer-panel .strip-fader-row { flex:1 1 auto; min-height:150px; padding:10px 0; align-items:stretch; }
+.mixer-panel .fader-wrap { height:100%; }
+.mixer-panel .strip-meter-host { height:100%; }
+.mixer-panel .strip-meter-host .db-meter-stereo-bar { height:100% !important; }
+
+/* Fit at the fixed 1440px .app width (1416px available after the panel padding): instrument rack 16*67 (15 channels + kit gain) +
+   15 gaps*5 + 12 padding = 1159, master group 3*67 + 2 gaps*5 + 12 = 223, container gap 5 -> 1387px. The ~29px headroom absorbs
+   the hover growth of the strips (at exactly 1416px a horizontal scrollbar appeared while hovering a knob). */
+.strip { display:flex; flex-direction:column; gap:4px; width:67px; flex:0 0 auto; height:420px; background:var(--panel); border-radius:var(--r); padding:6px 6px 8px; border-top:3px solid var(--strip-color, var(--border2)); }
+
+.strip > * { box-sizing:border-box; }
+
+.strip.is-master {
+    border-top-color:var(--red); width:67px; /* as wide as the bus strips — headroom for hover growth (fit math above) */
+    position:sticky; left:0; z-index:5;
+  }
+
+.strip.is-bus { border-top-color:var(--cyan); }
+
+.strip-fx { display:flex; flex-direction:column; gap:2px; height:auto; min-height:100px; }
+
+.strip:not(.is-bus) .strip-fx { padding-bottom:6px; }
+
+.fx-slot-select {
+  flex:1;
+  min-width:0;
+  font-size:9px;
+  background:var(--raised);
+  color:var(--text);
+  border-radius:2px;
+  padding:2px 3px;
+  cursor:pointer;
+  appearance:none;
+  -webkit-appearance:none;
+  font-family:'Inter','SF Pro Text',-apple-system,system-ui,sans-serif;
+  letter-spacing:.03em;
+  text-transform:uppercase;
+}
+
+.fx-slot-top { display:flex; align-items:center; gap:3px; }
+
+.fx-settings-btn { flex:0 0 auto; width:18px; height:18px; padding:0; display:flex; align-items:center; justify-content:center; background:var(--raised); border-radius:2px; color:var(--muted); cursor:pointer; }
+
+.fx-settings-btn svg { width:12px; height:12px; display:block; }
+
+.fx-settings-btn:hover { color:var(--cyan); background:color-mix(in srgb, var(--raised) 80%, var(--cyan) 20%); }
+
+.fx-settings-btn.hidden { display:none; }
+
+.fx-slot-select.off { box-shadow:inset 0 0 0 999px var(--panel); }
+
+.strip-knobs-row { display:flex; justify-content:center; gap:4px; min-height:44px; }
+
+.knob-wrap { display:flex; flex-direction:column; align-items:center; gap:2px; }
+
+.knob { width:20px; height:20px; border-radius:50%; background:radial-gradient(circle at 30% 30%, var(--raised), var(--bg)); border:2px solid var(--border2); position:relative; cursor:ns-resize; touch-action:none; }
+
+.knob:hover, .knob:active { border-color:var(--cyan); }
+
+.knob-label { font-size:7px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; font-family:'Inter','SF Pro Text',-apple-system,system-ui,sans-serif; }
+.knob-value { font-size:10px; color:var(--amber); min-width:26px; text-align:center; white-space:nowrap; line-height:1.1; }
+
+.knob-visual.active { border-color:var(--amber); }
+
+.knob-tooltip {
+  position:fixed;
+  transform:translate(-50%,-100%);
+  background:var(--panel);
+  border:1px solid var(--cyan);
+  color:var(--text);
+  font-size:9px;
+  padding:2px 5px;
+  border-radius:2px;
+  pointer-events:none;
+  opacity:0;
+  transition:opacity .08s;
+  z-index:60;
+  white-space:nowrap;
+}
+
+.knob-tooltip.show { opacity:1; }
+
+.strip-db { position:relative; width:28px; flex:0 0 auto; font-size:9px; text-align:center; color:var(--amber); font-variant-numeric:tabular-nums; height:18px; line-height:18px; cursor:pointer; white-space:nowrap; }
+.strip-db-input {
+  display:none;
+  position:absolute;
+  left:50%;
+  top:50%;
+  transform:translate(-50%,-50%);
+  width:46px;
+  text-align:center;
+  background:var(--bg);
+  border:1px solid var(--amber);
+  color:var(--amber);
+  font-size:9px;
+  font-family:inherit;
+  font-variant-numeric:tabular-nums;
+  padding:1px 2px;
+  z-index:10;
+  outline:none;
+  border-radius:2px;
+}
+
+/* Auto gain row (instrument strips): button + target peak. Every strip carries
+   the row (empty on master/buses) so all faders stay aligned. */
+.strip-auto-row { display:flex; align-items:center; justify-content:center; gap:3px; height:18px; margin-top:4px; }
+.auto-btn { font-size:8px; font-weight:700; padding:3px 4px; border-radius:2px; cursor:pointer; background:var(--raised); border:1px solid var(--border2); color:var(--muted); line-height:1; }
+.auto-btn:hover:not(:disabled) { border-color:var(--amber); color:var(--text); }
+.auto-btn.active { background:var(--amber); border-color:var(--amber); color:#1e293b; }
+.auto-btn:disabled { opacity:.35; cursor:default; }
+.auto-target { position:relative; font-size:9px; color:var(--amber); font-variant-numeric:tabular-nums; cursor:pointer; white-space:nowrap; }
+.fader:disabled { opacity:.5; }
+#mxAutoAllBtn.active { background:var(--amber); border-color:var(--amber); color:#1e293b; }
+#mxAutoAllBtn:disabled { opacity:.35; cursor:default; }
+/* Mixer Options: the two select rows share one width and sit flush right. */
+#dggMeterPeakHoldSelectMixer, #dggAutoGainMinSelect { margin-left:auto; box-sizing:border-box; width:62px; }
+
+/* Value row directly above the fader row: the fader value over the fader (28px), the
+   read-only peak value over the meter (14px), same gap/centering as .strip-fader-row so
+   both numbers land exactly on their bar. The peak is hidden until a peak exists; the
+   meter toggles display/text/color (createStereoDbMeter, db-meter.js). */
+.strip-readout-row { display:flex; gap:6px; justify-content:center; align-items:flex-end; height:18px; margin-top:6px; }
+.strip-peak-slot { position:relative; width:14px; height:18px; flex:0 0 auto; }
+.strip-peak-readout { position:absolute; left:50%; top:0; transform:translateX(-50%); text-align:center; font-size:9px; line-height:18px; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; display:none; }
+/* The master's fader row additionally carries the 18px gain scale on the right: mirror it
+   so the centered value row still lands on the bars. */
+.strip.is-master .strip-readout-row::after { content:''; width:18px; flex:0 0 auto; }
+
+.strip-fader-row { display:flex; gap:6px; justify-content:center; height:150px; }
+
+/* Console-style fader: a dark groove and a wide cap with a center line. A horizontal range input rotated -90deg (min at the bottom);
+   pseudo-element geometry is more predictable than vertical writing-mode sliders. Local coordinates are pre-rotation: x runs along
+   the fader axis, y across it. */
+.fader-wrap { position:relative; width:28px; height:140px; flex:0 0 auto; }
+
+/* The input's width (pre-rotation) is the fader's travel length. The plugin tab measures the fader row and publishes it as
+   --fader-len (mixer-tab.js); an absolutely positioned input cannot take a percentage of its row's height. */
+.fader-wrap input[type=range] {
+  position:absolute;
+  top:50%;
+  left:50%;
+  width:var(--fader-len, 140px);
+  height:28px;
+  transform:translate(-50%,-50%) rotate(-90deg);
+  -webkit-appearance:none;
+  appearance:none;
+  background:transparent;
+  margin:0;
+  cursor:ns-resize;
+  touch-action:none;
+}
+
+/* The groove: a thin recessed slot the cap rides in. */
+.fader-wrap input[type=range]::-webkit-slider-runnable-track { height:4px; border-radius:2px; background:#04060a; box-shadow:inset 0 1px 2px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.06); }
+.fader-wrap input[type=range]::-moz-range-track { height:4px; border-radius:2px; background:#04060a; box-shadow:inset 0 1px 2px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.06); }
+
+/* The cap: 22px across x 18px along the axis. The center line runs across the cap; the body shading runs from dark (page bottom)
+   to light (page top). */
+.fader-wrap input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance:none; appearance:none;
+    width:18px; height:22px; border-radius:3px;
+    margin-top:-9px; /* (22-4)/2: webkit top-aligns the track, so center the cap on the groove */
+    margin-left:7px; /* anchors the cap at its centre (18px/2 = 9, minus 2 for the value line's width) so the amber value line sits on the dB position of the meter scale */
+    border:1px solid #0a0d12;
+    box-shadow:0 2px 6px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.25);
+    background-image:
+      linear-gradient(90deg, transparent calc(50% - 1px), var(--amber) calc(50% - 1px), var(--amber) calc(50% + 1px), transparent calc(50% + 1px)),
+      linear-gradient(90deg, #454c5c 0%, #626a7c 50%, #87909f 100%);
+  }
+.fader-wrap input[type=range]::-moz-range-thumb {
+    width:18px; height:22px; border-radius:3px;
+    margin-left:7px; /* same as webkit rule: centre anchor so the value line matches the meter scale */
+    border:1px solid #0a0d12;
+    box-shadow:0 2px 6px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.25);
+    background-image:
+      linear-gradient(90deg, transparent calc(50% - 1px), var(--amber) calc(50% - 1px), var(--amber) calc(50% + 1px), transparent calc(50% + 1px)),
+      linear-gradient(90deg, #454c5c 0%, #626a7c 50%, #87909f 100%);
+  }
+.fader-wrap input[type=range]:hover::-webkit-slider-thumb,
+.fader-wrap input[type=range]:active::-webkit-slider-thumb {
+  border-color:var(--amber);
+}
+.fader-wrap input[type=range]:hover::-moz-range-thumb,
+.fader-wrap input[type=range]:active::-moz-range-thumb {
+  border-color:var(--amber);
+}
+
+.strip-meter-host { width:14px; height:140px; }
+
+.strip-meter-host .db-meter-stereo-bar { width:6px !important; height:140px !important; }
+
+/* Master only: a dB scale right of the meter, spanning its full height (the meter's -60..+18 range). Layout: [fader 28][gap][meter 14][gap][scale 18]. */
+.strip.is-master .gain-scale { position:relative; width:18px; height:100%; flex:0 0 auto; }
+.gain-tick { position:absolute; left:0; transform:translateY(50%); font-size:8px; line-height:1; color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.gain-tick::before { content:''; position:absolute; right:100%; top:50%; width:4px; height:1px; background:var(--border2); margin-right:2px; }
+/* Sign-less ticks (0, +6 ... +18) would otherwise sit left of the others' digits —
+   nudge them right by roughly one minus-sign's width so every number's first
+   digit lines up in the same column (same treatment as the drum-engine meter). */
+.gain-tick-nosign span { margin-left:0.5em; }
+
+.strip-btns { display:flex; gap:3px; }
+
+.strip-btns button { flex:1; font-size:8px; font-weight:700; padding:4px 0; border-radius:2px; cursor:pointer; background:var(--raised); border:1px solid var(--border2); color:var(--muted); }
+
+.strip-btns button.mute.active { background:var(--red); border-color:var(--red); color:#fff; }
+
+.strip-btns button.solo.active { background:var(--amber); border-color:var(--amber); color:#1e293b; }
+
+.strip-name {
+  font-size:9px;
+  text-align:center;
+  font-weight:700;
+  color:var(--amber);
+  font-family:'Inter','SF Pro Text',-apple-system,system-ui,sans-serif;
+  letter-spacing:.03em;
+  text-transform:uppercase;
+  height:18px;
+  line-height:18px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.strip-bottom { display:flex; flex-direction:column; gap:4px; padding-bottom:2px; }
+
+.strip-sep { display:none; }
+
+.fx-pop {
+    position:fixed; z-index:50; background:var(--panel); border:1px solid var(--cyan); border-radius:var(--r);
+    padding:10px; width:210px; box-shadow:0 8px 24px rgba(0,0,0,.5);
+    /* Body-level panel (outside the scaled .app): match the app's UI scale so it
+       lines up with and scales like the rest of the UI. */
+    transform: scale(var(--ui-scale, 1)); transform-origin: top left;
+  }
+
+/* Floating effect panels: header is the drag handle + holds title & close button. */
+.fx-panel { cursor:default; }
+.fx-panel-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 8px; cursor:grab; user-select:none; }
+.fx-panel-head:active { cursor:grabbing; }
+.fx-panel-title { font-size:10px; color:var(--cyan); text-transform:uppercase; letter-spacing:.06em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.fx-panel-close-btn { flex:0 0 auto; width:18px; height:18px; line-height:15px; padding:0; border-radius:4px; border:1px solid var(--border2); background:var(--raised); color:var(--muted); font-size:13px; cursor:pointer; }
+.fx-panel-close-btn:hover { color:#fff; border-color:#ef4444; background:rgba(239,68,68,.15); }
+
+.fx-pop h3 { margin:0 0 8px; font-size:10px; color:var(--cyan); text-transform:uppercase; letter-spacing:.06em; }
+
+/* FX params are rotary knobs (same .ctrl dial widget as Note Editor / Drum
+   Engine), laid out in one centered row like the RIDE panel. */
+.fx-pop .ne-dial-row-items { justify-content:center; margin:2px 0 4px; }
+
+/* Compressor popover: grow to fit all five dials and force a single (no-wrap)
+   row, so Makeup sits beside Release instead of dropping to a second line. */
+.fx-pop.fx-pop-comp { width:fit-content; min-width:210px; }
+.fx-pop.fx-pop-comp .ne-dial-row-items { flex-wrap:nowrap; }
+
+﻿/* --- EQ settings panel: response curve + per-band gain faders + Freq/Q knobs --- */
+.eq-panel { display:flex; flex-direction:column; gap:7px; }
+.eq-curve-svg { width:100%; height:auto; display:block; background:#04060a; border:1px solid var(--border2); border-radius:3px; }
+.eq-grid { stroke:rgba(148,163,184,.14); stroke-width:1; }
+.eq-grid-zero { stroke:rgba(148,163,184,.40); }
+.eq-curve-path { fill:none; stroke:var(--cyan); stroke-width:1.6; stroke-linejoin:round; }
+.eq-gains { display:flex; justify-content:center; gap:16px; padding:2px 0; }
+.eq-gain-col { display:flex; flex-direction:column; align-items:center; gap:3px; }
+.eq-band-label { font-size:8px; letter-spacing:.05em; color:var(--muted); text-transform:uppercase; }
+.eq-panel .fader-wrap { height:82px; --fader-len:82px; width:26px; }
+.eq-gain-val { font-size:9px; color:var(--amber); }
+.eq-knobs { display:flex; justify-content:center; align-items:flex-start; gap:14px; padding-top:2px; }
+.eq-band-col { display:flex; flex-direction:column; align-items:center; gap:7px; }
+.eq-knobs .ctrl-label { display:none; } /* keine Text-Labels — nur der Wert */
+
+/* --- Limiter settings panel: scope (top) + knobs (bottom row) --- */
+/* Fixed width, NOT fit-content: the scope canvas sets its buffer to
+   cssWidth*dpr, and a fit-content panel feeds that intrinsic size back into
+   the layout (ResizeObserver loop -> panel grows by dpr on every cycle). */
+.fx-pop.fx-pop-lim { width:500px; padding:8px 12px; }
+.lim-panel { display:flex; flex-direction:column; gap:10px; }
+
+/* Real-time scope (FL-style dual waveform) */
+.lim-scope-host { flex:0 0 auto; }
+.lim-scope { display:flex; flex-direction:column; gap:6px; }
+.lim-scope-wrap { width:100%; height:210px; border:1px solid var(--border2); border-radius:5px; background:#05080f; padding:6px; overflow:hidden; box-sizing:border-box; }
+.lim-scope-wrap canvas { display:block; width:100%; height:100%; border-radius:3px; }
+.lim-scope-status { display:flex; flex-wrap:wrap; align-items:center; gap:14px; font-size:10px; color:var(--muted); padding:0 2px; }
+.lim-scope-status b { color:var(--text); font-family:'Consolas',monospace; font-weight:600; }
+/* Peak string always on its own row with fixed-width values, so changing numbers never re-wrap the status
+   (a re-wrap moves the knob row and drops the accessible hover-zoom). */
+.lim-scope-status .lim-pk { flex:0 0 100%; white-space:nowrap; }
+.lim-scope-status .lim-pk b { display:inline-block; min-width:7ch; }
+.lim-scope-status .lg { display:inline-flex; align-items:center; gap:5px; }
+.lim-scope-status .lg i { width:14px; height:3px; border-radius:2px; display:inline-block; }
+.lim-scope-status .lg.out i { background:#f8fafc; box-shadow:0 0 6px rgba(248,250,252,.5); }
+.lim-scope-status .lg.in i { background:#c084fc; box-shadow:0 0 6px rgba(192,132,252,.5); }
+.lim-knobs { display:flex; justify-content:center; padding-top:10px; border-top:1px solid var(--border2); }
+.lim-knobs-inner { display:flex; gap:24px; justify-content:center; }
+
+/* Instrument sub-tabs in the transport row, centered, as a compact segmented control. */
+#blockPaletteWrap .de-inline-tabs { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); flex-wrap:nowrap; gap:0; display:inline-flex; border:1px solid var(--border2); border-radius:var(--r); overflow:hidden; }
+#blockPaletteWrap .de-inline-tabs .de-param-tab-btn { padding:5px 10px; margin:0; border:none; border-right:1px solid var(--border2); border-radius:0; background:transparent; color:var(--text); font-size:12px; line-height:1; }
+#blockPaletteWrap .de-inline-tabs .de-param-tab-btn:last-child { border-right:none; }
+#blockPaletteWrap .de-inline-tabs .de-param-tab-btn:hover { background:rgba(14,165,233,.10); color:var(--text-bright); }
+#blockPaletteWrap .de-inline-tabs .de-param-tab-btn.active { background:rgba(14,165,233,.18); color:var(--amber); font-weight:600; box-shadow:none; }
+
+/* Visible "+ Add Track" button in the toolbar corner above the track list */
+.ne-toolbar-corner .ne-add-track-btn { font-size:10px; padding:4px 9px; white-space:nowrap; }
