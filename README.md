@@ -4,6 +4,20 @@ A drum groove generator and drum synthesizer as a VST3 instrument plugin. It wri
 
 **Version 0.8 (first public release).** Tested on Windows 11 with VST3 hosts. The macOS code paths exist but have never been built or run; see [Status](#status).
 
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
+Framework iplug2
+
+## 📸 Preview
+
+| Note Editor | Song Generator |
+| :---: | :---: |
+| ![Note Editor](img/dg_note_editor.png) | ![Song Generator](dg_song_generator.png) |
+
+| Mixer | Drum Engine |
+| :---: | :---: |
+| ![Mixer](img/dg_mixer.png) | ![Drum Engine](dg_drum_engine.png) |
+
 ## What it does
 
 - **Groove generator.** Generates patterns per instrument group from density, variation, subdivision, feel and phrase length. Every instrument has its own phrase length; generated groups can be edited by hand in the note editor.
