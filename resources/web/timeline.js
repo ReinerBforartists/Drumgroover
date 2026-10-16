@@ -159,7 +159,6 @@ function renderTimeline() {
   staticHead.style.display = (typeof playing !== 'undefined' && playing) ? 'none' : 'block';
   ruler.appendChild(staticHead);
 
-  ruler.dataset.tooltip = 'Playhead\nClick or drag to set its position.';
   const beatAtRulerX = (clientX) => {
     const rect = ruler.getBoundingClientRect();
     const x = clientX - rect.left + ruler.scrollLeft - tlLeadInPx;
@@ -306,7 +305,6 @@ function renderTimeline() {
       }
       renderTimeline(); renderBlockTabs();
     });
-    clip.dataset.tooltip = `Clip\nDrag to move it · Shift+drag to duplicate · Drag out of the plugin onto the DAW's Playlist or Channel Rack to insert the whole song as MIDI (single blocks: drag from the block bar above) · Click to select · Shift/Ctrl+click for multi-select · Double-click to open in the editor · Right-click to delete · Right-drag to delete multiple`;
 
     attachClipDrag(clip, idx, pxPerBar, numerator);
     track.appendChild(clip);
@@ -398,7 +396,6 @@ function attachLassoSelectOnce() {
   if (tlLassoAttached) return;
   tlLassoAttached = true;
   const track = document.getElementById('tlTrack');
-  track.dataset.tooltip = 'Timeline\nDrag on empty space to lasso-select multiple clips · Shift+drag to add to the selection · Ctrl/Cmd+drag to toggle.';
   let lasso = null; // { startBar, mode, baseSelection, moved, rectEl }
 
   const barAtTrackX = (clientX) => {

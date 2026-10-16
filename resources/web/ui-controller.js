@@ -91,7 +91,6 @@ function renderBlockTabs() {
     item.className = 'palette-item' + (b.id===activeBlockId ? ' active' : '');
     item.style.background = blockColor(b.id);
     item.dataset.blockId = b.id;
-    item.dataset.tooltip = 'Song Block\nDrag into the timeline to insert a copy · Drag out of the plugin onto the DAW\'s Playlist or Channel Rack to insert it as MIDI · Click to load into the editor · Double-click to rename · Right-click to delete · Right-drag to delete multiple';
 
     const nameStrip = document.createElement('div');
     nameStrip.className = 'palette-item-name';

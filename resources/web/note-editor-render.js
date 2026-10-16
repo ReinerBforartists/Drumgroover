@@ -197,7 +197,6 @@ function neBuildRuler(ctx) {
   const { numerator, totalBeats, blockBeats, pxPerBeat, totalW } = ctx;
   const ruler = document.createElement('div');
   ruler.className = 'ne-ruler'; ruler.style.width = 'calc(100% - 170px)';
-  ruler.dataset.tooltip = 'Playhead\nClick or drag to set its position.';
   ruler.style.overflowX = 'hidden';
   const rulerInner = document.createElement('div');
   rulerInner.style.cssText = `position:relative; width:${totalW}px; height:100%;`;
@@ -521,12 +520,7 @@ function neRenderGroupHeader(t, ctx, refs) {
         dot.style.left = (NE_LEFT_PAD + note.beat*pxPerBeat)+'px';
         dot.style.top = (NE_ROW_H/2)+'px';
         dot.style.background = noteLocked ? 'var(--muted)' : fadedColor(gt.color, note.vel/127);
-        if (noteLocked) {
-          dot.dataset.tooltip = 'Note\nLocked — copied from the parent block.';
-        } else {
-          dot.dataset.tooltip = note.turnaround
-            ? 'Turnaround Fill\nSquare turnaround-fill note. Editing it locks this group like any other hand-edit.'
-            : 'Note\nDrag to move or reassign · Click to select · Right-click to delete. Expand the group to edit individually.';
+        if (!noteLocked) {
           dot.addEventListener('contextmenu', (e) => {
             e.preventDefault(); e.stopPropagation();
             if (suppressNextContextMenu) { suppressNextContextMenu = false; return; }
@@ -913,12 +907,7 @@ function neRenderTrackLeafRow(t, ctx, refs) {
     dia.style.left = (NE_LEFT_PAD + note.beat*pxPerBeat)+'px';
     dia.style.top = (NE_ROW_H/2)+'px';
     dia.style.background = noteLocked ? 'var(--muted)' : fadedColor(t.color, note.vel/127);
-    if (noteLocked) {
-      dia.dataset.tooltip = 'Note\nLocked — copied from the parent block. Edit it via "Edit whole block" in the Break tab.';
-    } else {
-      dia.dataset.tooltip = note.turnaround
-        ? 'Turnaround Fill\nSquare turnaround-fill note. Moving or deleting it locks this group like any other hand-edit.'
-        : 'Note\nDrag to move (snaps) · Right-click to delete.';
+    if (!noteLocked) {
       dia.addEventListener('contextmenu', (e) => {
         e.preventDefault(); e.stopPropagation();
         if (suppressNextContextMenu) { suppressNextContextMenu = false; return; }
