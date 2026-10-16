@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // HiHat oscillator bank + BP2 band pass (U3-B MFB) as one exact solution: the six CD4584 Schmitt oscillators are an analytic edge schedule (ideal gates, 1 us edges), the sum of their outputs S drives the
 // linear BP2, whose DAE is solved in closed form per segment (modes from 808HhModel.h, bp2). Output = bp2out at any time, no time step.

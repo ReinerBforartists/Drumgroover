@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // TR-808 / Yocto snare drum voice. The sound comes from the fast model in 808SnareFast.h (derived from the NOISE and SD sheets of the common NGSpice circuit). The voice
 // synthesises every hit directly on the audio thread. Every hit draws its own noise seed, as the circuit's noise source never repeats.

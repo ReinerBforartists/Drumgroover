@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // HiHat envelope generator (trigger / accent stage, decay storage, choke logic) as a fast model: the trigger rise phase (0 .. kT0, where the circuit is a stiff edge-driven transient) is a table per
 // velocity, from kT0 on the 24-node network is integrated with the dense trapezoid solver and a step that grows with the time since the trigger (the decay is smooth). The state at kT0 is tabulated per

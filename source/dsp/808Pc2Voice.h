@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // TR-808 / Yocto PC-2 (Boss PC-2 equivalent, sheet PC-2). The sound comes from the fast model in 808Pc2Fast.h (a functional-block model derived from the PC-2 sheet of the common NGSpice
 // circuit). The voice synthesises every hit directly on the audio thread, at the host

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 
 // PreviewScheduler — internal playback for the plugin's own Play button.

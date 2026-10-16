@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 // Shared filename timestamp — local time, format: 2026-07-15_143052.
 // Used for exports and saves so all downloaded files share a naming convention.
 function timestampSlug() {

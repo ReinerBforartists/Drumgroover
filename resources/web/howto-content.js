@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 // =========================================
 // HOW TO — content of the How-To tab's accordion sections (markup: index.html, #howto-*)
 // =========================================

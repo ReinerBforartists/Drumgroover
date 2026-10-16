@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 // checkbox (optional): { label, id } — renders an extra checkbox row (e.g.
 // "Don't ask again"). ONLY changes the resolved shape when passed, so every
 // existing call site (which doesn't pass it) keeps getting back a plain

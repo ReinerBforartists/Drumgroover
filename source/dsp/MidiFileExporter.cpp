@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #include "MidiFileExporter.h"
 #include "808InstrumentTable.h"
 

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Reiner Prokein
 # Embeds every file of resources/web into a generated C++ source, so the plugin DLL carries its own web UI.
 # The generated DggEmbeddedWebResource() is the lookup the WebView serves https://iplug.example/<name> from.
 function(dgg_embed_web_resources out_cpp web_dir)

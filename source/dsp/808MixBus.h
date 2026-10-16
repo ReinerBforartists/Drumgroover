@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // Level reference of the instrument voices: one jack-voltage -> sample factor for the whole kit, scaled by the mixing resistors of the IO sheet.
 // Each instrument reaches the left and the right bus through its own resistor (12k, or 8.2k / 15k for LT, HT, CY, OH, CH). A pair is weighted

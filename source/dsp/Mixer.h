@@ -1,4 +1,6 @@
-﻿#pragma once
+﻿// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
+#pragma once
 // ============================================================================
 // MIXER — per-channel signal chain for the 15 instrument channels, master
 // bus and reverb/delay buses.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 // =========================================
 // NOTE EDITOR — POINTER INTERACTIONS
 // Drag/select gestures on the grid: triplet-zone range drag, rectangle multi-select,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 
 // Scheduler — real-time, host-synced playback of a compiled FullPattern.

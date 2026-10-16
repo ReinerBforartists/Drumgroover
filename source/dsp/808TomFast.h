@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // Fast model of the TR-808 / Yocto toms and congas (LT/MT/HT sheet, Tom or Conga switch position): one hit for any tuning, level and accent, synthesised sample by sample.
 //

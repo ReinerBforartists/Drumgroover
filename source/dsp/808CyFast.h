@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // Cymbal / ride fast model: oscillator bank + BP1 / BP2 as exact modes, and the rest of the circuit as four coupled sub-networks (808CyModel.h, generated):
 //   E   trigger stage (Q2, Q6, Q19), EG#1..3, c45node / c40node / q20emit / q19emit        (cymodel::eg; cymodel::eg2 = the same without Q2 / Q6 / Q19 after the trigger pulse)

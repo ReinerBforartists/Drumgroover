@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 // =========================================
 // NOTE EDITOR — RENDERING
 // Split out of note-editor.js. renderNoteEditor() is the top-level entry

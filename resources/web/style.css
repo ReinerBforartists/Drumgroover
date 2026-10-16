@@ -1,4 +1,6 @@
 @charset "UTF-8";
+/* SPDX-License-Identifier: MIT */
+/* Copyright (c) 2026 Reiner Prokein */
 /* No text selection anywhere in the plugin UI, except in the How-To tab. */
 * { -webkit-user-select:none; -moz-user-select:none; -ms-user-select:none; user-select:none; }
 

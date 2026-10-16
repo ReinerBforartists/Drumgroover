@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 class ArticulationAndCCMapper {
   constructor() {
     // Articulation velocity bands tailored for SD3 & Battery 4 sample triggering

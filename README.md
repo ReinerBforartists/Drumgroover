@@ -95,13 +95,16 @@ During development you can point the plugin to the web files on disk instead of 
 - Windows only for now. macOS: the file dialogs and the WKWebView loading path are written but never built. No other plugin formats. Tested with the DAW the author uses; other DAWs should work but haven't been tried.
 - Bug reports and test results from other DAWs are welcome.
 
-## 🙏 Credits and licenses
+## 🙏 Credits
 
-- [iPlug2](https://github.com/iPlug2/iPlug2) (WDL license / MIT, see the framework's own license files)
-- [Yocto V2.0](https://github.com/e-licktronic/Yocto-V2.0) by e-licktronic: the 808 engine is based on its circuit and tuned against recordings of the Yocto 2
-- [NGSpice](https://ngspice.sourceforge.io/) for the circuit simulations the 808 engine was built from
-- Microsoft Edge WebView2 SDK and WIL
-- [nlohmann/json](https://github.com/nlohmann/json) (MIT)
-- Steinberg VST3 SDK
+- [Yocto V2.0](https://github.com/e-licktronic/Yocto-V2.0) by e-licktronic: the 808 engine is based on its circuit and tuned against recordings of the Yocto 2. No Yocto files are part of this repository.
+- [iPlug2](https://github.com/iPlug2/iPlug2) by Oliver Larkin and contributors: the plugin framework (WDL license / MIT, see the framework's own license files).
+- [nlohmann/json](https://github.com/nlohmann/json): JSON parsing (MIT, comes with iPlug2).
+- Microsoft Edge WebView2 SDK and WIL: the web view the user interface runs in.
+- Steinberg VST3 SDK (MIT).
 
-DrumGroover itself is released under the [MIT License](LICENSE). The third-party components above keep their own licenses; the VST3 SDK in particular is subject to Steinberg's terms.
+All third-party components keep their own licenses.
+
+## 📜 License
+
+DrumGroover is released under the [MIT License](LICENSE).

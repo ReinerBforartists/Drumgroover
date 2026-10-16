@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 // macOS NSSavePanel/NSOpenPanel implementation of PlatformFileDialog.h —
 // see that header for the full contract. Only compiled on Mac (see
 // CMakeLists.txt's `if(APPLE)` source guard); OS_MAC is also checked here

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // TR-808 / Yocto hand clap and maracas, fast model. Both positions of SW12 are driven by the noise source of the NOISE sheet, so the model is statistical:
 // a hit is a function of (accent, level, noise seed) and a different noise realisation gives a different hit of the same statistics, as in the circuit.

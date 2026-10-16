@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // Fast model of the TR-808 / Yocto rim shot and claves (RM sheet, switch SW11): one hit for any level and accent, synthesised sample by sample.
 //

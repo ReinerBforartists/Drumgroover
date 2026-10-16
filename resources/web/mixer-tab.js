@@ -1,4 +1,6 @@
-﻿// =========================================
+﻿// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
+// =========================================
 // MIXER TAB — port of the mixer.html mockup (layout/interaction prototype).
 // Kept in an IIFE so its helpers (state, createKnob, renderStrip, ...) don't
 // collide with the rest of the app.

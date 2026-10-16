@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #define PLUG_NAME "DrumGroover"
 #define PLUG_MFR "Reiner Prokein"
 #define PLUG_VERSION_HEX 0x00000800

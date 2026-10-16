@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // The instrument table: one row per instrument instance (every articulation is its own instance) with the metadata the host and
 // the UI share -- identity, GM note, engine kind and arguments, mixer channel, knob schema and default values. The host reads its

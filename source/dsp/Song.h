@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 
 // Song — C++ read‑side port of generator‑core.js's SongEngine.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // TR-808 / Yocto snare drum, fast model. Derived from the NOISE and SD sheets of the common NGSpice circuit.
 //

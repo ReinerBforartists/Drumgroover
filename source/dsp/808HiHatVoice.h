@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // =========================================
 // HiHat808Voice -- cache playback; the fast model (808HhFast.h) is the baker.

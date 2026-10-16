@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Reiner Prokein
 cmake_minimum_required(VERSION 3.16)
 
 project(DrumGroover VERSION 0.8.0 LANGUAGES CXX)

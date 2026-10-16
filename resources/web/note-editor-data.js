@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 // =========================================
 // NOTE EDITOR — DATA / GEOMETRY HELPERS
 // Triplet-zone lookup, quantization, note selection, move proposals, row-grid drawing.

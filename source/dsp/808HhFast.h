@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // HiHat fast model: oscillator bank + BP2 (exact), envelope generator (table + solver), signal core (QH27 / DH13 chain, reduced Newton on the nonlinear nodes) and the linear output stage with the level pot.
 // One instance is one chain (open or closed); the open hat can be choked by a closed-hat hit. kSub core steps per host sample.

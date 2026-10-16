@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // TR-808 / Yocto cowbell, fast model. Derived from the CB sheet of the common NGSpice circuit.
 //

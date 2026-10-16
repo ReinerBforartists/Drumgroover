@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 // =========================================
 // NOTE EDITOR — CONTROL PANELS
 // Builds the sidebar/inline panels: block controls strip (length/turnaround/fill/zoom),

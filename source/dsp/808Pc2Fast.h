@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // Fast model of the TR-808 / Yocto PC-2 (Boss PC-2 equivalent, sheet PC-2): one hit for any knob state, synthesised sample by sample at any sample rate.
 //

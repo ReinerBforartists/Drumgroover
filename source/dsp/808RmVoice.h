@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // TR-808 / Yocto rim shot and claves (RM sheet, "RS/CL"). The sound comes from the fast model in 808RmFast.h (derived from the RM sheet of the common NGSpice circuit). The voice synthesises
 // every hit directly on the audio thread.

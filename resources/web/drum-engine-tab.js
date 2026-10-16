@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 // =========================================
 // Drum Engine tab — MIDI mapping test keyboard
 // =========================================

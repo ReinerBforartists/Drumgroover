@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 // =========================================
 // RENDERING — Timeline (DAW-style: ruler + freeform draggable track)
 // =========================================

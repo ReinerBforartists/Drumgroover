@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 class RNG {
   constructor(seed) { this.s = seed >>> 0 || (Date.now() & 0xffffffff); }
   next() { this.s = (this.s * 1664525 + 1013904223) >>> 0; return this.s / 0xffffffff; }

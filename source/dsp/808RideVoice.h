@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // TR808RideVoice -- the engine of the Ride and Cymbal/Crash instruments. A hit is played from the variant pool (808VariantPoolCache.h) when a baked
 // set exists; otherwise (and always while baking) it is synthesised live with the fast model of 808CyFast.h: metal bank and

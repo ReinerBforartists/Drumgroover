@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #include "DrumGroover.h"
 #include "IPlug_include_in_plug_src.h"
 

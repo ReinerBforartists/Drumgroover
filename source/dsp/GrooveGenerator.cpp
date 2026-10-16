@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #include "GrooveGenerator.h"
 
 #include <algorithm>

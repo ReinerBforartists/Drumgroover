@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // TR-808 / Yocto bass drum. The sound comes from the fast model in 808KickFast.h (derived from the BD sheet of the common NGSpice circuit). The voice synthesises
 // every hit directly on the audio thread, at the host sample rate.

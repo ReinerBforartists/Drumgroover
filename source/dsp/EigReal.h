@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 // Real nonsymmetric eigenvalue decomposition (used by the fast Tom/Conga model): balancing + Householder Hessenberg reduction + shifted QR (EISPACK orthes/hqr2, the algorithm of the
 // public-domain JAMA library), no external dependency. Used to get the modal form of the small (m x m) Galerkin system at run time.
 //   EigReal(n, A, wr, wi, V): A is n x n row-major (destroyed copy is made internally). Eigenvalues wr[k] + i wi[k]; eigenvectors in V (row-major n x n)

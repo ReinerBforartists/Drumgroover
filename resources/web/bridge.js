@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 // =========================================
 // HOST BRIDGE — iPlug2 WebView <-> C++ message layer
 // =========================================

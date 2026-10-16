@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 // Dense trapezoid / Newton solver for the small nonlinear networks of the HiHat fast model (generated data in 808HhModel.h): the signal cores of the open and closed chain and the envelope generators.
 // Modified nodal analysis with Gummel-Poon transistors (Q2SC945 / Q2SA733) and 1N4148 diodes, without the junction charges of the devices (the substrate capacitors

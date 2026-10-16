@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 #pragma once
 
 // Core data model for blocks, tracks, notes, grids, and patterns.

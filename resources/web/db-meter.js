@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Reiner Prokein
 // =========================================
 // DB METER — reusable peak meter: absolute-dB color zones, adjustable
 // falloff, peak-hold.
