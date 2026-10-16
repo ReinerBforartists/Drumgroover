@@ -191,6 +191,20 @@ void* IWebViewImpl::OpenWebView(void* pParent, float,float,float,float,float)
     Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>([&](
                                                                            HRESULT result,
                                                                            ICoreWebView2Environment* env) -> HRESULT {
+      if (FAILED(result) || env == nullptr)
+      {
+        // Typically the WebView2 Runtime is not installed. Without this check the call below dereferences null.
+        const int answer = MessageBoxW(
+          mParentWnd,
+          L"DrumGroover needs the Microsoft Edge WebView2 Runtime, which was not found on this computer.\n\n"
+          L"Open the Microsoft download page now? Install the \"Evergreen Bootstrapper\", then restart your host.",
+          L"DrumGroover", MB_YESNO | MB_ICONERROR);
+        if (answer == IDYES)
+          ShellExecuteW(nullptr, L"open", L"https://developer.microsoft.com/en-us/microsoft-edge/webview2/", nullptr,
+                        nullptr, SW_SHOWNORMAL);
+        return S_OK;
+      }
+
       mWebViewEnvironment = env;
 
       mWebViewEnvironment->CreateCoreWebView2Controller(

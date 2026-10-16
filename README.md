@@ -2,7 +2,7 @@
 
 A drum groove generator and drum synthesizer as a VST3 instrument plugin. It writes drum patterns for you (kick, snare, hi-hat, ride, toms, cymbals and custom percussion), arranges them into a song, plays them with a synthesized TR-808 sound, and exports them as MIDI, or drags them straight into your DAW.
 
-**Version 0.8 (first public release).** Tested on Windows 11 with VST3 hosts. The macOS code paths exist but have never been built or run; see [Status](#status).
+**Version 0.8 alpha (first public release).** Windows 11, 64 bit, VST3 only for now. The macOS code paths exist but have never been built or run; see [Status](#status).
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
@@ -31,8 +31,8 @@ Framework iplug2
 
 ## Requirements
 
-- Windows 64 bit (tested on Windows 11) and a VST3 host.
-- The Microsoft Edge WebView2 Runtime (already present on current Windows 11). The user interface is a web page shown in a WebView2 control; it is compiled into the plugin DLL, so no files besides the `.vst3` are needed.
+- Windows 11, 64 bit, and a VST3 host. Windows 10 is not supported.
+- The Microsoft Edge WebView2 Runtime (included with Windows 11; if it is missing, the plugin says so and offers the download page). The user interface is a web page shown in a WebView2 control; it is compiled into the plugin DLL, so no files besides the `.vst3` are needed.
 - A CPU with AVX2 is not required. A build with `-DDGG_AVX2=ON` is faster at baking.
 
 ## First start
@@ -78,13 +78,15 @@ During development you can point the plugin to the web files on disk instead of 
 
 ## Status
 
-- Windows VST3: built and used.
-- Not tested: macOS (the file dialogs and the WKWebView loading path are written but never built), other plugin formats, hosts other than the one the author uses, machines without the WebView2 Runtime.
-- Bug reports and test results from other systems are welcome.
+- Windows 11 VST3: built and used. Alpha, expect rough edges.
+- Windows only for now. macOS: the file dialogs and the WKWebView loading path are written but never built. No other plugin formats. Tested with the DAW the author uses; other DAWs should work but haven't been tried.
+- Bug reports and test results from other DAWs are welcome.
 
 ## Credits and licenses
 
 - [iPlug2](https://github.com/iPlug2/iPlug2) (WDL license / MIT, see the framework's own license files)
+- [Yocto V2.0](https://github.com/e-licktronic/Yocto-V2.0) by e-licktronic: the 808 engine is based on its circuit and tuned against recordings of the Yocto 2
+- [NGSpice](https://ngspice.sourceforge.io/) for the circuit simulations the 808 engine was built from
 - Microsoft Edge WebView2 SDK and WIL
 - [nlohmann/json](https://github.com/nlohmann/json) (MIT)
 - Steinberg VST3 SDK
