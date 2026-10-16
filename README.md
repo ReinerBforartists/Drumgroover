@@ -4,8 +4,6 @@
 
 **A drum groove generator and TR-808 style drum synth, as a VST3 plugin.**
 
-It writes drum patterns for you, arranges them into a song, plays them with a synthesized 808 kit, and exports them as MIDI or drags them straight into your DAW.
-
 ![Version](https://img.shields.io/badge/version-0.8%20alpha-orange.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%2011-blue.svg)
 ![Format](https://img.shields.io/badge/format-VST3-green.svg)
@@ -14,6 +12,16 @@ It writes drum patterns for you, arranges them into a song, plays them with a sy
 Built with [iPlug2](https://github.com/iPlug2/iPlug2)
 
 </div>
+
+It is a groove generator. A drum loop is made of several parts: a verse, a chorus, a turnaround, breaks, an intro and an outro.
+
+It is a sequencer. You arrange the song parts in order.
+
+It is a randomizer. You can randomize every instrument.
+
+It is a drum VST. The 808 engine is a TR-808 clone based on the circuit of the [Yocto V2.0](https://github.com/e-licktronic/Yocto-V2.0) hardware clone.
+
+And it plays nice with your DAW. Export the song or single parts as MIDI, or drag them straight into your project.
 
 > ⚠️ **Alpha (first public release).** It works and I use it, but expect rough edges. Windows 11, 64 bit, VST3 only for now. The macOS code paths exist but have never been built or run; see [Status](#-status).
 
@@ -29,14 +37,30 @@ Built with [iPlug2](https://github.com/iPlug2/iPlug2)
 
 ## 🎛️ What it does
 
-- **Groove generator.** Generates patterns per instrument group from density, variation, subdivision, feel and phrase length. Every instrument has its own phrase length; generated groups can be edited by hand in the note editor.
-- **Blocks and timeline.** Patterns live in blocks (main, break, fill). The timeline arranges blocks into a song, with a note preview in every clip. Playback follows the host transport, or runs on its own with the plugin's Play button.
+- **Groove generator.** Six instrument groups plus custom percussion, each with knobs for density, variation and grid. Turn a knob and the pattern regenerates; 🎲 rerolls it.
+- **Edit by hand.** Click, paint and drag notes in the note editor. A group you edit is locked, so rerolling leaves it alone.
+- **Blocks and timeline.** Verse, chorus, bridge, breaks, fills, intro and outro. The song generator arranges them into a full song, or you drag them onto the timeline yourself.
+- **Plays with your DAW.** Follows the host transport and tempo, or plays on its own. MIDI notes play the kit.
+- **Two sound engines.** A TR-808 clone based on the Yocto V2.0 circuit, and a simpler Lo-Fi engine.
+- **Mixer.** Faders, pan, effects, reverb and delay, a master limiter, and auto gain.
+- **MIDI export.** Export the song or single blocks as `.mid`, or drag them into your DAW.
+- **Everything is saved in your project.**
+
+<details>
+<summary><b>All the details</b></summary>
+
+- **Groove generator.** Six instrument groups (kick, snare, hi-hat, ride, toms, cymbals) plus extra percussion on custom tracks (high conga, claves, hand clap, maracas, cowbell, PC-2). Each group has its own knobs: *Subdiv* sets the grid the pattern is generated on, from 8th notes up to 64ths, *Dens* decides how many of the steps get a hit, and *Var* is the chance of an alternate articulation such as a rim shot, an open hi-hat or a ride bell. The snare also has *Ghost* for quiet notes between the main hits. The pattern regenerates while you turn a knob, and the 🎲 button rerolls a group with a new random seed. Every instrument has its own phrase length, so kick, hi-hat and percussion can loop against each other.
+- **Edit by hand.** Click, paint, select and drag notes in the note editor, edit velocities in their own lane, copy and paste, and mark ranges that play triplets instead of straight notes. A group you edit by hand is locked, so rerolling and the knobs leave it alone until you hand it back.
+- **Blocks and timeline.** Patterns live in blocks: verse, chorus, bridge, breaks, fills, intro and outro. Every block has its own length, feel (straight, swing or half-time), knob values and an optional turnaround fill every N bars. The song generator arranges your blocks into a complete structure such as 12 bar, AABA, ABAB, ABCABC or standard pop, or you drag the blocks onto the timeline yourself. Every clip shows a preview of its notes, and you can set a loop range.
+- **Playback.** The plugin follows your DAW's transport and takes the tempo from it. It also has its own Play button. Edits are picked up while it plays. MIDI notes sent to the plugin play the matching instrument, so you can play the kit from a keyboard.
 - **Two sound engines.**
-  - *808*: the drum voices are models of the TR-808 circuits, based on the [Yocto V2.0](https://github.com/e-licktronic/Yocto-V2.0), simulated in NGSpice and calibrated against recordings of the Yocto 2. Kick, snare, rim shot, claves, hand clap, maracas, toms and congas, cowbell, PC-2 percussion, hi-hat, ride and cymbals.
-  - *Lo-Fi*: a simpler synthesis engine.
-- **Mixer.** One channel per instrument with fader, pan, mute/solo, EQ and limiter slots, sends to reverb and delay buses, a master chain with a look-ahead limiter, and mixer presets.
-- **MIDI export.** Export the song or single blocks as `.mid` files, or drag clips from the timeline directly into the DAW's playlist.
-- **Project state.** All patterns, song, engine settings and the mixer are saved inside the host project.
+  - *808*: the drum voices are models of the TR-808 circuits, based on the [Yocto V2.0](https://github.com/e-licktronic/Yocto-V2.0), simulated in NGSpice and calibrated against recordings of the Yocto 2. Kick, snare, rim shot, claves, hand clap, maracas, toms and congas, cowbell, PC-2 percussion, hi-hat, ride and cymbals. Every instrument has the knobs of its circuit (tone, decay, level and so on), some have a morph pad that blends between four presets, and the hi-hat, ride and cymbals play several cached variants in rotation so repeated hits do not sound identical.
+  - *Lo-Fi*: a simpler synthesis engine without circuit controls.
+- **Mixer.** One channel per instrument with fader, pan, mute and solo, a level meter and four effect slots (EQ, compressor, saturation, transient shaper or limiter). Reverb and delay buses with a send per channel, a kit gain, and a master with EQ and look-ahead limiter. *Auto gain* plays the song and sets the faders so the peaks land on a target level. Mixer presets save the whole mixer.
+- **MIDI export.** Export the song as one `.mid` file, or every block as its own file. Or drag a clip or block from the timeline directly into your DAW's playlist.
+- **Project state.** Patterns, song, sound settings and mixer are saved inside the host project. You can also save and load the project as a separate `.json` file.
+
+</details>
 
 ## 💡 How it came about
 
