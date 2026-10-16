@@ -68,9 +68,12 @@ function renderNoteEditor() {
   const savedScrollY = window.scrollY;
   const container = document.getElementById('drumGrid');
   const sidebar = document.getElementById('neSidebar');
+  const fillHost = document.getElementById('neFillClusters');
   const hoveredDialRow = sidebar ? neHoveredSidebarRowIndex(sidebar) : -1;
+  const hoveredFillCluster = fillHost ? [...fillHost.children].findIndex(c => c.matches(':hover')) : -1;
   container.innerHTML = '';
   if (sidebar) sidebar.innerHTML = '';
+  if (fillHost) fillHost.innerHTML = '';
   neSyncZoomHeader();
   const block = findBlock(activeBlockId);
 
@@ -166,6 +169,7 @@ function renderNoteEditor() {
   const controls = neBuildControlsPanel(ctx);
   (sidebar || container).appendChild(controls);
   if (hoveredDialRow >= 0) neRestoreSidebarRowZoom(hoveredDialRow);
+  if (hoveredFillCluster >= 0 && fillHost.children[hoveredFillCluster]) neHoldZoom(fillHost.children[hoveredFillCluster], null);
 
   const ruler = neBuildRuler(ctx);
   container.appendChild(ruler);

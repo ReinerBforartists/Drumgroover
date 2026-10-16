@@ -1508,24 +1508,30 @@ function neHoveredSidebarRowIndex(sidebar) {
 }
 function neRestoreSidebarRowZoom(index) {
   const row = neSidebarEl && neSidebarEl.querySelectorAll('.ne-dial-row')[index];
-  if (!row || !document.body.classList.contains('a11y-hover-zoom')) return;
-  setClusterZoomOrigin(row, getClipAncestor(row));
-  // Zoomed from the first paint: a transition would show the row shrunken and growing again.
-  row.style.transition = 'none';
-  row.classList.add('ne-hover-hold');
-  void row.offsetHeight;
-  requestAnimationFrame(() => { row.style.transition = ''; });
+  if (!row) return;
   if (neSidebarEl.classList.contains('ne-zoom-noscroll') || neSidebarEl.scrollHeight <= neSidebarEl.clientHeight) neSidebarEl.classList.add('ne-zoom-noscroll');
+  neHoldZoom(row, getClipAncestor(row), neReleaseZoomNoScroll);
+}
+// Keeps `el` zoomed (class ne-hover-hold, styled like :hover) from the first paint of a rebuilt element
+// until the pointer leaves its zoomed rect. bounds: clip ancestor for the zoom origin (null = default).
+function neHoldZoom(el, bounds, onRelease) {
+  if (!document.body.classList.contains('a11y-hover-zoom')) return;
+  setClusterZoomOrigin(el, bounds || undefined);
+  // Zoomed from the first paint: a transition would show the element shrunken and growing again.
+  el.style.transition = 'none';
+  el.classList.add('ne-hover-hold');
+  void el.offsetHeight;
+  requestAnimationFrame(() => { el.style.transition = ''; });
   const heldAt = performance.now();
   const release = (e) => {
-    if (performance.now() - heldAt < 300) return;   // the row's rect is still mid-transition (.12s) and smaller than its final size
-    if (row.isConnected) {
-      const r = row.getBoundingClientRect();
+    if (performance.now() - heldAt < 300) return;   // the rect is still mid-transition (.12s) and smaller than its final size
+    if (el.isConnected) {
+      const r = el.getBoundingClientRect();
       if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return;
     }
-    row.classList.remove('ne-hover-hold');
+    el.classList.remove('ne-hover-hold');
     document.removeEventListener('mousemove', release, true);
-    neReleaseZoomNoScroll();
+    if (onRelease) onRelease();
   };
   document.addEventListener('mousemove', release, true);
 }

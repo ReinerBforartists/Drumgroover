@@ -158,6 +158,7 @@ body.a11y-hover-zoom .fx-pop .eq-knobs { position:relative; width:fit-content; p
 body.a11y-hover-zoom .mixer-rack .strip-knobs.pan-only .strip-knobs-row:first-child { position:relative; width:fit-content; margin:-4px auto; padding:4px; transition:transform .12s ease; }
 
 body.a11y-hover-zoom .ne-editing-toolbar .knob-cluster:hover,
+body.a11y-hover-zoom .ne-editing-toolbar .knob-cluster.ne-hover-hold,
 body.a11y-hover-zoom .ne-sidebar .ne-dial-row:hover,
 body.a11y-hover-zoom .ne-sidebar .ne-dial-row.ne-hover-hold,
 body.a11y-hover-zoom #dePolyRow .knob-cluster:hover,
@@ -176,6 +177,7 @@ body.a11y-hover-zoom .fx-pop .lim-knobs-inner:hover {
 body.a11y-hover-zoom .mixer-rack .strip-knobs.pan-only:hover { transform:none; background:transparent; box-shadow:none; }
 /* A zoomed container paints its raised background; each knob cell (.ctrl) would stay a darker patch with its own --panel background. */
 body.a11y-hover-zoom .ne-editing-toolbar .knob-cluster:hover .ctrl,
+body.a11y-hover-zoom .ne-editing-toolbar .knob-cluster.ne-hover-hold .ctrl,
 body.a11y-hover-zoom #dePolyRow .knob-cluster:hover .ctrl,
 body.a11y-hover-zoom #deParamPanels .knob-cluster.a11y-zoomed .ctrl,
 body.a11y-hover-zoom .mixer-rack .strip-knobs:hover .ctrl,
@@ -195,6 +197,9 @@ body.a11y-hover-zoom .fx-pop .lim-knobs-inner:hover .ctrl {
 .group-lock-icon { cursor:pointer; font-size:10px; margin-left:3px; }
 .group-lock-icon:hover { filter:brightness(1.4); }
 .knob-cluster input:disabled { opacity:.35; cursor:not-allowed; }
+/* Fill and Fill Kick: a different kind of group than the instrument groups, so their titles carry another colour. */
+.ne-fill-cluster .cluster-title { color:var(--cyan); }
+.ne-fill-cluster.ne-ctl-locked .cluster-knobs { opacity:.45; cursor:not-allowed; }
 .ctrl.knob-disabled .knob-visual { opacity:.35; cursor:not-allowed; }
 /* Locked groups dim only the interactive elements — never the label or the lock
    icon, which must stay visible and clickable. */

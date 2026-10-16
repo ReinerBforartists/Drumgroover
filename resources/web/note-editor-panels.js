@@ -278,6 +278,25 @@ function neCreateDial(opts) {
   return ctrlBox;
 }
 
+// A Note Editor toolbar cluster built from dials, in the look of the static group clusters. It carries
+// `titleLabel` and takes the lock class like a dial row, so the lock/reroll helpers work on it unchanged.
+function neToolbarCluster(titleText, dials) {
+  const cluster = document.createElement('div');
+  cluster.className = 'knob-cluster ne-fill-cluster';
+  const title = document.createElement('div');
+  title.className = 'cluster-title';
+  title.appendChild(document.createTextNode(titleText + ' '));
+  const knobs = document.createElement('div');
+  knobs.className = 'cluster-knobs';
+  dials.forEach(d => knobs.appendChild(d));
+  cluster.appendChild(title);
+  cluster.appendChild(knobs);
+  cluster.titleLabel = title;
+  cluster.addEventListener('mouseenter', () => { if (!cluster.classList.contains('ne-hover-hold')) setClusterZoomOrigin(cluster); });
+  document.getElementById('neFillClusters').appendChild(cluster);
+  return cluster;
+}
+
 // Lays out a row of dials with an optional heading.
 function neDialRow(titleText, dials) {
   const group = document.createElement('div');
@@ -436,8 +455,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
     title: 'Amount\nHow many hits land within the fill window — independent of its length.',
     onChange: v => { block.turnaroundDensity = v; applyTurnaroundChange(); },
   });
-  const fillDialRow = neDialRow('Fill', [tsDial, tdDial]);
-  panel.appendChild(fillDialRow);
+  const fillDialRow = neToolbarCluster('Fill', [tsDial, tdDial]);
   const fillLocked = neApplyDialRowLock(fillDialRow, [tsDial, tdDial], fillGroups, block);
   fillDialRow.classList.add('ne-ctl-nosep');
   neAddRerollIcon(fillDialRow, [tsDial, tdDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
@@ -476,8 +494,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
     title: 'Amount\nHow full the Kick pulse is — 100% = a hit on every step.',
     onChange: v => { block.turnaroundKickDensity = v; applyTurnaroundChange(); },
   });
-  const kickDialRow = neDialRow('Kick', [tksDial, tkdDial]);
-  panel.appendChild(kickDialRow);
+  const kickDialRow = neToolbarCluster('Fill Kick', [tksDial, tkdDial]);
   neApplyDialRowLock(kickDialRow, [tksDial, tkdDial], ['kick'], block);
   neAddRerollIcon(kickDialRow, [tksDial, tkdDial], 'Reroll\nGenerates a new Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
     block.turnaroundKickSeed = Math.floor(Math.random()*1e9);
@@ -635,8 +652,7 @@ function neBuildBreakPanel(panel, ctx) {
     title: 'Amount\nHow many hits land within the fill window — independent of its length.',
     onChange: v => { block.breakDensity = v; regenerateMain(); },
   });
-  const breakFillDialRow = neDialRow('Fill', [bsDial, bdDial]);
-  panel.appendChild(breakFillDialRow);
+  const breakFillDialRow = neToolbarCluster('Fill', [bsDial, bdDial]);
   lockBreakControlRow(breakFillDialRow, [bsDial, bdDial], mainGroups(), regenerateMain);
   breakFillDialRow.classList.add('ne-ctl-nosep');
   neAddRerollIcon(breakFillDialRow, [bsDial, bdDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
@@ -676,8 +692,7 @@ function neBuildBreakPanel(panel, ctx) {
     title: 'Amount\nHow full the Kick pulse is — 100% = a hit on every step.',
     onChange: v => { block.breakKickDensity = v; regenerateKickOnly(); },
   });
-  const breakKickDialRow = neDialRow('Kick', [bksDial, bkdDial]);
-  panel.appendChild(breakKickDialRow);
+  const breakKickDialRow = neToolbarCluster('Fill Kick', [bksDial, bkdDial]);
   lockBreakControlRow(breakKickDialRow, [bksDial, bkdDial], ['kick'], regenerateKickOnly);
   neAddRerollIcon(breakKickDialRow, [bksDial, bkdDial], 'Reroll\nGenerates a new Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
     if (kickIsLocked()) { neMsg('Manually edited — click the 🔒 above to discard first.'); return; }
@@ -742,8 +757,7 @@ function neBuildFillPanel(panel, ctx) {
     title: 'Amount\nHow many hits land within the fill window — independent of its length.',
     onChange: v => { block.fillDensity = v; regenerate(); },
   });
-  const fillMainDialRow = neDialRow('Fill', [fsDial, fdDial]);
-  panel.appendChild(fillMainDialRow);
+  const fillMainDialRow = neToolbarCluster('Fill', [fsDial, fdDial]);
   fillMainDialRow.classList.add('ne-ctl-nosep');
   neAddRerollIcon(fillMainDialRow, [fsDial, fdDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
     block.fillSeed = Math.floor(Math.random()*1e9);
@@ -780,8 +794,7 @@ function neBuildFillPanel(panel, ctx) {
     title: 'Amount\nHow full the Kick pulse is — 100% = a hit on every step.',
     onChange: v => { block.fillKickDensity = v; regenerate(); },
   });
-  const fillKickDialRow = neDialRow('Kick', [fksDial, fkdDial]);
-  panel.appendChild(fillKickDialRow);
+  const fillKickDialRow = neToolbarCluster('Fill Kick', [fksDial, fkdDial]);
   neAddRerollIcon(fillKickDialRow, [fksDial, fkdDial], 'Reroll\nGenerates a new Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
     block.fillKickSeed = Math.floor(Math.random()*1e9);
     regenerate();
