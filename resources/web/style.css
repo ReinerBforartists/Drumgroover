@@ -159,6 +159,7 @@ body.a11y-hover-zoom .mixer-rack .strip-knobs.pan-only .strip-knobs-row:first-ch
 
 body.a11y-hover-zoom .ne-editing-toolbar .knob-cluster:hover,
 body.a11y-hover-zoom .ne-sidebar .ne-dial-row:hover,
+body.a11y-hover-zoom .ne-sidebar .ne-dial-row.ne-hover-hold,
 body.a11y-hover-zoom #dePolyRow .knob-cluster:hover,
 body.a11y-hover-zoom #deParamPanels .knob-cluster.a11y-zoomed,
 body.a11y-hover-zoom .mixer-rack .strip-knobs:hover,
@@ -180,6 +181,7 @@ body.a11y-hover-zoom #deParamPanels .knob-cluster.a11y-zoomed .ctrl,
 body.a11y-hover-zoom .mixer-rack .strip-knobs:hover .ctrl,
 body.a11y-hover-zoom .mixer-rack .strip-knobs.pan-only .strip-knobs-row:first-child:hover .ctrl,
 body.a11y-hover-zoom .ne-sidebar .ne-dial-row:hover .ctrl,
+body.a11y-hover-zoom .ne-sidebar .ne-dial-row.ne-hover-hold .ctrl,
 body.a11y-hover-zoom .fx-pop .ne-dial-row:hover .ctrl,
 body.a11y-hover-zoom .fx-pop .eq-knobs:hover .ctrl,
 body.a11y-hover-zoom .fx-pop .lim-knobs-inner:hover .ctrl {

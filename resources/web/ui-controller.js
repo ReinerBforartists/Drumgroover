@@ -1480,6 +1480,7 @@ const neSidebarEl = document.getElementById('neSidebar');
 neSidebarEl?.addEventListener('mouseover', (e) => {
   const row = e.target.closest('.ne-dial-row');
   if (!row || !(!row.contains(e.relatedTarget))) return;
+  if (row.classList.contains('ne-hover-hold')) return;   // already zoomed; re-measuring would restart its zoom animation
   setClusterZoomOrigin(row, getClipAncestor(row));
   // The scaled row counts as scrollable overflow; without an existing scrollbar,
   // suppress it for the duration of the hover so none appears.
@@ -1498,6 +1499,36 @@ neSidebarEl?.addEventListener('mouseout', (e) => {
   neReleaseZoomNoScroll();
 });
 neSidebarEl?.addEventListener('mouseleave', neReleaseZoomNoScroll);
+
+// A re-render replaces the sidebar rows. The pointer then sits over the zoomed area of a row that is
+// no longer zoomed, outside the new row's unzoomed box, so it would never zoom again. The new row at the
+// same index keeps the zoom until the pointer leaves its zoomed rect.
+function neHoveredSidebarRowIndex(sidebar) {
+  return [...sidebar.querySelectorAll('.ne-dial-row')].findIndex(r => r.matches(':hover'));
+}
+function neRestoreSidebarRowZoom(index) {
+  const row = neSidebarEl && neSidebarEl.querySelectorAll('.ne-dial-row')[index];
+  if (!row || !document.body.classList.contains('a11y-hover-zoom')) return;
+  setClusterZoomOrigin(row, getClipAncestor(row));
+  // Zoomed from the first paint: a transition would show the row shrunken and growing again.
+  row.style.transition = 'none';
+  row.classList.add('ne-hover-hold');
+  void row.offsetHeight;
+  requestAnimationFrame(() => { row.style.transition = ''; });
+  if (neSidebarEl.classList.contains('ne-zoom-noscroll') || neSidebarEl.scrollHeight <= neSidebarEl.clientHeight) neSidebarEl.classList.add('ne-zoom-noscroll');
+  const heldAt = performance.now();
+  const release = (e) => {
+    if (performance.now() - heldAt < 300) return;   // the row's rect is still mid-transition (.12s) and smaller than its final size
+    if (row.isConnected) {
+      const r = row.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return;
+    }
+    row.classList.remove('ne-hover-hold');
+    document.removeEventListener('mousemove', release, true);
+    neReleaseZoomNoScroll();
+  };
+  document.addEventListener('mousemove', release, true);
+}
 
 function neExtendGridToBottom() {
   const rowsCol = document.querySelector('#drumGrid .ne-rows');
