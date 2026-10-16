@@ -91,6 +91,25 @@ function neInstrumentCheckboxRow(container, instrumentList, getArr, setArr, comm
   });
 }
 
+// Blue heading above the settings of a panel group.
+function neSidebarHeading(text) {
+  const heading = document.createElement('div');
+  heading.className = 'ne-sidebar-heading';
+  heading.textContent = text;
+  return heading;
+}
+
+// Fill instrument picker: a label above the checkboxes, which are indented under it.
+function neAppendFillInstruments(group, box) {
+  const label = document.createElement('div');
+  label.className = 'ne-ctl-label';
+  label.textContent = 'Fill instruments:';
+  label.style.marginBottom = '4px';
+  box.style.marginLeft = '12px';
+  group.appendChild(label);
+  group.appendChild(box);
+}
+
 function neShowBreakLockPill(ctx) {
   const { block } = ctx;
   const parent = breakParentOf(block);
@@ -106,10 +125,11 @@ function neBuildControlsPanel(ctx) {
   const controls = document.createElement('div');
   controls.className = 'ne-controls';
 
+
   // Length (Bars)
   const lenGroup = document.createElement('div');
   lenGroup.className = 'ne-ctl-group ne-ctl-inline';
-  lenGroup.innerHTML = '<span class="ne-ctl-label">Length (Bars)</span>';
+  lenGroup.innerHTML = `<span class="ne-ctl-label">Length (Bars)</span>`;
 
   if (isBreak) {
     const parent = breakParentOf(block);
@@ -353,14 +373,15 @@ function neBuildTurnaroundPanel(panel, ctx) {
   const { block, g } = ctx;
   const fillGroups = neRelevantEngineGroups(block.turnaroundInstruments || ['snare']);
 
+  panel.appendChild(neSidebarHeading('Turnaround (Fill)'));
   const taGroup = document.createElement('div');
   taGroup.className = 'ne-ctl-group ne-ctl-inline';
-  taGroup.innerHTML = '<span class="ne-ctl-label">Turnaround Every</span>';
+  taGroup.innerHTML = '<span class="ne-ctl-label">Fill Every</span>';
   const taSelect = document.createElement('select');
   taSelect.className = 'ne-len-input';
   taSelect.innerHTML = '<option value="0">Off</option><option value="2">2</option><option value="4">4</option><option value="8">8</option>';
   taSelect.value = String(block.turnaroundInterval || 0);
-  taSelect.dataset.tooltip = 'Turnaround Every\nHow often a turnaround occurs — every Nth bar (the last bar of each phrase). Off disables it.';
+  taSelect.dataset.tooltip = 'Fill Every\nHow often a turnaround (fill) occurs — every Nth bar (the last bar of each phrase). Off disables it.';
   wireCustomSelect(taSelect);
   taSelect.addEventListener('change', () => {
     block.turnaroundInterval = +taSelect.value;
@@ -380,12 +401,12 @@ function neBuildTurnaroundPanel(panel, ctx) {
   const tlGroup = document.createElement('div');
   tlGroup.className = 'ne-ctl-group ne-ctl-inline';
   const tlMaxBeats = g.numerator;
-  tlGroup.innerHTML = '<span class="ne-ctl-label">Length (Beats)</span>';
+  tlGroup.innerHTML = '<span class="ne-ctl-label">Fill Length (Beats)</span>';
   const tlInput = document.createElement('input');
   tlInput.type = 'number'; tlInput.className = 'ne-len-input';
   tlInput.min = '0.25'; tlInput.max = String(tlMaxBeats); tlInput.step = '0.25';
   tlInput.value = String(resolveTurnaroundLengthBeats(block, g.numerator));
-  tlInput.dataset.tooltip = `Length\nHow much of the bar-end the turnaround covers, in beats (max ${tlMaxBeats} = one full bar).`;
+  tlInput.dataset.tooltip = `Fill Length\nHow much of the bar-end the turnaround covers, in beats (max ${tlMaxBeats} = one full bar).`;
   const commitTL = () => {
     let v = parseFloat(tlInput.value);
     const current = resolveTurnaroundLengthBeats(block, g.numerator);
@@ -474,7 +495,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
     (arr) => { block.turnaroundInstruments = arr; },
     applyTurnaroundChange, 'turnaround-fill', fillLocked,
     'Fill Instruments\nWhich instruments the fill can use. Drag across checkboxes to set several at once.');
-  tiGroup.appendChild(tiBox);
+  neAppendFillInstruments(tiGroup, tiBox);
   panel.appendChild(tiGroup);
   tiGroup.classList.toggle('ne-ctl-locked', fillLocked);
 

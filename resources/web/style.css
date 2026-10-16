@@ -198,7 +198,8 @@ body.a11y-hover-zoom .fx-pop .lim-knobs-inner:hover .ctrl {
 .group-lock-icon:hover { filter:brightness(1.4); }
 .knob-cluster input:disabled { opacity:.35; cursor:not-allowed; }
 /* Fill and Fill Kick: a different kind of group than the instrument groups, so their titles carry another colour. */
-.ne-fill-cluster .cluster-title { color:var(--cyan); }
+.ne-fill-cluster .cluster-title, .ne-sidebar-heading { color:var(--cyan); }
+.ne-sidebar-heading { font-size:9px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; }
 .ne-fill-cluster.ne-ctl-locked .cluster-knobs { opacity:.45; cursor:not-allowed; }
 .ctrl.knob-disabled .knob-visual { opacity:.35; cursor:not-allowed; }
 /* Locked groups dim only the interactive elements — never the label or the lock
