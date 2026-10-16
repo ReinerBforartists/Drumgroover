@@ -91,6 +91,18 @@ function neInstrumentCheckboxRow(container, instrumentList, getArr, setArr, comm
   });
 }
 
+// Until a seed exists a Break/Intro/Outro generates its fixed hand pattern, which ignores the dials and all
+// instruments except Snare/Toms. The first user change switches the block to seeded generation.
+function neEnsureSeed(block, key) {
+  if (block[key] === undefined) block[key] = Math.floor(Math.random() * 1e9);
+}
+
+// Name of a Break, Intro or Outro block, used for its toolbar clusters and sidebar labels.
+function neFillKind(block) {
+  if (isBreakBlock(block)) return 'Break';
+  return block.fillAnchor === 'start' ? 'Outro' : 'Intro';
+}
+
 // Blue heading above the settings of a panel group.
 function neSidebarHeading(text) {
   const heading = document.createElement('div');
@@ -100,10 +112,10 @@ function neSidebarHeading(text) {
 }
 
 // Fill instrument picker: a label above the checkboxes, which are indented under it.
-function neAppendFillInstruments(group, box) {
+function neAppendFillInstruments(group, box, text) {
   const label = document.createElement('div');
   label.className = 'ne-ctl-label';
-  label.textContent = 'Fill instruments:';
+  label.textContent = text || 'Fill instruments:';
   label.style.marginBottom = '4px';
   box.style.marginLeft = '12px';
   group.appendChild(label);
@@ -125,11 +137,13 @@ function neBuildControlsPanel(ctx) {
   const controls = document.createElement('div');
   controls.className = 'ne-controls';
 
+  if (block.isFillBlock) controls.appendChild(neSidebarHeading(neFillKind(block)));
+
 
   // Length (Bars)
   const lenGroup = document.createElement('div');
   lenGroup.className = 'ne-ctl-group ne-ctl-inline';
-  lenGroup.innerHTML = `<span class="ne-ctl-label">Length (Bars)</span>`;
+  lenGroup.innerHTML = `<span class="ne-ctl-label">${block.isFillBlock ? neFillKind(block) + ' Length' : 'Length (Bars)'}</span>`;
 
   if (isBreak) {
     const parent = breakParentOf(block);
@@ -505,19 +519,19 @@ function neBuildTurnaroundPanel(panel, ctx) {
     label: 'Subdiv', min: 0, max: BREAK_KICK_SUBDIVISION_VALUES.length - 1, step: 1, value: tksIdx,
     def: Math.max(0, BREAK_KICK_SUBDIVISION_VALUES.indexOf(NE_DEFAULTS.kickSubdivision)), // Default: kick subdivision
     format: v => BREAK_KICK_SUBDIVISION_LABELS[v],
-    title: 'Subdivision\nResolution of the Kick pulse in steps per beat.',
+    title: 'Subdivision\nResolution of the Fill Kick pulse in steps per beat.',
     onChange: v => { block.turnaroundKickSubdivision = BREAK_KICK_SUBDIVISION_VALUES[v]; applyTurnaroundChange(); },
   });
   const tkdDial = neCreateDial({
     label: 'Amnt', min: 0, max: 100, step: 5, value: block.turnaroundKickDensity ?? NE_DEFAULTS.turnaroundKickDensity,
     def: NE_DEFAULTS.turnaroundKickDensity,
     format: v => v + '%',
-    title: 'Amount\nHow full the Kick pulse is — 100% = a hit on every step.',
+    title: 'Amount\nHow full the Fill Kick pulse is — 100% = a hit on every step.',
     onChange: v => { block.turnaroundKickDensity = v; applyTurnaroundChange(); },
   });
   const kickDialRow = neToolbarCluster('Fill Kick', [tksDial, tkdDial]);
   neApplyDialRowLock(kickDialRow, [tksDial, tkdDial], ['kick'], block);
-  neAddRerollIcon(kickDialRow, [tksDial, tkdDial], 'Reroll\nGenerates a new Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
+  neAddRerollIcon(kickDialRow, [tksDial, tkdDial], 'Reroll\nGenerates a new Fill Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
     block.turnaroundKickSeed = Math.floor(Math.random()*1e9);
     applyTurnaroundChange();
   });
@@ -627,6 +641,7 @@ function neBuildBreakPanel(panel, ctx) {
     row.classList.toggle('ne-ctl-locked', fullyLocked);
   };
 
+  panel.appendChild(neSidebarHeading(neFillKind(block)));
   // Break Length (Beats)
   const bbGroup = document.createElement('div');
   bbGroup.className = 'ne-ctl-group ne-ctl-inline';
@@ -636,7 +651,7 @@ function neBuildBreakPanel(panel, ctx) {
   bbInput.type = 'number'; bbInput.className = 'ne-len-input';
   bbInput.min = '0.5'; bbInput.max = String(bbMaxBeats); bbInput.step = '0.25';
   bbInput.value = String(block.breakBeats ?? BREAK_DEFAULT_BEATS);
-  bbInput.dataset.tooltip = `Length\nThe break's own length in beats, not whole bars (max ${bbMaxBeats}). The rest of the block stays a copy of the parent section.`;
+  bbInput.dataset.tooltip = `Break Length\nThe break's own length in beats, not whole bars (max ${bbMaxBeats}). The rest of the block stays a copy of the parent section.`;
   const commitBB = () => {
     let v = parseFloat(bbInput.value);
     if (isNaN(v)) { bbInput.value = String(block.breakBeats ?? BREAK_DEFAULT_BEATS); return; }
@@ -663,20 +678,20 @@ function neBuildBreakPanel(panel, ctx) {
     label: 'Subdiv', min: 0, max: SUBDIVISION_KNOB_VALUES.length - 1, step: 1, value: bsIdx,
     def: Math.max(0, SUBDIVISION_KNOB_VALUES.indexOf(NE_DEFAULTS.subdivision)), // Default: subdivision
     format: v => SUBDIVISION_KNOB_LABELS[v],
-    title: 'Subdivision\nResolution of the fill in steps per beat.',
-    onChange: v => { block.breakSubdivision = SUBDIVISION_KNOB_VALUES[v]; regenerateMain(); },
+    title: 'Subdivision\nResolution of the ' + neFillKind(block).toLowerCase() + ' in steps per beat.',
+    onChange: v => { neEnsureSeed(block, 'breakSeed'); block.breakSubdivision = SUBDIVISION_KNOB_VALUES[v]; regenerateMain(); },
   });
   const bdDial = neCreateDial({
     label: 'Amnt', min: 0, max: 100, step: 5, value: block.breakDensity ?? NE_DEFAULTS.breakDensity,
     def: NE_DEFAULTS.breakDensity,
     format: v => v + '%',
-    title: 'Amount\nHow many hits land within the fill window — independent of its length.',
-    onChange: v => { block.breakDensity = v; regenerateMain(); },
+    title: 'Amount\nHow many hits land within the ' + neFillKind(block).toLowerCase() + ' window — independent of its length.',
+    onChange: v => { neEnsureSeed(block, 'breakSeed'); block.breakDensity = v; regenerateMain(); },
   });
-  const breakFillDialRow = neToolbarCluster('Fill', [bsDial, bdDial]);
+  const breakFillDialRow = neToolbarCluster(neFillKind(block), [bsDial, bdDial]);
   lockBreakControlRow(breakFillDialRow, [bsDial, bdDial], mainGroups(), regenerateMain);
   breakFillDialRow.classList.add('ne-ctl-nosep');
-  neAddRerollIcon(breakFillDialRow, [bsDial, bdDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
+  neAddRerollIcon(breakFillDialRow, [bsDial, bdDial], 'Reroll\nGenerates a new ' + neFillKind(block).toLowerCase() + ' with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
     if (mainIsLocked()) { neMsg('Manually edited — click the 🔒 above to discard first.'); return; }
     block.breakSeed = Math.floor(Math.random()*1e9);
     regenerateMain();
@@ -691,9 +706,9 @@ function neBuildBreakPanel(panel, ctx) {
   neInstrumentCheckboxRow(biBox, [['toms','Toms'],['snare','Snare'],['hihat','Hi-Hat'],['floorTom','Floor Tom'],['crash','2x Crash']],
     () => block.breakInstruments || ['toms'],
     (arr) => { block.breakInstruments = arr; },
-    regenerateMainAlways, 'break-fill', mainIsLocked(),
-    'Fill Instruments\nWhich instruments the fill can use. Drag across checkboxes to set several at once.');
-  biGroup.appendChild(biBox);
+    () => { neEnsureSeed(block, 'breakSeed'); return regenerateMainAlways(); }, 'break-fill', mainIsLocked(),
+    neFillKind(block) + ' Instruments\nWhich instruments the ' + neFillKind(block).toLowerCase() + ' can use. Drag across checkboxes to set several at once.');
+  neAppendFillInstruments(biGroup, biBox, neFillKind(block) + ' instruments:');
   panel.appendChild(biGroup);
   biGroup.classList.toggle('ne-ctl-locked', mainIsLocked());
 
@@ -703,19 +718,19 @@ function neBuildBreakPanel(panel, ctx) {
     label: 'Subdiv', min: 0, max: BREAK_KICK_SUBDIVISION_VALUES.length - 1, step: 1, value: bksIdx,
     def: Math.max(0, BREAK_KICK_SUBDIVISION_VALUES.indexOf(NE_DEFAULTS.kickSubdivision)), // Default: kick subdivision
     format: v => BREAK_KICK_SUBDIVISION_LABELS[v],
-    title: 'Subdivision\nResolution of the Kick pulse in steps per beat.',
+    title: 'Subdivision\nResolution of the ' + neFillKind(block) + ' Kick pulse in steps per beat.',
     onChange: v => { block.breakKickSubdivision = BREAK_KICK_SUBDIVISION_VALUES[v]; regenerateKickOnly(); },
   });
   const bkdDial = neCreateDial({
     label: 'Amnt', min: 0, max: 100, step: 5, value: block.breakKickDensity ?? NE_DEFAULTS.breakKickDensity,
     def: NE_DEFAULTS.breakKickDensity,
     format: v => v + '%',
-    title: 'Amount\nHow full the Kick pulse is — 100% = a hit on every step.',
+    title: 'Amount\nHow full the ' + neFillKind(block) + ' Kick pulse is — 100% = a hit on every step.',
     onChange: v => { block.breakKickDensity = v; regenerateKickOnly(); },
   });
-  const breakKickDialRow = neToolbarCluster('Fill Kick', [bksDial, bkdDial]);
+  const breakKickDialRow = neToolbarCluster(neFillKind(block) + ' Kick', [bksDial, bkdDial]);
   lockBreakControlRow(breakKickDialRow, [bksDial, bkdDial], ['kick'], regenerateKickOnly);
-  neAddRerollIcon(breakKickDialRow, [bksDial, bkdDial], 'Reroll\nGenerates a new Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
+  neAddRerollIcon(breakKickDialRow, [bksDial, bkdDial], 'Reroll\nGenerates a new ' + neFillKind(block) + ' Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
     if (kickIsLocked()) { neMsg('Manually edited — click the 🔒 above to discard first.'); return; }
     block.breakKickSeed = Math.floor(Math.random()*1e9);
     regenerateKickOnly();
@@ -747,7 +762,7 @@ function neBuildFillPanel(panel, ctx) {
   fbInput.type = 'number'; fbInput.className = 'ne-len-input';
   fbInput.min = '0.5'; fbInput.max = String(fbMaxBeats); fbInput.step = '0.25';
   fbInput.value = String(block.fillBeats ?? BREAK_DEFAULT_BEATS);
-  fbInput.dataset.tooltip = `Length\nThe fill's length in beats (max ${fbMaxBeats} = the whole block).`;
+  fbInput.dataset.tooltip = `${neFillKind(block)} Length\nThe ${neFillKind(block).toLowerCase()}'s length in beats (max ${fbMaxBeats} = the whole block).`;
   const commitFB = () => {
     let v = parseFloat(fbInput.value);
     if (isNaN(v)) { fbInput.value = String(block.fillBeats ?? BREAK_DEFAULT_BEATS); return; }
@@ -768,19 +783,19 @@ function neBuildFillPanel(panel, ctx) {
     label: 'Subdiv', min: 0, max: SUBDIVISION_KNOB_VALUES.length - 1, step: 1, value: fsIdx,
     def: Math.max(0, SUBDIVISION_KNOB_VALUES.indexOf(NE_DEFAULTS.subdivision)), // Default: subdivision
     format: v => SUBDIVISION_KNOB_LABELS[v],
-    title: 'Subdivision\nResolution of the fill in steps per beat.',
-    onChange: v => { block.fillSubdivision = SUBDIVISION_KNOB_VALUES[v]; regenerate(); },
+    title: 'Subdivision\nResolution of the ' + neFillKind(block).toLowerCase() + ' in steps per beat.',
+    onChange: v => { neEnsureSeed(block, 'fillSeed'); block.fillSubdivision = SUBDIVISION_KNOB_VALUES[v]; regenerate(); },
   });
   const fdDial = neCreateDial({
     label: 'Amnt', min: 0, max: 100, step: 5, value: block.fillDensity ?? NE_DEFAULTS.fillDensity,
     def: NE_DEFAULTS.fillDensity,
     format: v => v + '%',
-    title: 'Amount\nHow many hits land within the fill window — independent of its length.',
-    onChange: v => { block.fillDensity = v; regenerate(); },
+    title: 'Amount\nHow many hits land within the ' + neFillKind(block).toLowerCase() + ' window — independent of its length.',
+    onChange: v => { neEnsureSeed(block, 'fillSeed'); block.fillDensity = v; regenerate(); },
   });
-  const fillMainDialRow = neToolbarCluster('Fill', [fsDial, fdDial]);
+  const fillMainDialRow = neToolbarCluster(neFillKind(block), [fsDial, fdDial]);
   fillMainDialRow.classList.add('ne-ctl-nosep');
-  neAddRerollIcon(fillMainDialRow, [fsDial, fdDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
+  neAddRerollIcon(fillMainDialRow, [fsDial, fdDial], 'Reroll\nGenerates a new ' + neFillKind(block).toLowerCase() + ' with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
     block.fillSeed = Math.floor(Math.random()*1e9);
     regenerate();
   });
@@ -794,9 +809,9 @@ function neBuildFillPanel(panel, ctx) {
   neInstrumentCheckboxRow(fiBox, [['toms','Toms'],['snare','Snare'],['hihat','Hi-Hat'],['floorTom','Floor Tom'],['crash','2x Crash']],
     () => block.fillInstruments || ['toms'],
     (arr) => { block.fillInstruments = arr; },
-    regenerate, 'fill-fill', undefined,
-    'Fill Instruments\nWhich instruments the fill can use. Drag across checkboxes to set several at once.');
-  fiGroup.appendChild(fiBox);
+    () => { neEnsureSeed(block, 'fillSeed'); return regenerate(); }, 'fill-fill', undefined,
+    neFillKind(block) + ' Instruments\nWhich instruments the ' + neFillKind(block).toLowerCase() + ' can use. Drag across checkboxes to set several at once.');
+  neAppendFillInstruments(fiGroup, fiBox, neFillKind(block) + ' instruments:');
   panel.appendChild(fiGroup);
 
   // Kick layer
@@ -805,18 +820,18 @@ function neBuildFillPanel(panel, ctx) {
     label: 'Subdiv', min: 0, max: BREAK_KICK_SUBDIVISION_VALUES.length - 1, step: 1, value: fksIdx,
     def: Math.max(0, BREAK_KICK_SUBDIVISION_VALUES.indexOf(NE_DEFAULTS.kickSubdivision)), // Default: kick subdivision
     format: v => BREAK_KICK_SUBDIVISION_LABELS[v],
-    title: 'Subdivision\nResolution of the Kick pulse in steps per beat.',
+    title: 'Subdivision\nResolution of the ' + neFillKind(block) + ' Kick pulse in steps per beat.',
     onChange: v => { block.fillKickSubdivision = BREAK_KICK_SUBDIVISION_VALUES[v]; regenerate(); },
   });
   const fkdDial = neCreateDial({
     label: 'Amnt', min: 0, max: 100, step: 5, value: block.fillKickDensity ?? NE_DEFAULTS.fillKickDensity,
     def: NE_DEFAULTS.fillKickDensity,
     format: v => v + '%',
-    title: 'Amount\nHow full the Kick pulse is — 100% = a hit on every step.',
+    title: 'Amount\nHow full the ' + neFillKind(block) + ' Kick pulse is — 100% = a hit on every step.',
     onChange: v => { block.fillKickDensity = v; regenerate(); },
   });
-  const fillKickDialRow = neToolbarCluster('Fill Kick', [fksDial, fkdDial]);
-  neAddRerollIcon(fillKickDialRow, [fksDial, fkdDial], 'Reroll\nGenerates a new Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
+  const fillKickDialRow = neToolbarCluster(neFillKind(block) + ' Kick', [fksDial, fkdDial]);
+  neAddRerollIcon(fillKickDialRow, [fksDial, fkdDial], 'Reroll\nGenerates a new ' + neFillKind(block) + ' Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
     block.fillKickSeed = Math.floor(Math.random()*1e9);
     regenerate();
   });
