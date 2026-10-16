@@ -521,7 +521,7 @@ function computeDropBarFromLocalX(localX, pxPerBar) {
 }
 function computeDropBar(track, clientX, pxPerBar) {
   const tr = track.getBoundingClientRect();
-  return computeDropBarFromLocalX(clientX - tr.left, pxPerBar);
+  return computeDropBarFromLocalX((clientX - tr.left) / currentUIScale(), pxPerBar);
 }
 function currentTlPxPerBar() { return tlCurrentPxPerBar; }
 

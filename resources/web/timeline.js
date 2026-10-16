@@ -586,7 +586,7 @@ function attachClipDrag(clip, startIdx, pxPerBar, numerator) {
       return;
     }
     if (moved) {
-      const leftPx = origLeftPx + dx;
+      const leftPx = origLeftPx + dx / currentUIScale();
       clip.style.left = leftPx + 'px';
       clip.classList.toggle('duplicating', e.shiftKey);
       const desiredBar = computeDropBarFromLocalX(leftPx, pxPerBar);
@@ -602,7 +602,7 @@ function attachClipDrag(clip, startIdx, pxPerBar, numerator) {
     clip.classList.remove('dragging', 'duplicating');
     hideDropMarker();
     if (!moved) return;
-    const leftPx = origLeftPx + (e.clientX - startX);
+    const leftPx = origLeftPx + (e.clientX - startX) / currentUIScale();
     const desiredBar = computeDropBarFromLocalX(leftPx, pxPerBar);
     const clipBlock = findBlock(slot.blockId);
     const clipName = clipBlock ? blockDisplayName(clipBlock) : '?';

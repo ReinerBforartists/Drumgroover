@@ -517,6 +517,7 @@ function neRenderGroupHeader(t, ctx, refs) {
         const noteLocked = breakLocked && note.beat < grooveBeats;
         dot.className = 'ne-note ne-note-summary' + (selectedNotes.has(selKey) ? ' selected' : '') + (noteLocked ? ' ne-note-locked' : '') + (note.turnaround ? ' ne-note-turnaround' : '');
         dot.dataset.selKey = selKey;
+        dot.dataset.tooltip = '';
         dot.style.left = (NE_LEFT_PAD + note.beat*pxPerBeat)+'px';
         dot.style.top = (NE_ROW_H/2)+'px';
         dot.style.background = noteLocked ? 'var(--muted)' : fadedColor(gt.color, note.vel/127);
@@ -557,7 +558,6 @@ function neRenderGroupHeader(t, ctx, refs) {
         headerRow.appendChild(dot);
       });
     });
-    headerRow.dataset.tooltip = 'Note Row\nClick to place a note (group default) · Ctrl/right-drag to paint or erase · Del/Backspace to delete the selection. Click the name on the left to expand and edit individually.';
     headerRow.addEventListener('click', (e) => {
       if (suppressNextRowClick) { suppressNextRowClick = false; return; }
       selectedNotes.clear();
@@ -844,7 +844,6 @@ function neRenderTrackLeafRow(t, ctx, refs) {
   row.className = 'ne-row' + (isFocused?' focused':'');
   row.dataset.trackId = t.id;
   row.style.width = totalW+'px';
-  row.dataset.tooltip = 'Note Row\nClick to add or replace a note · Drag to select a range · Ctrl+drag to paint/erase · Right-drag to erase · Del/Backspace to delete the selection.';
   const engineGroup = engineGroupKeyForTrack(t);
   neDrawRowGrid(row, totalBeats, pxPerBeat, g.snap, numerator, block.tripletLayers && engineGroup && block.tripletLayers[engineGroup], engineGroup, g);
 
@@ -904,6 +903,7 @@ function neRenderTrackLeafRow(t, ctx, refs) {
     const noteLocked = breakLocked && note.beat < grooveBeats;
     dia.className = 'ne-note' + (selectedNotes.has(selKey) ? ' selected' : '') + (noteLocked ? ' ne-note-locked' : '') + (note.turnaround ? ' ne-note-turnaround' : '');
     dia.dataset.selKey = selKey;
+    dia.dataset.tooltip = '';
     dia.style.left = (NE_LEFT_PAD + note.beat*pxPerBeat)+'px';
     dia.style.top = (NE_ROW_H/2)+'px';
     dia.style.background = noteLocked ? 'var(--muted)' : fadedColor(t.color, note.vel/127);
