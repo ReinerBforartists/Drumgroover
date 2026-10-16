@@ -18,9 +18,6 @@ const NE_DEFAULTS = {
   turnaroundDensity: 50,
   breakDensity: 100,
   fillDensity: 100,
-  turnaroundFillVel: 112,
-  breakFillVel: 112,
-  fillVel: 112,
   turnaroundKickDensity: 100,
   breakKickDensity: 100,
   fillKickDensity: 100,
@@ -423,7 +420,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
   tvpGroup.appendChild(tvpLabel);
   panel.appendChild(tvpGroup);
 
-  // Fill Subdivision/Amount/Velocity
+  // Fill Subdivision/Amount
   const tsIdx = Math.max(0, SUBDIVISION_KNOB_VALUES.indexOf(block.turnaroundSubdivision ?? NE_DEFAULTS.subdivision));
   const tsDial = neCreateDial({
     label: 'Subdiv', min: 0, max: SUBDIVISION_KNOB_VALUES.length - 1, step: 1, value: tsIdx,
@@ -439,17 +436,11 @@ function neBuildTurnaroundPanel(panel, ctx) {
     title: 'Amount\nHow many hits land within the fill window — independent of its length.',
     onChange: v => { block.turnaroundDensity = v; applyTurnaroundChange(); },
   });
-  const tvDial = neCreateDial({
-    label: 'Vel', min: 60, max: 127, step: 1, value: block.turnaroundFillVel ?? NE_DEFAULTS.turnaroundFillVel,
-    def: NE_DEFAULTS.turnaroundFillVel,
-    title: 'Velocity\nVelocity of the fill hits themselves.',
-    onChange: v => { block.turnaroundFillVel = v; applyTurnaroundChange(); },
-  });
-  const fillDialRow = neDialRow('Fill', [tsDial, tdDial, tvDial]);
+  const fillDialRow = neDialRow('Fill', [tsDial, tdDial]);
   panel.appendChild(fillDialRow);
-  const fillLocked = neApplyDialRowLock(fillDialRow, [tsDial, tdDial, tvDial], fillGroups, block);
+  const fillLocked = neApplyDialRowLock(fillDialRow, [tsDial, tdDial], fillGroups, block);
   fillDialRow.classList.add('ne-ctl-nosep');
-  neAddRerollIcon(fillDialRow, [tsDial, tdDial, tvDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
+  neAddRerollIcon(fillDialRow, [tsDial, tdDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
     block.turnaroundSeed = Math.floor(Math.random()*1e9);
     applyTurnaroundChange();
   });
@@ -628,7 +619,7 @@ function neBuildBreakPanel(panel, ctx) {
   bbGroup.appendChild(bbInput);
   panel.appendChild(bbGroup);
 
-  // Fill Subdivision/Amount/Velocity
+  // Fill Subdivision/Amount
   const bsIdx = Math.max(0, SUBDIVISION_KNOB_VALUES.indexOf(block.breakSubdivision ?? NE_DEFAULTS.subdivision));
   const bsDial = neCreateDial({
     label: 'Subdiv', min: 0, max: SUBDIVISION_KNOB_VALUES.length - 1, step: 1, value: bsIdx,
@@ -644,17 +635,11 @@ function neBuildBreakPanel(panel, ctx) {
     title: 'Amount\nHow many hits land within the fill window — independent of its length.',
     onChange: v => { block.breakDensity = v; regenerateMain(); },
   });
-  const bvDial = neCreateDial({
-    label: 'Vel', min: 60, max: 127, step: 1, value: block.breakFillVel ?? NE_DEFAULTS.breakFillVel,
-    def: NE_DEFAULTS.breakFillVel,
-    title: 'Velocity\nVelocity of the fill hits themselves.',
-    onChange: v => { block.breakFillVel = v; regenerateMain(); },
-  });
-  const breakFillDialRow = neDialRow('Fill', [bsDial, bdDial, bvDial]);
+  const breakFillDialRow = neDialRow('Fill', [bsDial, bdDial]);
   panel.appendChild(breakFillDialRow);
-  lockBreakControlRow(breakFillDialRow, [bsDial, bdDial, bvDial], mainGroups(), regenerateMain);
+  lockBreakControlRow(breakFillDialRow, [bsDial, bdDial], mainGroups(), regenerateMain);
   breakFillDialRow.classList.add('ne-ctl-nosep');
-  neAddRerollIcon(breakFillDialRow, [bsDial, bdDial, bvDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
+  neAddRerollIcon(breakFillDialRow, [bsDial, bdDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
     if (mainIsLocked()) { neMsg('Manually edited — click the 🔒 above to discard first.'); return; }
     block.breakSeed = Math.floor(Math.random()*1e9);
     regenerateMain();
@@ -741,7 +726,7 @@ function neBuildFillPanel(panel, ctx) {
   fbGroup.appendChild(fbInput);
   panel.appendChild(fbGroup);
 
-  // Fill Subdivision/Amount/Velocity
+  // Fill Subdivision/Amount
   const fsIdx = Math.max(0, SUBDIVISION_KNOB_VALUES.indexOf(block.fillSubdivision ?? NE_DEFAULTS.subdivision));
   const fsDial = neCreateDial({
     label: 'Subdiv', min: 0, max: SUBDIVISION_KNOB_VALUES.length - 1, step: 1, value: fsIdx,
@@ -757,16 +742,10 @@ function neBuildFillPanel(panel, ctx) {
     title: 'Amount\nHow many hits land within the fill window — independent of its length.',
     onChange: v => { block.fillDensity = v; regenerate(); },
   });
-  const fvDial = neCreateDial({
-    label: 'Vel', min: 60, max: 127, step: 1, value: block.fillVel ?? NE_DEFAULTS.fillVel,
-    def: NE_DEFAULTS.fillVel,
-    title: 'Velocity\nVelocity of the fill hits themselves.',
-    onChange: v => { block.fillVel = v; regenerate(); },
-  });
-  const fillMainDialRow = neDialRow('Fill', [fsDial, fdDial, fvDial]);
+  const fillMainDialRow = neDialRow('Fill', [fsDial, fdDial]);
   panel.appendChild(fillMainDialRow);
   fillMainDialRow.classList.add('ne-ctl-nosep');
-  neAddRerollIcon(fillMainDialRow, [fsDial, fdDial, fvDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
+  neAddRerollIcon(fillMainDialRow, [fsDial, fdDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
     block.fillSeed = Math.floor(Math.random()*1e9);
     regenerate();
   });
