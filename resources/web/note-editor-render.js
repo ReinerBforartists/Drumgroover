@@ -236,7 +236,10 @@ function renderNoteEditor() {
   let neAutoFitBreak = false;
   if (isBlockSwitch) {
     // Every block keeps its own zoom; a block seen for the first time starts fitted.
-    if (neLastPlayheadBlockId != null && neAutoFitZoomBlockId !== neLastPlayheadBlockId) neZoomByBlock.set(neLastPlayheadBlockId, neZoom);
+    if (neLastPlayheadBlockId != null && neAutoFitZoomBlockId !== neLastPlayheadBlockId) {
+      neZoomByBlock.set(neLastPlayheadBlockId, neZoom);
+      neScrollByBlock.set(neLastPlayheadBlockId, savedScrollLeft);
+    }
     if (neAutoFitZoomBlockId != null && neAutoFitZoomBlockId !== block.id) {
       neAutoFitZoomBlockId = null;
       neZoomBeforeAutoFit = null;
@@ -288,7 +291,7 @@ function renderNoteEditor() {
   if (neAutoFitBreak) {
     savedScrollLeft = Math.max(0, NE_LEFT_PAD + neLoopStart * pxPerBeat - 40);
   } else if (isBlockSwitch) {
-    savedScrollLeft = 0;
+    savedScrollLeft = neScrollByBlock.get(block.id) ?? 0;
   }
 
   // Which notes get elements (see neNoteWindow): for a long block only the ones around the visible part.

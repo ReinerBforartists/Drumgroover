@@ -606,7 +606,8 @@ function armSuppressNextContextMenu() {
 }
 let neCurrentPxPerBeat = PX_PER_BEAT;
 let neZoom = 1;
-const neZoomByBlock = new Map(); // block id -> zoom the block had when it was left
+const neZoomByBlock = new Map();   // block id -> zoom the block had when it was left
+const neScrollByBlock = new Map(); // block id -> horizontal scroll (px) it had when it was left
 const NE_ZOOM_MIN = 0.25, NE_ZOOM_MAX_BASE = 4, NE_MAX_PX_PER_BEAT = 160;
 let neFitPxPerBeat = 0;   // the fit-to-width size, set by renderNoteEditor
 // The zoom is relative to the fit-to-width size, so a long block (tiny fit size) needs a much larger maximum to get close to its notes.
