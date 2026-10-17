@@ -60,9 +60,12 @@ std::vector<DueEvent> PreviewScheduler::Advance(double bpm, int nFrames, double 
 
   const double beatAtBlockStart = mCurrentBeat.load(std::memory_order_relaxed);
   double beatPos = beatAtBlockStart;
+  const double patternEnd = pattern->totalBeats;
   // A position before loopStart plays through linearly until it reaches loopStart; only then does looping start
-  // (same convention as Scheduler::Advance).
-  if (beatPos >= loopStart) {
+  // (same convention as Scheduler::Advance). A position behind the loop's end (Start() puts it there to leave the loop)
+  // plays on to the end of the pattern, then the loop takes over again.
+  const bool behindLoop = beatPos >= loopEnd && loopEnd < patternEnd;
+  if (!behindLoop && beatPos >= loopStart) {
     beatPos = loopStart + PositiveMod(beatPos - loopStart, loopLen);
   }
 
@@ -78,7 +81,10 @@ std::vector<DueEvent> PreviewScheduler::Advance(double bpm, int nFrames, double 
     double segEnd;
     bool   segWraps;
 
-    if (segStart >= loopStart) {
+    if (segStart >= loopEnd && loopEnd < patternEnd) {
+      segEnd   = patternEnd;   // behind the loop: on to the end of the pattern, then back to loopStart
+      segWraps = true;
+    } else if (segStart >= loopStart) {
       segEnd   = loopEnd;
       segWraps = true;
     } else {

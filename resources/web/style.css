@@ -451,18 +451,40 @@ body.knob-dragging { user-select:none; cursor:ns-resize; }
 .tl-ruler-endless, .ne-ruler-endless { opacity:.35; }
 .tl-loop-ruler { position:relative; height:10px; border-bottom:1px solid var(--border); margin-bottom:2px; cursor:crosshair; touch-action:none; background:var(--bg); }
 .tl-loop-overlay, .ne-loop-overlay, .mx-tl-loop { position:absolute; top:0; bottom:0; background:rgba(251,191,36,.4); border-left:2px solid var(--amber); border-right:2px solid var(--amber); pointer-events:none; z-index:1; }
-.tl-ruler-playhead, .ne-ruler-playhead {
+/* Playhead of the Note Editor and the Song Generator: red with a black outline (like a video editor's), head in the ruler,
+   one line down through every area. The outline is a drop-shadow stack, so it follows the head's shape. */
+.dg-playhead {
   position:absolute;
   top:0;
-  bottom:0;
+  height:100%;
   width:0;
-  border-left:6px solid transparent;
-  border-right:6px solid transparent;
-  border-top:8px solid var(--amber);
-  transform:translateX(-6px);
+  z-index:30;
   pointer-events:none;
-  z-index:6;
+  filter:drop-shadow(1px 0 0 rgba(0,0,0,.45)) drop-shadow(-1px 0 0 rgba(0,0,0,.45)) drop-shadow(0 1px 0 rgba(0,0,0,.45)) drop-shadow(0 -1px 0 rgba(0,0,0,.45));
 }
+.dg-playhead::before {
+  content:'';
+  position:absolute;
+  left:-6px;
+  top:0;
+  width:13px;
+  height:16px;
+  background:#ef3b30;
+  clip-path:polygon(0 0, 100% 0, 100% 58%, 50% 100%, 0 58%);
+}
+.dg-playhead::after {
+  content:'';
+  position:absolute;
+  left:0;
+  top:0;
+  bottom:0;
+  width:1px;
+  background:#ef3b30;
+}
+/* The Note Editor's layer spans the grid area right of the row labels; it clips the playhead at the edges of the scrolled area. */
+.ne-ph-layer { position:absolute; left:170px; right:0; top:0; bottom:0; overflow:hidden; pointer-events:none; z-index:30; }
+.drum-grid { position:relative; }
+.tl-main { position:relative; }
 .tl-track { position:relative; height:80px; }
 /* Small centered grip (three lines), same look as .ne-sidebar-toggle. */
 .tl-resize-handle {
@@ -800,8 +822,6 @@ select.ne-len-input { appearance:none; -webkit-appearance:none; } /* "Turnaround
 .ne-lock-pill b { color:var(--text-bright); }
 .ne-select-rect { position:fixed; border:1px solid var(--amber); background:rgba(251,191,36,0.12); pointer-events:none; z-index:100; }
 .ne-select-rect.delete-mode { border-color:var(--red); background:rgba(239,68,68,0.15); }
-.ne-playhead { position:absolute; top:0; bottom:0; width:1px; background:var(--amber); box-shadow:0 0 4px var(--amber); z-index:5; pointer-events:none; }
-.tl-playhead { position:absolute; top:0; bottom:0; width:2px; background:var(--amber); box-shadow:0 0 6px var(--amber); z-index:15; pointer-events:none; }
 .ne-vel-wrap { display:flex; border-top:2px solid var(--border); flex-shrink:0; }
 .ne-vel-labels { width:170px; flex-shrink:0; display:flex; flex-direction:column; justify-content:center; gap:6px; padding:10px 8px 4px 0; }
 .ne-vel-lane { position:relative; min-height:80px; flex:1; overflow-x:auto; background:var(--bg); }

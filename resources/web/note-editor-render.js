@@ -9,6 +9,17 @@
 // only renderNoteEditor() itself touches the live page directly.
 // =========================================
 
+// Where the playhead is drawn: the start position (nePlayheadBeat) while idle, the playback position while playing.
+let neShownBeat = 0;
+
+function neUpdatePlayheadEl() {
+  const el = document.getElementById('nePlayhead');
+  if (!el) return;
+  const rowsCol = document.querySelector('#drumGrid .ne-rows');
+  const scroll = rowsCol ? rowsCol.scrollLeft : 0;
+  el.style.left = (NE_LEFT_PAD + neShownBeat * neCurrentPxPerBeat - scroll) + 'px';
+}
+
 // Vel/Dyn/Rnd nudge state, preserved across rebuilds to allow fine-tuning.
 // Reset only on selection change. velNudgeBaseline captures velocities at
 // selection time for stable reference.
@@ -250,10 +261,20 @@ function renderNoteEditor() {
   container.appendChild(velWrap);
 
   // Sync horizontal scroll across rulers, rows, and velocity lane.
-  const syncScroll = (src) => { ruler.scrollLeft = src.scrollLeft; loopRuler.scrollLeft = src.scrollLeft; rowsCol.scrollLeft = src.scrollLeft; velLane.scrollLeft = src.scrollLeft; };
+  // The playhead is one layer over the whole grid (ruler, rows and velocity lane), positioned from the shared scroll offset.
+  const phLayer = document.createElement('div');
+  phLayer.className = 'ne-ph-layer';
+  const ph = document.createElement('div');
+  ph.id = 'nePlayhead'; ph.className = 'dg-playhead';
+  phLayer.appendChild(ph);
+  container.appendChild(phLayer);
+  if (!(playing && playbackMode === 'block')) neShownBeat = nePlayheadBeat;
+
+  const syncScroll = (src) => { ruler.scrollLeft = src.scrollLeft; loopRuler.scrollLeft = src.scrollLeft; rowsCol.scrollLeft = src.scrollLeft; velLane.scrollLeft = src.scrollLeft; neUpdatePlayheadEl(); };
   rowsCol.addEventListener('scroll', () => syncScroll(rowsCol));
   velLane.addEventListener('scroll', () => syncScroll(velLane));
   if (savedScrollLeft > 0) syncScroll({ scrollLeft: savedScrollLeft });
+  neUpdatePlayheadEl();
   const freshRowsWrap = document.querySelector('#drumGrid .ne-rows-wrap');
   if (freshRowsWrap && savedScrollTop > 0) freshRowsWrap.scrollTop = savedScrollTop;
   requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
@@ -288,12 +309,6 @@ function neBuildRuler(ctx) {
   endLine.style.left = (NE_LEFT_PAD + blockBeats*pxPerBeat) + 'px';
   rulerInner.appendChild(endLine);
 
-  const staticHead = document.createElement('div');
-  staticHead.className = 'ne-ruler-playhead';
-  staticHead.style.left = (NE_LEFT_PAD + nePlayheadBeat*pxPerBeat) + 'px';
-  staticHead.style.display = (typeof playing !== 'undefined' && playing) ? 'none' : 'block';
-  rulerInner.appendChild(staticHead);
-
   const beatAtClientX = (clientX) => {
     const rect = ruler.getBoundingClientRect();
     const x = (clientX - rect.left) / currentUIScale() + ruler.scrollLeft;
@@ -304,13 +319,15 @@ function neBuildRuler(ctx) {
     if (e.button !== 0) return;
     scrubbing = true;
     nePlayheadBeat = beatAtClientX(e.clientX);
-    staticHead.style.left = (NE_LEFT_PAD + nePlayheadBeat*pxPerBeat) + 'px';
+    neShownBeat = nePlayheadBeat; neUpdatePlayheadEl();
+    requestPlaySeek('block', nePlayheadBeat);   // during playback: continue from here, and this is the new start position
     ruler.setPointerCapture(e.pointerId);
   });
   ruler.addEventListener('pointermove', (e) => {
     if (!scrubbing) return;
     nePlayheadBeat = beatAtClientX(e.clientX);
-    staticHead.style.left = (NE_LEFT_PAD + nePlayheadBeat*pxPerBeat) + 'px';
+    neShownBeat = nePlayheadBeat; neUpdatePlayheadEl();
+    requestPlaySeek('block', nePlayheadBeat);
   });
   const finishScrub = () => {
     if (!scrubbing) return;
@@ -354,6 +371,7 @@ function neBuildLoopRuler(ctx) {
   loopRuler.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     dragState = { startBeat: beatAtClientX(e.clientX), moved: false };
+    console.log('[loop-debug] pointerdown', { startBeat: dragState.startBeat, block: activeBlockId });   // temporary
     loopRuler.setPointerCapture(e.pointerId);
   });
   loopRuler.addEventListener('pointermove', (e) => {
@@ -373,14 +391,17 @@ function neBuildLoopRuler(ctx) {
       const beat = beatAtClientX(e.clientX);
       const lo = Math.min(dragState.startBeat, beat), hi = Math.max(dragState.startBeat, beat);
       if (hi - lo >= 1) { neLoopStart = lo; neLoopEnd = hi; nePlayheadBeat = lo; neLoopFollowsBreak = false; }   // at least one beat
+      else neMsg('The loop range needs at least one beat — drag a longer range.');
+      console.log('[loop-debug] drag', { lo, hi, length: hi - lo, set: hi - lo >= 1 });   // temporary: remove after the loop bug hunt
     } else {
       neLoopStart = null; neLoopEnd = null; neLoopFollowsBreak = false;
+      console.log('[loop-debug] click: loop cleared');   // temporary
     }
     dragState = null;
     renderNoteEditor();
   };
   loopRuler.addEventListener('pointerup', finishDrag);
-  loopRuler.addEventListener('pointercancel', () => { dragState = null; });
+  loopRuler.addEventListener('pointercancel', () => { console.log('[loop-debug] pointercancel (drag lost)'); dragState = null; });   // log is temporary
 
   loopRuler.appendChild(inner);
   return loopRuler;
@@ -452,9 +473,6 @@ function neBuildRows(ctx) {
     endlessOverlay.style.height = (renderedRows*NE_ROW_H) + 'px';
     rowsInner.appendChild(endlessOverlay);
   }
-  const playhead = document.createElement('div');
-  playhead.id = 'nePlayhead'; playhead.className = 'ne-playhead'; playhead.style.display = 'none';
-  rowsInner.appendChild(playhead);
   rowsCol.appendChild(rowsInner);
   rowsWrap.appendChild(labelsCol); rowsWrap.appendChild(rowsCol);
   return { rowsWrap, rowsCol };

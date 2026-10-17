@@ -28,6 +28,15 @@ let tlFitReferencePxPerBar = PX_PER_BAR;
 
 // Shared time axis variables (in beats).
 let tlPlayheadBeat = 0;
+// Where the playhead is drawn: the start position (tlPlayheadBeat) while idle, the playback position while playing.
+let tlShownBeat = 0;
+
+function tlUpdatePlayheadEl() {
+  const el = document.getElementById('tlPlayhead');
+  if (!el) return;
+  const pxPerBeat = tlCurrentPxPerBar / readGrid().numerator;
+  el.style.left = (tlShownBeat * pxPerBeat + tlLeadInPx) + 'px';   // the height is the container's (CSS 100%)
+}
 let tlLoopStart = null, tlLoopEnd = null;
 
 // Actual px/bar after last render; exposed for external sync.
@@ -152,35 +161,26 @@ function renderTimeline() {
     ruler.appendChild(mark);
   }
 
-  // Static playhead marker (idle position). Active playback uses #tlPlayhead.
-  const staticHead = document.createElement('div');
-  staticHead.className = 'tl-ruler-playhead';
-  staticHead.style.left = (tlPlayheadBeat*pxPerBeat + tlLeadInPx) + 'px';
-  staticHead.style.display = (typeof playing !== 'undefined' && playing) ? 'none' : 'block';
-  ruler.appendChild(staticHead);
-
   const beatAtRulerX = (clientX) => {
     const rect = ruler.getBoundingClientRect();
     const x = clientX - rect.left + ruler.scrollLeft - tlLeadInPx;
     return Math.max(0, Math.min(totalBeats, x / pxPerBeat));
   };
-  // Scrubbing updates #tlPlayhead; if playback active, next tick overwrites.
+  // Scrubbing moves the playhead (the start position); if playback is active, the next tick overwrites it.
   let scrubbing = false;
   ruler.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     scrubbing = true;
     tlPlayheadBeat = beatAtRulerX(e.clientX);
-    staticHead.style.left = (tlPlayheadBeat*pxPerBeat + tlLeadInPx) + 'px';
-    const moveHead = document.getElementById('tlPlayhead');
-    if (moveHead) moveHead.style.left = staticHead.style.left;
+    tlShownBeat = tlPlayheadBeat; tlUpdatePlayheadEl();
+    requestPlaySeek('song', tlPlayheadBeat);   // during playback: continue from here, and this is the new start position
     ruler.setPointerCapture(e.pointerId);
   });
   ruler.addEventListener('pointermove', (e) => {
     if (!scrubbing) return;
     tlPlayheadBeat = beatAtRulerX(e.clientX);
-    staticHead.style.left = (tlPlayheadBeat*pxPerBeat + tlLeadInPx) + 'px';
-    const moveHead = document.getElementById('tlPlayhead');
-    if (moveHead) moveHead.style.left = staticHead.style.left;
+    tlShownBeat = tlPlayheadBeat; tlUpdatePlayheadEl();
+    requestPlaySeek('song', tlPlayheadBeat);
   });
   const finishScrub = () => { if (scrubbing) { scrubbing = false; renderTimeline(); } };
   ruler.addEventListener('pointerup', finishScrub);
@@ -310,11 +310,15 @@ function renderTimeline() {
     track.appendChild(clip);
   });
 
-  // Static playhead indicator at idle; playback moves it.
-  const tlPlayhead = document.createElement('div');
-  tlPlayhead.id = 'tlPlayhead'; tlPlayhead.className = 'tl-playhead';
-  tlPlayhead.style.left = (tlPlayheadBeat*pxPerBeat + tlLeadInPx) + 'px';
-  track.appendChild(tlPlayhead);
+  // One playhead element over ruler, loop row and clips; it lives in the scrolling container, so it scrolls with the content.
+  const tlMainEl = document.getElementById('tlMain');
+  if (!document.getElementById('tlPlayhead')) {
+    const ph = document.createElement('div');
+    ph.id = 'tlPlayhead'; ph.className = 'dg-playhead';
+    tlMainEl.appendChild(ph);
+  }
+  if (!(playing && playbackMode === 'song')) tlShownBeat = tlPlayheadBeat;
+  tlUpdatePlayheadEl();
 
   // Lasso rectangle overlay, recreated each render; its pointer listeners are attached once to track.
   const lassoRect = document.createElement('div');

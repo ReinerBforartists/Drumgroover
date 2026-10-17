@@ -148,6 +148,14 @@ function nePreviewTrack(trackId, vel) {
 
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
+// Where playback really starts for a playhead position: a position before the loop plays on into the loop (and from the loop's
+// end it always jumps back to the loop's start); a position behind the loop's end leaves the loop: it plays on to the end of
+// the pattern, then the loop takes over again. A position at the very end starts at the loop's start.
+function playStartBeat(beat, loopStart, loopEnd, totalBeats) {
+  const b = Math.max(0, Math.min(totalBeats, beat));
+  return b >= totalBeats ? loopStart : b;
+}
+
 // Shared playback entry point — both modes (block preview, full song) funnel
 // through this; only the note source and the cursor callback differ.
 // Embedded: playback runs natively (C++ PreviewScheduler, sample-accurate,
@@ -156,12 +164,13 @@ function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function playPattern(getEvents, totalBeats, cursorFn, onStop, opts) {
   opts = opts || {};
   playing = true; playToken++; const token = playToken;
+  playSeekBeat = null;
   document.getElementById('statusArea').classList.add('playing');
   document.getElementById('statusText').textContent = 'playing…';
 
   const loopStart = Math.max(0, Math.min(totalBeats, opts.loopStart ?? 0));
   const loopEnd = Math.max(loopStart, Math.min(totalBeats, opts.loopEnd ?? totalBeats));
-  const startBeat = Math.max(loopStart, Math.min(loopEnd, opts.startBeat ?? loopStart));
+  const startBeat = playStartBeat(opts.startBeat ?? loopStart, loopStart, loopEnd, totalBeats);
 
   const getBounds = opts.getBounds || null;
   if (typeof hostBridge !== 'undefined' && hostBridge.isEmbedded) {
@@ -219,6 +228,18 @@ async function playPatternNative(getEvents, totalBeats, cursorFn, onStop, token,
   await new Promise(resolve => {
     const watcher = setInterval(() => {
       if (!playing || token !== playToken) { clearInterval(watcher); resolve(); return; }
+      if (playSeekBeat !== null) {
+        // The playhead was moved during playback: restart the pattern from there.
+        const b = playStartBeat(playSeekBeat, loopStart, loopEnd, totalBeats);
+        playSeekBeat = null;
+        lastKnownBeat = b;
+        lastSeenGeneration = dataGeneration;
+        hostBridge.send('previewPlay', {
+          fullPattern: buildFullPatternPayload(getEvents, totalBeats),
+          startBeat: b, loopStart, loopEnd
+        });
+        return;
+      }
       const nb = readBounds(getBounds);
       if (nb && nb.key !== boundsKey) {
         boundsKey = nb.key;
@@ -228,6 +249,19 @@ async function playPatternNative(getEvents, totalBeats, cursorFn, onStop, token,
         hostBridge.send('previewPlay', {
           fullPattern: buildFullPatternPayload(getEvents, totalBeats),
           startBeat: loopStart, loopStart, loopEnd
+        });
+        return;
+      }
+      if (nb && (nb.loopStart !== loopStart || nb.loopEnd !== loopEnd || nb.totalBeats !== totalBeats)) {
+        // The loop range was set, moved or cleared during playback: the running scheduler only knows the bounds it was started
+        // with, so restart it at the current position with the new ones.
+        totalBeats = nb.totalBeats; loopStart = nb.loopStart; loopEnd = nb.loopEnd;
+        lastSeenGeneration = dataGeneration;
+        const b = playStartBeat(lastKnownBeat, loopStart, loopEnd, totalBeats);
+        lastKnownBeat = b;
+        hostBridge.send('previewPlay', {
+          fullPattern: buildFullPatternPayload(getEvents, totalBeats),
+          startBeat: b, loopStart, loopEnd
         });
         return;
       }
@@ -262,6 +296,8 @@ async function playPatternLocal(getEvents, totalBeats, cursorFn, onStop, token, 
 
   const QUANTUM = 1/8; // scheduling resolution in beats
   let beatPos = startBeat;
+  // Started behind the loop: plays on to the end of the pattern before the loop takes over again.
+  let behindLoop = startBeat >= loopEnd && loopEnd < totalBeats;
   let evIdx = 0;
   let events = getEvents();
   let lastSeenGeneration = dataGeneration;
@@ -280,12 +316,25 @@ async function playPatternLocal(getEvents, totalBeats, cursorFn, onStop, token, 
     await sleep(waitMs);
     if (!playing || token!==playToken) break;
 
+    if (playSeekBeat !== null) {
+      // The playhead was moved during playback: continue from there.
+      beatPos = playStartBeat(playSeekBeat, loopStart, loopEnd, totalBeats);
+      behindLoop = beatPos >= loopEnd && loopEnd < totalBeats;
+      playSeekBeat = null;
+      events = getEvents(); lastSeenGeneration = dataGeneration;
+      evIdx = seekToIdx(beatPos);
+    }
     const nb = readBounds(getBounds);
     if (nb && nb.key !== boundsKey) {
       boundsKey = nb.key;
       loopStart = nb.loopStart; loopEnd = nb.loopEnd;
-      beatPos = loopStart; events = getEvents(); lastSeenGeneration = dataGeneration;
+      beatPos = loopStart; behindLoop = false; events = getEvents(); lastSeenGeneration = dataGeneration;
       evIdx = seekToIdx(beatPos);
+      if (loopEnd <= loopStart) break;
+    } else if (nb && (nb.loopStart !== loopStart || nb.loopEnd !== loopEnd || nb.totalBeats !== totalBeats)) {
+      // The loop range was set, moved or cleared during playback: keep the position, use the new bounds.
+      loopStart = nb.loopStart; loopEnd = nb.loopEnd; totalBeats = nb.totalBeats;
+      behindLoop = beatPos >= loopEnd && loopEnd < totalBeats;
       if (loopEnd <= loopStart) break;
     }
     if (dataGeneration !== lastSeenGeneration) {
@@ -308,7 +357,7 @@ async function playPatternLocal(getEvents, totalBeats, cursorFn, onStop, token, 
     beatPos += QUANTUM;
     // Loop wrap re-fetches as a fallback and wraps to loopStart — a defined
     // loop range repeats itself, not the whole block/song.
-    if (beatPos >= loopEnd) { beatPos = loopStart; evIdx = seekToIdx(beatPos); events = getEvents(); lastSeenGeneration = dataGeneration; }
+    if (beatPos >= (behindLoop ? totalBeats : loopEnd)) { behindLoop = false; beatPos = loopStart; evIdx = seekToIdx(beatPos); events = getEvents(); lastSeenGeneration = dataGeneration; }
   }
   if (token === playToken) {
     cursorFn(-1);
@@ -321,6 +370,11 @@ async function playPatternLocal(getEvents, totalBeats, cursorFn, onStop, token, 
 // What the running playback is: 'block' (Note Editor loop) or 'song' (Song Generator / Mixer). The two are separate modes; entering a tab
 // of the other mode stops the running one (see switchToTab in ui-controller.js).
 let playbackMode = null;
+// Set when the playhead is moved while playing; the running playback picks it up and continues from that beat.
+let playSeekBeat = null;
+function requestPlaySeek(mode, beat) {
+  if (playing && playbackMode === mode) playSeekBeat = beat;
+}
 function stopPlayback(){ playing=false; playToken++; playbackMode = null;
   if (typeof hostBridge !== 'undefined' && hostBridge.isEmbedded) hostBridge.send('previewStop', {});
   document.getElementById('playBtn').disabled=false; document.getElementById('stopBtn').disabled=true;
@@ -372,26 +426,26 @@ function playFullSong() {
   playPattern(() => fullPattern.events, fullPattern.totalBeats, highlightTimelineBeat, () => {
     document.getElementById('playBtn').disabled = false;
     document.getElementById('stopBtn').disabled = true;
-  }, { startBeat: tlPlayheadBeat, loopStart: tlLoopStart ?? 0, loopEnd: tlLoopEnd ?? fullPattern.totalBeats }).catch(console.error);
+  }, {
+    startBeat: tlPlayheadBeat, loopStart: tlLoopStart ?? 0, loopEnd: tlLoopEnd ?? fullPattern.totalBeats,
+    // Live source of the loop range, so a loop set or cleared during playback takes effect (the pattern itself is re-sent on edits).
+    getBounds: () => ({ key: 'song', totalBeats: fullPattern.totalBeats, loopStart: tlLoopStart ?? 0, loopEnd: tlLoopEnd ?? fullPattern.totalBeats }),
+  }).catch(console.error);
 }
 
-// Playhead sweeps the currently-open block's full length (all bars are
-// visible, so this is an absolute position, no bar-clipping). Auto-scrolls
-// the rows so the sweep stays visible on long blocks.
+// The playhead is drawn at the start position while idle and sweeps the block while playing; on stop it returns to the start
+// position (nePlayheadBeat). All bars are visible, so this is an absolute position. Auto-scrolls the rows so the sweep stays
+// visible on long blocks.
 function highlightBeat(beatPos) {
-  const el = document.getElementById('nePlayhead');
-  const staticEl = document.querySelector('.ne-ruler-playhead');
   if (beatPos < 0) {
-    if (el) el.style.display = 'none';
-    if (staticEl) { staticEl.style.display = 'block'; staticEl.style.left = (NE_LEFT_PAD + nePlayheadBeat*neCurrentPxPerBeat) + 'px'; }
+    neShownBeat = nePlayheadBeat;
+    neUpdatePlayheadEl();
     return;
   }
   const block = findBlock(activeBlockId);
-  if (!block) { if (el) el.style.display = 'none'; return; }
-  if (staticEl) staticEl.style.display = 'none'; // the live cursor below takes over while actually playing
+  if (!block) return;
+  neShownBeat = beatPos;
   const x = NE_LEFT_PAD + beatPos * neCurrentPxPerBeat;
-  el.style.display = 'block';
-  el.style.left = x + 'px';
   const rowsCol = document.querySelector('.ne-rows');
   if (rowsCol) {
     const margin = 60;
@@ -399,29 +453,14 @@ function highlightBeat(beatPos) {
       rowsCol.scrollLeft = Math.max(0, x - rowsCol.clientWidth/2);
     }
   }
+  neUpdatePlayheadEl();
 }
 
-// Playhead sweeps across the song timeline's clips as the full song plays.
-// beatPos is an absolute beat position from the top of the song (see assembleFullPattern)
-// — converts directly to pixels using the same formula as renderTimeline.
+// Song Generator playhead: same behaviour. beatPos is an absolute beat position from the top of the song (see assembleFullPattern).
 function highlightTimelineBeat(beatPos) {
   if (window.mxTimelineSetPlayhead) window.mxTimelineSetPlayhead(beatPos);
-  const el = document.getElementById('tlPlayhead');
-  const staticEl = document.querySelector('.tl-ruler-playhead');
-  const g = readGrid();
-  const pxPerBeat = tlCurrentPxPerBar / g.numerator;
-  if (beatPos < 0) {
-    // Idle — the line stays visible, parked at tlPlayheadBeat (where
-    // playback will next start) instead of disappearing.
-    if (el) el.style.left = (tlPlayheadBeat * pxPerBeat + tlLeadInPx) + 'px';
-    if (staticEl) {
-      staticEl.style.display = 'block'; staticEl.style.left = (tlPlayheadBeat*pxPerBeat + tlLeadInPx) + 'px';
-    }
-    return;
-  }
-  if (!el) return;
-  if (staticEl) staticEl.style.display = 'none'; // the live cursor below takes over while actually playing
-  el.style.left = (beatPos * pxPerBeat + tlLeadInPx) + 'px';
+  tlShownBeat = beatPos < 0 ? tlPlayheadBeat : beatPos;
+  tlUpdatePlayheadEl();
 }
 
 // Timeline cursor for HOST-driven full-song playback — separate from the
