@@ -43,6 +43,7 @@ function attachCheckboxGroupPaintDrag(cb, applyMutation, commit) {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
+    cb._pointerHandled = true;
     const target = !cb.checked;
     instCbPaint = { target, touched: new Set(), commit, groupTag: cb.dataset.instGroup };
     applyTo(cb);
@@ -52,7 +53,15 @@ function attachCheckboxGroupPaintDrag(cb, applyMutation, commit) {
     if (!instCbPaint) return;
     applyTo(document.elementFromPoint(e.clientX, e.clientY));
   });
+  // The mouse click that follows pointerup would toggle the checkbox a second time (and fire `change`, undoing
+  // the change) whenever the commit is asynchronous and the checkbox is still in the DOM.
+  cb.addEventListener('click', (e) => {
+    if (!cb._pointerHandled) return;
+    cb._pointerHandled = false;
+    e.preventDefault();
+  });
   const finish = () => {
+    setTimeout(() => { cb._pointerHandled = false; }, 0);
     if (!instCbPaint) return;
     const { touched, commit: doCommit } = instCbPaint;
     instCbPaint = null;
