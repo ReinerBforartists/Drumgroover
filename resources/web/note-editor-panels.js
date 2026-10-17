@@ -197,6 +197,8 @@ function neBuildControlsPanel(ctx) {
       await withProjectUndoAsync(label, async () => {
         resizeBlockLength(block, g, v);
         block.generated = false;
+        // Growing only copies the plain notes into the new bars; the turnaround fills of the unlocked groups are laid out over the whole new length.
+        if ((block.turnaroundInterval || 0) > 0) applyAllUnlockedGroups(block, g);
         suppressKnobRegen = true;
         syncPhraseKnobRanges(block);
         suppressKnobRegen = false;
