@@ -528,7 +528,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
     onChange: v => turnaroundUndoable('Fill amount', () => { block.turnaroundDensity = v; }),
   });
   const fillDialRow = neToolbarCluster('Fill', [tsDial, tdDial]);
-  const fillLocked = neApplyDialRowLock(fillDialRow, [tsDial, tdDial], fillGroups, block, { turnaround: true });
+  neApplyDialRowLock(fillDialRow, [tsDial, tdDial], fillGroups, block, { turnaround: true });
   fillDialRow.classList.add('ne-ctl-nosep');
   neAddRerollIcon(fillDialRow, [tsDial, tdDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
     turnaroundUndoable('Reroll fill', () => { block.turnaroundSeed = Math.floor(Math.random()*1e9); });
@@ -543,11 +543,10 @@ function neBuildTurnaroundPanel(panel, ctx) {
   neInstrumentCheckboxRow(tiBox, [['snare','Snare'],['toms','Toms'],['hihat','Hi-Hat'],['floorTom','Floor Tom'],['crash','2x Crash']],
     () => block.turnaroundInstruments || ['snare'],
     (arr) => { block.turnaroundInstruments = arr; },
-    applyTurnaroundChange, 'turnaround-fill', fillLocked,
+    applyTurnaroundChange, 'turnaround-fill', false,
     'Fill Instruments\nWhich instruments the fill can use. Drag across checkboxes to set several at once.');
   neAppendFillInstruments(tiGroup, tiBox);
   panel.appendChild(tiGroup);
-  tiGroup.classList.toggle('ne-ctl-locked', fillLocked);
 
   // Kick layer
   const tksIdx = Math.max(0, BREAK_KICK_SUBDIVISION_VALUES.indexOf(block.turnaroundKickSubdivision ?? NE_DEFAULTS.kickSubdivision));
@@ -744,11 +743,10 @@ function neBuildBreakPanel(panel, ctx) {
   neInstrumentCheckboxRow(biBox, [['toms','Toms'],['snare','Snare'],['hihat','Hi-Hat'],['floorTom','Floor Tom'],['crash','2x Crash']],
     () => block.breakInstruments || ['toms'],
     (arr) => { block.breakInstruments = arr; },
-    () => { neEnsureSeed(block, 'breakSeed'); return regenerateMainAlways(); }, 'break-fill', mainIsLocked(),
+    () => { neEnsureSeed(block, 'breakSeed'); return regenerateMainAlways(); }, 'break-fill', false,
     neFillKind(block) + ' Instruments\nWhich instruments the ' + neFillKind(block).toLowerCase() + ' can use. Drag across checkboxes to set several at once.');
   neAppendFillInstruments(biGroup, biBox, neFillKind(block) + ' instruments:');
   panel.appendChild(biGroup);
-  biGroup.classList.toggle('ne-ctl-locked', mainIsLocked());
 
   // Kick layer
   const bksIdx = Math.max(0, BREAK_KICK_SUBDIVISION_VALUES.indexOf(block.breakKickSubdivision ?? NE_DEFAULTS.kickSubdivision));
