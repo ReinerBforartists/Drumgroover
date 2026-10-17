@@ -235,11 +235,13 @@ function renderNoteEditor() {
   const isBlockSwitch = block.id !== neLastPlayheadBlockId;
   let neAutoFitBreak = false;
   if (isBlockSwitch) {
+    // Every block keeps its own zoom; a block seen for the first time starts fitted.
+    if (neLastPlayheadBlockId != null && neAutoFitZoomBlockId !== neLastPlayheadBlockId) neZoomByBlock.set(neLastPlayheadBlockId, neZoom);
     if (neAutoFitZoomBlockId != null && neAutoFitZoomBlockId !== block.id) {
-      neZoom = neZoomBeforeAutoFit;
       neAutoFitZoomBlockId = null;
       neZoomBeforeAutoFit = null;
     }
+    neZoom = neZoomByBlock.get(block.id) ?? 1;
     neLastPlayheadBlockId = block.id;
     if (isBreakBlock(block) && !block.breakUnlocked) {
       const gb = Math.max(0, blockBeats - (block.breakBeats ?? BREAK_DEFAULT_BEATS));
