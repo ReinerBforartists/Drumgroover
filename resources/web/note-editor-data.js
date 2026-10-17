@@ -512,11 +512,53 @@ function neBuildGridLineFragment(totalBeats, pxPerBeat, snap, numerator, zones, 
   return frag;
 }
 
+// The grid of a row (beat ticks, snap lines, bar lines) as a single element: three repeating gradients, sized from the zoom
+// (see .ne-row-grid in style.css). snapOnly = just the snap lines (velocity lane).
+// Level of detail: a line level is only drawn when its lines are at least this far apart; bar lines are thinned out in powers of
+// two (like the ruler's labels), so a long block never shows a mush of hairlines.
+const NE_GRID_MIN_SNAP_PX = 6, NE_GRID_MIN_BEAT_PX = 8, NE_GRID_MIN_BAR_PX = 14;
+
+function neGridBarStride(barPx) {
+  let stride = 1;
+  while (barPx * stride < NE_GRID_MIN_BAR_PX && stride < 4096) stride *= 2;
+  return stride;
+}
+
+function neBuildCssGrid(totalBeats, pxPerBeat, snap, numerator, snapOnly) {
+  const el = document.createElement('div');
+  el.className = 'ne-row-grid';
+  el.style.left = NE_LEFT_PAD + 'px';
+  el.style.width = (totalBeats * pxPerBeat + 1) + 'px';
+  const line = (color) => `linear-gradient(to right, ${color} 1px, transparent 1px)`;
+  const SNAP_COLOR = 'rgba(30,64,175,.3)';
+  const snapPx = snap * pxPerBeat;
+  const barSpan = (numerator || 1) * pxPerBeat * neGridBarStride((numerator || 1) * pxPerBeat);
+  const layers = [], sizes = [];
+  if (snapOnly) {
+    // One level of lines: the finest one that is still readable.
+    const step = snapPx >= NE_GRID_MIN_SNAP_PX ? snapPx : (pxPerBeat >= NE_GRID_MIN_SNAP_PX ? pxPerBeat : barSpan);
+    layers.push(line(SNAP_COLOR)); sizes.push(step + 'px 100%');
+  } else {
+    layers.push(line('color-mix(in srgb, var(--border2) 55%, transparent)')); sizes.push(barSpan + 'px 100%');
+    if (snapPx >= NE_GRID_MIN_SNAP_PX) { layers.push(line(SNAP_COLOR)); sizes.push(snapPx + 'px 100%'); }
+    if (pxPerBeat >= NE_GRID_MIN_BEAT_PX) { layers.push(line('var(--border2)')); sizes.push(pxPerBeat + 'px 100%'); }
+  }
+  el.style.backgroundImage = layers.join(',');
+  el.style.backgroundSize = sizes.join(',');
+  return el;
+}
+
 // Draws the beat-tick + snap-line grid into a row element. Used by both
 // normal leaf rows and collapsed group-header rows, so the vertical grid
 // lines always run continuously down the whole editor. Thin cache-lookup
 // wrapper around neBuildGridLineFragment.
 function neDrawRowGrid(rowEl, totalBeats, pxPerBeat, snap, numerator, zones, engineGroup, g) {
+  // Rows without triplet zones get the grid as ONE element with a CSS background (cost independent of the block length); rows
+  // with zones keep the line elements, because the ambient lines have to be left out inside the zones.
+  if (!zones || !zones.length) {
+    rowEl.appendChild(neBuildCssGrid(totalBeats, pxPerBeat, snap, numerator, false));
+    return;
+  }
   const key = neGridLineFingerprint(totalBeats, pxPerBeat, snap, numerator, zones, engineGroup, g);
   let cached = neGridLineCache.get(key);
   if (!cached) {

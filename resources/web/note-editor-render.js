@@ -9,6 +9,59 @@
 // only renderNoteEditor() itself touches the live page directly.
 // =========================================
 
+// Note window: in a block much wider than the view only the notes (and ruler marks) within roughly three view widths around the
+// visible part exist as elements; scrolling far enough redraws them, without rebuilding the editor. Beats; infinite = off.
+let neNoteWindow = { from: -Infinity, to: Infinity };
+let neWindowBlockBeats = 0;   // length of the drawn grid in beats (blockBeats + the endless padding)
+
+function neNoteInWindow(beat) { return beat >= neNoteWindow.from && beat <= neNoteWindow.to; }
+
+// Level of detail for zoomed-out views: notes that fall into the same few pixels overlap anyway, so only the first one of each
+// pixel bucket gets an element (selected notes always do). `seen` is a per-row Set, or null at zoom levels with room for every note.
+const NE_NOTE_LOD_PPB = 12, NE_NOTE_LOD_BUCKET_PX = 3;
+function neNoteLodSet(pxPerBeat) { return pxPerBeat < NE_NOTE_LOD_PPB ? new Set() : null; }
+function neSkipNoteForLod(seen, beat, pxPerBeat, selected) {
+  if (!seen || selected) return false;
+  const bucket = Math.floor(beat * pxPerBeat / NE_NOTE_LOD_BUCKET_PX);
+  if (seen.has(bucket)) return true;
+  seen.add(bucket);
+  return false;
+}
+
+// The window for a scroll position, or the whole block when it is not much wider than the view anyway.
+function neComputeNoteWindow(scrollLeft, viewW, pxPerBeat, totalBeats) {
+  if (totalBeats * pxPerBeat <= viewW * 4) return { from: -Infinity, to: Infinity };
+  return {
+    from: (scrollLeft - viewW - NE_LEFT_PAD) / pxPerBeat - 1,
+    to: (scrollLeft + 2 * viewW - NE_LEFT_PAD) / pxPerBeat + 1,
+  };
+}
+
+function neRedrawWindowedParts() {
+  document.querySelectorAll('#drumGrid .ne-row').forEach(r => { if (r._drawNotes) r._drawNotes(); });
+  const ruler = document.querySelector('#drumGrid .ne-ruler');
+  if (ruler && ruler._drawMarks) ruler._drawMarks();
+}
+
+let neWindowRedrawQueued = false;
+// Called on every scroll: redraws the windowed parts once the visible area gets close to the window's edge.
+function neMaybeShiftNoteWindow() {
+  if (!isFinite(neNoteWindow.from) && !isFinite(neNoteWindow.to)) return;
+  const rowsCol = document.querySelector('#drumGrid .ne-rows');
+  if (!rowsCol || !(neCurrentPxPerBeat > 0)) return;
+  const viewW = rowsCol.clientWidth || 1;
+  const visFrom = (rowsCol.scrollLeft - NE_LEFT_PAD) / neCurrentPxPerBeat;
+  const visTo = (rowsCol.scrollLeft + viewW - NE_LEFT_PAD) / neCurrentPxPerBeat;
+  const margin = (viewW * 0.3) / neCurrentPxPerBeat;
+  const nearStart = neNoteWindow.from > 0 && visFrom - margin < neNoteWindow.from;
+  const nearEnd = neNoteWindow.to < neWindowBlockBeats && visTo + margin > neNoteWindow.to;
+  if (!nearStart && !nearEnd) return;
+  neNoteWindow = neComputeNoteWindow(rowsCol.scrollLeft, viewW, neCurrentPxPerBeat, neWindowBlockBeats);
+  if (neWindowRedrawQueued) return;
+  neWindowRedrawQueued = true;
+  requestAnimationFrame(() => { neWindowRedrawQueued = false; neRedrawWindowedParts(); });
+}
+
 // Where the playhead is drawn: the start position (nePlayheadBeat) while idle, the playback position while playing.
 let neShownBeat = 0;
 
@@ -214,12 +267,15 @@ function renderNoteEditor() {
   const scrollbarPx = rowsScrollbarVisible ? 10 : 0;
   const availWidth = Math.max(50, drumGridWidth - 170 - NE_LEFT_PAD - NE_RIGHT_PAD - scrollbarPx);
   const fitPxPerBeat = availWidth / (blockBeats + NE_END_GAP_BEATS);
+  neFitPxPerBeat = fitPxPerBeat;
+  neZoom = Math.min(neZoom, neZoomMax());   // a zoom from a longer block must not exceed what this block allows
+  neSyncZoomHeader();
 
   // Auto-fit for locked Break block to show the break-tail.
   if (neAutoFitBreak) {
     neZoomBeforeAutoFit = neZoom;
     const visibleBeats = Math.max(0.5, blockBeats - neLoopStart);
-    neZoom = Math.max(NE_ZOOM_MIN, Math.min(NE_ZOOM_MAX, blockBeats / visibleBeats));
+    neZoom = Math.max(NE_ZOOM_MIN, Math.min(neZoomMax(), blockBeats / visibleBeats));
     neAutoFitZoomBlockId = block.id;
   }
   const pxPerBeat = fitPxPerBeat * neZoom;
@@ -232,6 +288,10 @@ function renderNoteEditor() {
   } else if (isBlockSwitch) {
     savedScrollLeft = 0;
   }
+
+  // Which notes get elements (see neNoteWindow): for a long block only the ones around the visible part.
+  neWindowBlockBeats = totalBeats;
+  neNoteWindow = neComputeNoteWindow(savedScrollLeft, availWidth + NE_LEFT_PAD + NE_RIGHT_PAD, pxPerBeat, totalBeats);
 
   const isBreak = isBreakBlock(block);
   const breakLocked = isBreak && !block.breakUnlocked;
@@ -270,7 +330,7 @@ function renderNoteEditor() {
   container.appendChild(phLayer);
   if (!(playing && playbackMode === 'block')) neShownBeat = nePlayheadBeat;
 
-  const syncScroll = (src) => { ruler.scrollLeft = src.scrollLeft; loopRuler.scrollLeft = src.scrollLeft; rowsCol.scrollLeft = src.scrollLeft; velLane.scrollLeft = src.scrollLeft; neUpdatePlayheadEl(); };
+  const syncScroll = (src) => { ruler.scrollLeft = src.scrollLeft; loopRuler.scrollLeft = src.scrollLeft; rowsCol.scrollLeft = src.scrollLeft; velLane.scrollLeft = src.scrollLeft; neUpdatePlayheadEl(); neMaybeShiftNoteWindow(); };
   rowsCol.addEventListener('scroll', () => syncScroll(rowsCol));
   velLane.addEventListener('scroll', () => syncScroll(velLane));
   if (savedScrollLeft > 0) syncScroll({ scrollLeft: savedScrollLeft });
@@ -293,16 +353,29 @@ function neBuildRuler(ctx) {
   rulerInner.style.cssText = `position:relative; width:${totalW}px; height:100%;`;
 
   const showBeats = pxPerBeat >= 30;
-  for (let gb = 0; gb < totalBeats; gb++) {
-    const bar = Math.floor(gb / numerator);
-    const bt = gb % numerator;
-    if (bt > 0 && !showBeats) continue;
-    const mark = document.createElement('div');
-    mark.className = 'ne-ruler-mark' + (bt === 0 ? ' ne-ruler-bar' : '') + (gb >= blockBeats ? ' ne-ruler-endless' : '');
-    mark.style.left = (NE_LEFT_PAD + gb*pxPerBeat)+'px'; mark.style.width = pxPerBeat+'px';
-    mark.textContent = bt === 0 ? String(bar+1) : ((bar+1) + '.' + (bt+1));
-    rulerInner.appendChild(mark);
-  }
+  // Label stride: a long block shows only every 2nd / 4th / 8th ... bar number once the bars get too close (same rule as the grid's bar lines).
+  const MIN_BAR_LABEL_PX = 26;
+  let barLabelStride = 1;
+  while (barLabelStride * numerator * pxPerBeat < MIN_BAR_LABEL_PX && barLabelStride < 4096) barLabelStride *= 2;
+  // Only the marks inside the note window are drawn (the whole ruler when the block is not much wider than the view).
+  const drawMarks = () => {
+    rulerInner.querySelectorAll(':scope > .ne-ruler-mark').forEach(m => m.remove());
+    const gbFrom = Math.max(0, Math.floor(neNoteWindow.from)), gbTo = Math.min(totalBeats, Math.ceil(neNoteWindow.to));
+    for (let gb = gbFrom; gb < gbTo; gb++) {
+      const bar = Math.floor(gb / numerator);
+      const bt = gb % numerator;
+      if (bt > 0 && !showBeats) continue;
+      if (bt === 0 && bar % barLabelStride !== 0) continue;
+      const mark = document.createElement('div');
+      mark.className = 'ne-ruler-mark' + (bt === 0 ? ' ne-ruler-bar' : '') + (gb >= blockBeats ? ' ne-ruler-endless' : '');
+      mark.style.left = (NE_LEFT_PAD + gb*pxPerBeat)+'px';
+      mark.style.width = ((bt === 0 && !showBeats ? numerator * barLabelStride : 1) * pxPerBeat) + 'px';
+      mark.textContent = bt === 0 ? String(bar+1) : ((bar+1) + '.' + (bt+1));
+      rulerInner.appendChild(mark);
+    }
+  };
+  ruler._drawMarks = drawMarks;
+  drawMarks();
 
   const endLine = document.createElement('div');
   endLine.className = 'ne-block-end-line';
@@ -621,10 +694,15 @@ function neRenderGroupHeader(t, ctx, refs) {
   neDrawRowGrid(headerRow, totalBeats, pxPerBeat, g.snap, numerator, block.tripletLayers && engineGroup && block.tripletLayers[engineGroup], engineGroup, g);
 
   if (!isOpen) {
-    // Collapsed: show merged notes from all articulations.
+    // Collapsed: show merged notes from all articulations (only those inside the note window, see neNoteWindow).
+    const drawNotes = () => {
+    headerRow.querySelectorAll(':scope > .ne-note').forEach(n => n.remove());
+    const lodSeen = neNoteLodSet(pxPerBeat);
     groupChildIds.forEach(id => {
       const gt = trackList.find(x => x.id === id);
       (block.data[gt.id] || []).forEach((note, ni) => {
+        if (!neNoteInWindow(note.beat)) return;
+        if (neSkipNoteForLod(lodSeen, note.beat, pxPerBeat, selectedNotes.has(gt.id + '|' + note.beat))) return;
         const dot = document.createElement('div');
         const selKey = gt.id+'|'+note.beat;
         const noteLocked = breakLocked && note.beat < grooveBeats;
@@ -671,6 +749,8 @@ function neRenderGroupHeader(t, ctx, refs) {
         headerRow.appendChild(dot);
       });
     });
+    };
+    headerRow._drawNotes = drawNotes; drawNotes();
     headerRow.addEventListener('click', (e) => {
       if (suppressNextRowClick) { suppressNextRowClick = false; return; }
       selectedNotes.clear();
@@ -1010,7 +1090,12 @@ function neRenderTrackLeafRow(t, ctx, refs) {
 
   attachRowPaintDrag(row, block, t, ctx, refs);
 
+  const drawNotes = () => {
+  row.querySelectorAll(':scope > .ne-note').forEach(n => n.remove());
+  const lodSeen = neNoteLodSet(pxPerBeat);
   block.data[t.id].forEach((note, ni) => {
+    if (!neNoteInWindow(note.beat)) return;
+    if (neSkipNoteForLod(lodSeen, note.beat, pxPerBeat, selectedNotes.has(t.id + '|' + note.beat))) return;
     const dia = document.createElement('div');
     const selKey = t.id+'|'+note.beat;
     const noteLocked = breakLocked && note.beat < grooveBeats;
@@ -1054,6 +1139,8 @@ function neRenderTrackLeafRow(t, ctx, refs) {
     }
     row.appendChild(dia);
   });
+  };
+  row._drawNotes = drawNotes; drawNotes();
 
   rowsInner.appendChild(row);
   return 1;
@@ -1063,7 +1150,7 @@ function neRenderTrackLeafRow(t, ctx, refs) {
 function neSyncZoomHeader() {
   const slider = document.getElementById('neZoomSlider');
   const val = document.getElementById('neZoomVal');
-  if (slider) slider.value = String(neZoom);
+  if (slider) slider.value = String(neZoomToSlider(neZoom));
   if (val) val.textContent = Math.round(neZoom * 100) + '%';
 }
 
@@ -1076,7 +1163,7 @@ function neAttachGridZoomAndPan(rowsCol) {
     const cursorOffsetInViewport = (e.clientX - rect.left) / currentUIScale();
     const beatAtCursor = (cursorOffsetInViewport + rowsCol.scrollLeft - NE_LEFT_PAD) / neCurrentPxPerBeat;
     const dir = e.deltaY < 0 ? 1 : -1;
-    const newZoom = Math.max(NE_ZOOM_MIN, Math.min(NE_ZOOM_MAX, neZoom * (1 + dir * 0.1)));
+    const newZoom = Math.max(NE_ZOOM_MIN, Math.min(neZoomMax(), neZoom * (1 + dir * 0.1)));
     if (newZoom === neZoom) return;
     neZoom = newZoom;
     neAutoFitZoomBlockId = null;
@@ -1101,6 +1188,95 @@ function neAttachGridZoomAndPan(rowsCol) {
   rowsCol.addEventListener('pointerup', endPan);
   rowsCol.addEventListener('pointercancel', endPan);
   rowsCol.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
+}
+
+// The gray (not selected) bars of the velocity lane, drawn on one sticky canvas that always covers the visible part of the lane.
+// It redraws when the lane scrolls; clicking a bar selects that note (hit test by position, as the elements used to do).
+function neBuildVelGrayCanvas(items, pxPerBeat, velLane) {
+  const canvas = document.createElement('canvas');
+  canvas.className = 'ne-vel-gray-canvas';
+  canvas.style.cssText = `position:sticky; left:0; top:0; display:block; height:${NE_VEL_H}px; width:100%;`;
+  canvas.dataset.tooltip = 'Velocity\nClick to select · then drag to change it.';
+  const barX = (it) => NE_LEFT_PAD + it.beat * pxPerBeat;
+  const barH = (it) => (it.vel / 127) * (NE_VEL_H - 14);
+
+  let queued = false;
+  const draw = () => {
+    queued = false;
+    const w = velLane.clientWidth;
+    if (!w) return;
+    const scale = currentUIScale() * (window.devicePixelRatio || 1);
+    const pw = Math.round(w * scale), ph = Math.round(NE_VEL_H * scale);
+    if (canvas.width !== pw) canvas.width = pw;
+    if (canvas.height !== ph) canvas.height = ph;
+    canvas.style.width = w + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.clearRect(0, 0, w, NE_VEL_H);
+    const color = getComputedStyle(document.documentElement).getPropertyValue('--muted').trim() || '#94a3b8';
+    const sl = velLane.scrollLeft;
+    const visible = [];
+    // Zoomed out, bars within the same few pixels overlap into a solid block: keep only the tallest bar of each pixel bucket.
+    const buckets = pxPerBeat < NE_NOTE_LOD_PPB ? new Map() : null;
+    for (const it of items) {
+      const x = barX(it) - sl;
+      if (x < -8 || x > w + 8) continue;
+      const h = barH(it);
+      if (buckets) {
+        const b = Math.floor(barX(it) / NE_NOTE_LOD_BUCKET_PX);
+        const prev = buckets.get(b);
+        if (!prev || h > prev.h) buckets.set(b, { x, h });
+      } else visible.push({ x, h });
+    }
+    if (buckets) buckets.forEach(v => visible.push(v));
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.35;
+    ctx.beginPath();
+    for (const v of visible) { const x = Math.round(v.x) + 0.5; ctx.moveTo(x, NE_VEL_H); ctx.lineTo(x, NE_VEL_H - v.h); }
+    ctx.stroke();
+    ctx.globalAlpha = 0.45;
+    ctx.beginPath();
+    for (const v of visible) { ctx.moveTo(v.x + 5.5, NE_VEL_H - v.h); ctx.arc(v.x, NE_VEL_H - v.h, 5.5, 0, Math.PI * 2); }
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  };
+  canvas.redraw = () => { if (!queued) { queued = true; requestAnimationFrame(draw); } };
+  velLane.addEventListener('scroll', canvas.redraw);
+  // Fires when the lane gets its size (first draw after it is attached) and whenever the window or the layout resizes it.
+  if (typeof ResizeObserver === 'function') new ResizeObserver(canvas.redraw).observe(velLane);
+  else requestAnimationFrame(canvas.redraw);
+
+  // Which bar is under the pointer: its round handle (7 px) or its line (3 px either side, below the handle).
+  const hitAt = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const s = currentUIScale();
+    const x = (e.clientX - rect.left) / s + velLane.scrollLeft;
+    const y = (e.clientY - rect.top) / s;
+    let best = null, bestDx = Infinity;
+    for (const it of items) {
+      const dx = Math.abs(barX(it) - x);
+      if (dx > 7 || dx >= bestDx) continue;
+      const hy = NE_VEL_H - barH(it);
+      const onHandle = Math.hypot(dx, y - hy) <= 7;
+      const onLine = dx <= 3 && y >= hy;
+      if (onHandle || onLine) { best = it; bestDx = dx; }
+    }
+    return best;
+  };
+  let pressed = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    pressed = e.button === 0 ? hitAt(e) : null;
+    if (pressed) e.stopPropagation();   // a click on a bar selects it; it must not start a paint gesture
+  });
+  canvas.addEventListener('click', (e) => {
+    const it = pressed; pressed = null;
+    if (!it) return;
+    e.stopPropagation();
+    selectedNotes.add(it.trackId + '|' + it.beat);
+    renderNoteEditor();
+  });
+  canvas.addEventListener('pointermove', (e) => { canvas.style.cursor = hitAt(e) ? 'pointer' : ''; });
+  return canvas;
 }
 
 // Velocity lane.
@@ -1237,33 +1413,14 @@ function neBuildVelocityLane(ctx) {
   const velInner = document.createElement('div');
   velInner.style.cssText = `position:relative; width:${totalW}px; height:${NE_VEL_H}px;`;
   velInner.dataset.tooltip = 'Velocity\nDrag to paint velocities freehand · Shift+drag for a straight line between two points.';
-  for (let x = 0; x <= totalBeats; x += g.snap) {
-    const sl = document.createElement('div');
-    sl.className = 'ne-snap-line'; sl.style.left = (NE_LEFT_PAD + x*pxPerBeat)+'px';
-    velInner.appendChild(sl);
-  }
+  velInner.appendChild(neBuildCssGrid(totalBeats, pxPerBeat, g.snap, null, true));
   const baseline = document.createElement('div');
   baseline.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:1px;background:var(--border);';
   velInner.appendChild(baseline);
 
-  // Gray context bars.
-  grayItems.forEach(({trackId, note}) => {
-    const cx = NE_LEFT_PAD + note.beat*pxPerBeat;
-    const h = (note.vel/127)*(NE_VEL_H-14);
-    const line = document.createElement('div');
-    line.className = 'ne-vel-line ne-vel-line-gray';
-    line.style.cssText += `left:${cx}px; height:${h}px;`;
-    line.dataset.tooltip = 'Velocity\nClick to select · then drag to change it.';
-    velInner.appendChild(line);
-    const handle = document.createElement('div');
-    handle.className = 'ne-vel-handle ne-vel-handle-gray';
-    handle.style.left = (cx-5.5)+'px'; handle.style.bottom = (h-5.5)+'px';
-    handle.dataset.tooltip = 'Velocity\nClick to select · then drag to change it.';
-    const selectThis = (e) => { e.stopPropagation(); selectedNotes.add(trackId+'|'+note.beat); renderNoteEditor(); };
-    handle.addEventListener('click', selectThis);
-    line.addEventListener('click', selectThis);
-    velInner.appendChild(handle);
-  });
+  // Gray context bars: ONE canvas the size of the visible lane instead of two elements per note (a long block has tens of thousands).
+  velInner.appendChild(neBuildVelGrayCanvas(
+    grayItems.map(({ trackId, note }) => ({ trackId, beat: note.beat, vel: note.vel })), pxPerBeat, velLane));
 
   const velRefs = [];
   activeItems.forEach(({trackId, track, note, ni}) => {

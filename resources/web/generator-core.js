@@ -818,8 +818,11 @@ function regenerateGroup(groupId, applyFn, label, opts, sendType, buildPayload, 
     block.lockedGroups[groupId] = false;
     applyFn(block, readGrid());
     rebuildFullFromEditedBlocks(false);
-    renderNoteEditor();
-    updateGroupLockUI();
+    // A batch reroll (all groups, or all blocks) redraws once at the end instead of after every group.
+    if (!opts.skipRender) {
+      renderNoteEditor();
+      updateGroupLockUI();
+    }
     return;
   }
 
@@ -1617,7 +1620,7 @@ function rerollActiveBlock() {
     unlockedGroups.forEach(gid => {
       block.seeds = block.seeds || {};
       block.seeds[gid] = Math.floor(Math.random()*1e9);
-      REROLL_FNS[gid]({ suppressUndo: true, deferAudioSync: true });
+      REROLL_FNS[gid]({ suppressUndo: true, deferAudioSync: true, skipRender: true });
     });
   });
 }
@@ -1648,7 +1651,7 @@ async function rerollAllBlocksGlobal() {
     ALL_ENGINE_GROUPS.filter(gid => !(block.lockedGroups && block.lockedGroups[gid])).forEach(gid => {
       block.seeds = block.seeds || {};
       block.seeds[gid] = Math.floor(Math.random()*1e9);
-      REROLL_FNS[gid]({ suppressUndo: true, deferAudioSync: true });
+      REROLL_FNS[gid]({ suppressUndo: true, deferAudioSync: true, skipRender: true });
     });
   });
   activeBlockId = originalActiveId;
@@ -1693,7 +1696,7 @@ function syncBreakLengthsToParent(parent, g) {
 // =========================================
 // BLOCK LENGTH AND TURNAROUND
 // =========================================
-const BLOCK_MAX_LENGTH = 32;
+const BLOCK_MAX_LENGTH = 4096;
 const BLOCK_DEFAULT_LENGTH = { intro:1, verse:8, chorus:8, bridge:8, outro:1, fill:8, verseBreak:8, chorusBreak:8, bridgeBreak:8 };
 const BREAK_DEFAULT_BEATS = 2;
 const DEFAULT_BREAK_PARENT = { verseBreak:'verse', chorusBreak:'chorus', bridgeBreak:'bridge' };

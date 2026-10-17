@@ -786,6 +786,8 @@ select.ne-len-input { appearance:none; -webkit-appearance:none; } /* "Turnaround
 .ne-row.focused { background:rgba(251,191,36,.04); }
 .ne-tick { position:absolute; top:0; bottom:0; width:1px; pointer-events:none; }
 .ne-snap-line { position:absolute; top:0; bottom:0; width:1px; background:#1e40af; opacity:.3; pointer-events:none; }
+/* The row grid without DOM lines: gradients set per row by neBuildCssGrid (bar lines, snap lines, beat ticks, thinned out by zoom). */
+.ne-row-grid { position:absolute; top:0; bottom:0; pointer-events:none; background-repeat:repeat-x; }
 .ne-triplet-zone-bg { position:absolute; top:0; bottom:0; background:rgba(251,191,36,.08); pointer-events:none; }
 .ne-triplet-grid-line { position:absolute; top:0; bottom:0; width:1px; background:var(--amber); opacity:.35; pointer-events:none; }
 .ne-note { position:absolute; width:12px; height:12px; transform:translate(-6px,-6px) rotate(45deg); cursor:grab; border:1px solid #0f172a; z-index:2; touch-action:none; }
@@ -832,9 +834,6 @@ select.ne-len-input { appearance:none; -webkit-appearance:none; } /* "Turnaround
 .ne-vel-lane { position:relative; min-height:80px; flex:1; overflow-x:auto; background:var(--bg); }
 .ne-vel-handle { position:absolute; width:11px; height:11px; border-radius:50%; border:1px solid #0f172a; cursor:ns-resize; z-index:3; touch-action:none; }
 .ne-vel-line { position:absolute; bottom:0; width:1px; opacity:.6; }
-.ne-vel-line-gray { background:var(--muted); opacity:.35; cursor:pointer; z-index:1; }
-.ne-vel-handle-gray { background:var(--muted); opacity:.45; cursor:pointer; z-index:2; }
-.ne-vel-line-gray:hover, .ne-vel-handle-gray:hover { opacity:.8; }
 .ne-msg-pill { color:var(--amber); }
 
 .gm-toggle { display:flex; align-items:center; gap:4px; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; cursor:pointer; user-select:none; }

@@ -324,10 +324,19 @@ function clearUndoHistory(tab) {
 }
 
 // `tab` is optional: the entry goes to the history of the tab that is active when it is pushed.
+// Many steps keep a JSON snapshot of the whole block list, so the number of steps shrinks with the total length of the blocks
+// (a 4000-bar block is several megabytes per snapshot).
+function undoHistoryLimit() {
+  let bars = 0;
+  for (const b of blocksList) bars += (b.length || 1);
+  return bars > 2000 ? 6 : bars > 800 ? 12 : bars > 300 ? 24 : UNDO_HISTORY_MAX;
+}
+
 function pushUndo(label, undoFn, redoFn, tab) {
   const st = undoStack(tab);
   st.undo.push({ label, undo: undoFn, redo: redoFn });
-  if (st.undo.length > UNDO_HISTORY_MAX) st.undo.shift();
+  const limit = undoHistoryLimit();
+  while (st.undo.length > limit) st.undo.shift();
   st.redo.length = 0;
   refreshUndoRedoButtons();
 }
@@ -597,7 +606,13 @@ function armSuppressNextContextMenu() {
 }
 let neCurrentPxPerBeat = PX_PER_BEAT;
 let neZoom = 1;
-const NE_ZOOM_MIN = 0.25, NE_ZOOM_MAX = 4;
+const NE_ZOOM_MIN = 0.25, NE_ZOOM_MAX_BASE = 4, NE_MAX_PX_PER_BEAT = 160;
+let neFitPxPerBeat = 0;   // the fit-to-width size, set by renderNoteEditor
+// The zoom is relative to the fit-to-width size, so a long block (tiny fit size) needs a much larger maximum to get close to its notes.
+function neZoomMax() { return Math.max(NE_ZOOM_MAX_BASE, neFitPxPerBeat > 0 ? NE_MAX_PX_PER_BEAT / neFitPxPerBeat : NE_ZOOM_MAX_BASE); }
+// The zoom slider is logarithmic (0..1), because the range spans two orders of magnitude for long blocks.
+function neZoomToSlider(z) { const mx = neZoomMax(); return Math.log(Math.max(NE_ZOOM_MIN, Math.min(mx, z)) / NE_ZOOM_MIN) / Math.log(mx / NE_ZOOM_MIN); }
+function neSliderToZoom(s) { const mx = neZoomMax(); return NE_ZOOM_MIN * Math.pow(mx / NE_ZOOM_MIN, Math.max(0, Math.min(1, s))); }
 
 // =========================================
 // RENDERING — Stats
@@ -1660,7 +1675,7 @@ function neExtendGridToBottom() {
   filler.className = 'ne-row ne-grid-filler';
   filler.style.height = remaining + 'px';
   [...filler.children].forEach(ch => {
-    const keep = ch.classList && (ch.classList.contains('ne-tick') || ch.classList.contains('ne-snap-line') || ch.classList.contains('ne-bar-line'));
+    const keep = ch.classList && (ch.classList.contains('ne-row-grid') || ch.classList.contains('ne-tick') || ch.classList.contains('ne-snap-line') || ch.classList.contains('ne-bar-line'));
     if (!keep) ch.remove();
   });
   const rowsInner = rowsCol.querySelector(':scope > div');
@@ -1923,12 +1938,12 @@ tlMain.addEventListener('wheel', (e) => {
 
 const neZoomSlider = document.getElementById('neZoomSlider');
 const neZoomVal = document.getElementById('neZoomVal');
-neZoomSlider.addEventListener('input', () => { neZoomVal.textContent = Math.round(+neZoomSlider.value * 100) + '%'; });
+neZoomSlider.addEventListener('input', () => { neZoomVal.textContent = Math.round(neSliderToZoom(+neZoomSlider.value) * 100) + '%'; });
 neZoomSlider.addEventListener('change', () => {
   const rowsCol = document.querySelector('.ne-rows');
   const oldScrollLeft = rowsCol ? rowsCol.scrollLeft : 0;
   const beatAtLeftEdge = Math.max(0, (oldScrollLeft - NE_LEFT_PAD) / (neCurrentPxPerBeat || 1));
-  neZoom = +neZoomSlider.value;
+  neZoom = neSliderToZoom(+neZoomSlider.value);
   neAutoFitZoomBlockId = null;
   renderNoteEditor();
   const freshRowsCol = document.querySelector('.ne-rows');
@@ -1963,7 +1978,7 @@ function fitNoteEditorZoom() {
   const viewEndBeat = Math.min(blockBeats, selMaxBeat + marginBeats);
   const viewBeats = Math.max(0.5, viewEndBeat - viewStartBeat);
 
-  neZoom = Math.max(NE_ZOOM_MIN, Math.min(NE_ZOOM_MAX, blockBeats / viewBeats));
+  neZoom = Math.max(NE_ZOOM_MIN, Math.min(neZoomMax(), blockBeats / viewBeats));
   neAutoFitZoomBlockId = null;
   renderNoteEditor();
   const freshRowsCol = document.querySelector('.ne-rows');

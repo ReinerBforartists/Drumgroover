@@ -3715,6 +3715,7 @@ void DrumGroover::OnReset()
   for (auto& pool : mCustomHcPools) pool.SetSampleRate(sr);
   for (auto& pool : mCustomCbPools) pool.SetSampleRate(sr);
   for (auto& pool : mCustomPc2Pools) pool.SetSampleRate(sr);
+  for (auto& buf : mChanBuf) buf.assign(std::max(GetBlockSize(), 1), 0.0);   // sized for the host's block size ahead of the audio thread
 #endif
 }
 
@@ -3919,8 +3920,12 @@ void DrumGroover::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 
   // --- Mixer channel buffers: one mono buffer per instrument channel (see dsp/Mixer.h). The Drum Engine focus
   // meter reads its family peaks from these (family = union of channels, below).
-  std::array<std::vector<double>, dgg::kMixerNumChannels> chanBuf;
-  for (auto& buf : chanBuf) buf.assign(nFrames, 0.0);
+  auto& chanBuf = mChanBuf;
+  for (auto& buf : chanBuf)
+  {
+    if (static_cast<int>(buf.size()) < nFrames) buf.resize(nFrames);   // only when a larger block than ever before arrives
+    std::fill(buf.begin(), buf.begin() + nFrames, 0.0);
+  }
   const double* chanIn[dgg::kMixerNumChannels];
   for (int i = 0; i < dgg::kMixerNumChannels; ++i) chanIn[i] = chanBuf[i].data();
 

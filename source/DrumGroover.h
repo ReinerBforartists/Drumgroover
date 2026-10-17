@@ -452,6 +452,10 @@ private:
   // Mixer DSP module state — audio thread only (ProcessBlock).
   dgg::MixerProcessor mMixerProc;
 
+  // One mono buffer per mixer channel, reused by every ProcessBlock (grown in OnReset / when a larger block arrives) so the audio
+  // thread does not allocate per block. Audio thread only.
+  std::array<std::vector<double>, dgg::kMixerNumChannels> mChanBuf;
+
   // Per-block peak accumulators for the mixer strip meters (L/R), read by
   // OnIdle() in the 'mixerLevels' bridge message. Same CAS pattern as mFocusPeak.
   std::atomic<double> mMixerPeakL[dgg::kMixerNumChannels] = {};
