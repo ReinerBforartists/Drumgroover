@@ -16,6 +16,70 @@ let velNudgeSelKey = null;
 let velNudgeBaseline = null;
 let velNudgeVals = { vel: 0, dyn: 0, rnd: 0 };
 
+// Velocity lane instrument filter: '' = no filter, 'g:<group>' = every articulation of a group, 't:<trackId>' = one track.
+let velFilter = '';
+
+function neVelFilterTrackIds() {
+  if (!velFilter) return null;
+  const ids = velFilter.startsWith('g:')
+    ? trackList.filter(t => t.role !== 'custom' && t.group === velFilter.slice(2)).map(t => t.id)
+    : trackList.filter(t => t.id === velFilter.slice(2)).map(t => t.id);
+  if (!ids.length) { velFilter = ''; return null; }
+  return ids;
+}
+
+// Custom menu instead of a native <select>: the native popup flashed at a wrong position before settling,
+// and this one opens upward because the lane sits at the bottom of the window.
+function neBuildVelFilterSelect() {
+  const entries = [{ value: '', text: 'All instruments' }];
+  const seenGroups = new Set();
+  trackList.forEach(t => {
+    if (t.role === 'custom') { entries.push({ value: 't:' + t.id, text: t.label }); return; }
+    if (seenGroups.has(t.group)) return;
+    seenGroups.add(t.group);
+    entries.push({ value: 'g:' + t.group, text: GROUPS[t.group] || t.group });
+  });
+  if (!entries.some(e => e.value === velFilter)) velFilter = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'ne-vel-filter-wrap';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ne-vel-filter';
+  btn.dataset.tooltip = 'Velocity filter\nShows only the velocities of one instrument. "All instruments" shows everything.';
+  btn.textContent = entries.find(e => e.value === velFilter).text;
+  const menu = document.createElement('div');
+  menu.className = 'ne-vel-filter-menu';
+  menu.style.display = 'none';
+  entries.forEach(en => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'ne-vel-filter-item' + (en.value === velFilter ? ' active' : '');
+    item.textContent = en.text;
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      velFilter = en.value; velNudgeSelKey = null;
+      renderNoteEditor();
+    });
+    menu.appendChild(item);
+  });
+  const closeOnOutside = (e) => {
+    if (wrap.contains(e.target)) return;
+    menu.style.display = 'none';
+    document.removeEventListener('pointerdown', closeOnOutside, true);
+  };
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (menu.style.display !== 'none') { menu.style.display = 'none'; document.removeEventListener('pointerdown', closeOnOutside, true); return; }
+    menu.style.display = 'block';
+    const active = menu.querySelector('.active');
+    if (active) menu.scrollTop = Math.max(0, active.offsetTop - menu.clientHeight / 2);
+    document.addEventListener('pointerdown', closeOnOutside, true);
+  });
+  wrap.appendChild(btn); wrap.appendChild(menu);
+  return wrap;
+}
+
 // Snapshot of block.data/lockedGroups before the current interaction's first
 // change, captured lazily. Cleared on commit.
 let velCommitBefore = null;
@@ -1011,10 +1075,13 @@ function neBuildVelocityLane(ctx) {
   const velLabels = document.createElement('div');
   velLabels.className = 'ne-vel-labels';
 
-  // Determine scope: selection > focused track > all tracks.
-  const scopeTrackIds = selectedNotes.size > 0
-    ? [...new Set([...selectedNotes].map(k => k.split('|')[0]))]
-    : (focusedTrackId ? [focusedTrackId] : trackList.map(t => t.id));
+  // Determine scope: filter > selection > focused track > all tracks.
+  const filterTrackIds = neVelFilterTrackIds();
+  const scopeTrackIds = filterTrackIds
+    ? filterTrackIds
+    : selectedNotes.size > 0
+      ? [...new Set([...selectedNotes].map(k => k.split('|')[0]))]
+      : (focusedTrackId ? [focusedTrackId] : trackList.map(t => t.id));
 
   let activeItems = [];
   if (selectedNotes.size > 0) {
@@ -1063,6 +1130,7 @@ function neBuildVelocityLane(ctx) {
       <input type="number" class="ne-vel-mini-val" id="veAdjRndNum" data-tooltip="Randomize&#10;Randomizes the selected note(s)&rsquo; velocity by up to ± this amount, per note. Requires a selection." min="0" max="100" value="${velNudgeVals.rnd}">
     </div>
   `;
+  velLabels.insertBefore(neBuildVelFilterSelect(), velLabels.firstChild);
 
   // Build control (for regular blocks only).
   const showBuild = !isBreak && !block.isFillBlock;
