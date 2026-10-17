@@ -35,8 +35,10 @@ const hostBridge = (() => {
   // characters, which would break our UTF8 JSON payloads. ---
   function utf8ToBase64(str) {
     const bytes = new TextEncoder().encode(str);
+    // In chunks: one String.fromCharCode call per 32 KB instead of one per byte (several times faster for multi-MB messages).
     let binary = '';
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
     return btoa(binary);
   }
   function base64ToUtf8(b64) {
