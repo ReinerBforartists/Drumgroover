@@ -1262,6 +1262,15 @@ function generateFixedBreakHandPattern(breakBeats, stepsPerBeat, patternSpec, an
   return dist;
 }
 
+// The fixed hand pattern only plays the instruments that are checked: snare needs "snare", every tom needs "toms".
+function filterHandPatternByInstruments(dist, instruments) {
+  const out = {};
+  Object.keys(dist).forEach(tid => {
+    if (instruments.includes(tid === 'snare' ? 'snare' : 'toms')) out[tid] = dist[tid];
+  });
+  return out;
+}
+
 function genreBaselineFeel() {
   return (typeof selectedGenre !== 'undefined' && selectedGenre === 'swing') ? 'swing' : 'straight';
 }
@@ -1282,7 +1291,7 @@ function generateFillBlock(g, id, name, totalLength, fillBeats, anchor, opts) {
   const fillSubdivision = opts.fillSubdivision ?? 4;
   const fillSeed = opts.fillSeed;
   const fillDist = (fillSeed === undefined)
-    ? generateFixedBreakHandPattern(fillBeats, fillSubdivision, fillInstruments.includes('snare') ? BREAK_HAND_PATTERNS.snareToms : BREAK_HAND_PATTERNS.toms, anchor, feel, fillOffset)
+    ? filterHandPatternByInstruments(generateFixedBreakHandPattern(fillBeats, fillSubdivision, fillInstruments.includes('snare') ? BREAK_HAND_PATTERNS.snareToms : BREAK_HAND_PATTERNS.toms, anchor, feel, fillOffset), fillInstruments)
     : generateBreakFill(fillBeats, fillInstruments, fillDensity, fillSeed, fillSubdivision, feel, fillOffset);
   Object.keys(fillDist).forEach(tid => {
     if (!data[tid]) data[tid] = [];
@@ -1309,7 +1318,7 @@ function generateBreakFill(breakBeats, instruments, densityPct, seed, stepsPerBe
   stepsPerBeat = stepsPerBeat ?? 4;
   const totalSteps = Math.max(2, Math.round(breakBeats * stepsPerBeat));
   const voicePool = [];
-  (instruments && instruments.length ? instruments : ['toms']).forEach(instKey => (TURNAROUND_INSTRUMENT_TRACKS[instKey] || []).forEach(t => voicePool.push(t)));
+  (instruments || []).forEach(instKey => (TURNAROUND_INSTRUMENT_TRACKS[instKey] || []).forEach(t => voicePool.push(t)));
   const rawHits = Math.max(1, Math.round((densityPct/100) * totalSteps));
   const hits = feel === 'halftime' ? Math.max(1, Math.round(rawHits/2)) : rawHits;
   const mask = euclideanRhythm(hits, totalSteps, seed);
@@ -1360,7 +1369,7 @@ function generateBreakBlock(parentType, g, id, totalLength, breakBeats, opts) {
   const breakSubdivision = opts.breakSubdivision ?? 4;
   const breakSeed = opts.breakSeed; // stays undefined until Reroll is clicked — see getBreakSeed
   const fillDist = (breakSeed === undefined)
-    ? generateFixedBreakHandPattern(breakBeats, breakSubdivision, breakInstruments.includes('snare') ? BREAK_HAND_PATTERNS.snareToms : BREAK_HAND_PATTERNS.toms, undefined, feel, grooveBeats)
+    ? filterHandPatternByInstruments(generateFixedBreakHandPattern(breakBeats, breakSubdivision, breakInstruments.includes('snare') ? BREAK_HAND_PATTERNS.snareToms : BREAK_HAND_PATTERNS.toms, undefined, feel, grooveBeats), breakInstruments)
     : generateBreakFill(breakBeats, breakInstruments, breakDensity, breakSeed, breakSubdivision, feel, grooveBeats);
   Object.keys(fillDist).forEach(tid => {
     if (!data[tid]) data[tid] = [];

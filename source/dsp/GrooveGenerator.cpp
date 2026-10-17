@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <iterator>
 #include <unordered_map>
 
 namespace dgg {
@@ -144,10 +145,8 @@ BeatDistribution generateBreakFill(double breakBeats, const std::vector<std::str
                                     double beatOffset) {
   const int totalSteps = std::max(2, static_cast<int>(std::round(breakBeats * stepsPerBeat)));
 
-  static const std::vector<std::string> kDefaultInstruments = {"toms"};
-  const auto& insts = instruments.empty() ? kDefaultInstruments : instruments;
   std::vector<std::string> voicePool;
-  for (const auto& instKey : insts) {
+  for (const auto& instKey : instruments) {
     auto it = kTurnaroundInstrumentTracks.find(instKey);
     if (it == kTurnaroundInstrumentTracks.end()) continue;
     for (const auto& t : it->second) voicePool.push_back(t);
@@ -235,6 +234,13 @@ Block generateBreakBlock(const Block& parent, const Grid& grid, const std::strin
                                        /*anchorStart=*/false, feel, grooveBeats)
       : generateBreakFill(breakBeats, breakInstruments, breakDensity, opts.breakSeed, breakSubdivision, feel,
                            grooveBeats);
+  if (!opts.breakSeedSet) {
+    const bool hasToms = std::find(breakInstruments.begin(), breakInstruments.end(), "toms") != breakInstruments.end();
+    for (auto it = fillDist.begin(); it != fillDist.end();) {
+      const bool keep = (it->first == "snare") ? hasSnare : hasToms;
+      it = keep ? std::next(it) : fillDist.erase(it);
+    }
+  }
   for (const auto& kv : fillDist) {
     for (double beat : kv.second) data[kv.first].push_back({beat + grooveBeats, breakFillVel, false});
   }
@@ -303,6 +309,13 @@ Block generateFillBlock(const Grid& grid, const std::string& id, const std::stri
                                        feel, fillOffset)
       : generateBreakFill(fillBeats, fillInstruments, fillDensity, opts.fillSeed, fillSubdivision, feel,
                            fillOffset);
+  if (!opts.fillSeedSet) {
+    const bool hasToms = std::find(fillInstruments.begin(), fillInstruments.end(), "toms") != fillInstruments.end();
+    for (auto it = fillDist.begin(); it != fillDist.end();) {
+      const bool keep = (it->first == "snare") ? hasSnare : hasToms;
+      it = keep ? std::next(it) : fillDist.erase(it);
+    }
+  }
   for (const auto& kv : fillDist) {
     for (double beat : kv.second) data[kv.first].push_back({beat + fillOffset, fillVel, false});
   }
