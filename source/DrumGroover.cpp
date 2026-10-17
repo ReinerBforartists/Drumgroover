@@ -1608,6 +1608,7 @@ bool DrumGroover::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* p
     else if (type == "syncPlaybackPattern") HandleSyncPlaybackPattern(payload);
     else if (type == "previewPlay")       HandlePreviewPlay(payload);
     else if (type == "previewStop")       HandlePreviewStop(payload);
+    else if (type == "previewSeek")       HandlePreviewSeek(payload);
     else if (type == "regenerateKickGroup") HandleRegenerateKickGroup(payload);
     else if (type == "regenerateSnareGroup") HandleRegenerateSnareGroup(payload);
     else if (type == "regenerateSnareGhostLayer") HandleRegenerateSnareGhostLayer(payload);
@@ -2049,6 +2050,15 @@ void DrumGroover::HandlePreviewStop(const nlohmann::json& /*payload*/)
 {
   mPreviewScheduler.Stop();
   DGG_Log("HandlePreviewStop");
+}
+
+// Moves the running preview to another position and/or loop range without sending the pattern again.
+void DrumGroover::HandlePreviewSeek(const nlohmann::json& payload)
+{
+  if (payload.contains("loopStart") && payload.contains("loopEnd") && !payload["loopStart"].is_null() && !payload["loopEnd"].is_null())
+    mPreviewScheduler.SetLoop(payload["loopStart"].get<double>(), payload["loopEnd"].get<double>());
+  if (payload.contains("startBeat") && !payload["startBeat"].is_null())
+    mPreviewScheduler.Seek(payload["startBeat"].get<double>());
 }
 
 void DrumGroover::HandleRegenerateKickGroup(const nlohmann::json& payload)

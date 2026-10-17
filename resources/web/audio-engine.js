@@ -164,7 +164,7 @@ function playStartBeat(beat, loopStart, loopEnd, totalBeats) {
 function playPattern(getEvents, totalBeats, cursorFn, onStop, opts) {
   opts = opts || {};
   playing = true; playToken++; const token = playToken;
-  playSeekBeat = null;
+  playSeekBeat = null; seekGuard = null;
   document.getElementById('statusArea').classList.add('playing');
   document.getElementById('statusText').textContent = 'playing…';
 
@@ -220,7 +220,13 @@ async function playPatternNative(getEvents, totalBeats, cursorFn, onStop, token,
 
   const offPosition = hostBridge.on('previewPosition', (msg) => {
     if (!playing || token !== playToken) return;
-    if (msg.playing) { lastKnownBeat = msg.beat; cursorFn(msg.beat); }
+    if (msg.playing) {
+      if (seekGuard) {
+        if (Math.abs(msg.beat - seekGuard.beat) > 1.5 && performance.now() < seekGuard.until) return;
+        seekGuard = null;
+      }
+      lastKnownBeat = msg.beat; cursorFn(msg.beat);
+    }
   });
 
   // UI-thread watcher — no sample accuracy needed, so a plain interval
@@ -234,10 +240,9 @@ async function playPatternNative(getEvents, totalBeats, cursorFn, onStop, token,
         playSeekBeat = null;
         lastKnownBeat = b;
         lastSeenGeneration = dataGeneration;
-        hostBridge.send('previewPlay', {
-          fullPattern: buildFullPatternPayload(getEvents, totalBeats),
-          startBeat: b, loopStart, loopEnd
-        });
+        seekGuard = { beat: b, until: performance.now() + 600 };
+        // A light message: only the position moves, the pattern is not sent again (spam-clicking in a ruler must stay cheap).
+        hostBridge.send('previewSeek', { startBeat: b, loopStart, loopEnd });
         return;
       }
       const nb = readBounds(getBounds);
@@ -255,7 +260,13 @@ async function playPatternNative(getEvents, totalBeats, cursorFn, onStop, token,
       if (nb && (nb.loopStart !== loopStart || nb.loopEnd !== loopEnd || nb.totalBeats !== totalBeats)) {
         // The loop range was set, moved or cleared during playback: the running scheduler only knows the bounds it was started
         // with, so restart it at the current position with the new ones.
+        const lengthChanged = nb.totalBeats !== totalBeats;
         totalBeats = nb.totalBeats; loopStart = nb.loopStart; loopEnd = nb.loopEnd;
+        if (!lengthChanged) {
+          // Only the loop range changed: the running scheduler keeps its position and takes the new range.
+          hostBridge.send('previewSeek', { loopStart, loopEnd });
+          return;
+        }
         lastSeenGeneration = dataGeneration;
         const b = playStartBeat(lastKnownBeat, loopStart, loopEnd, totalBeats);
         lastKnownBeat = b;
@@ -375,6 +386,12 @@ let playSeekBeat = null;
 function requestPlaySeek(mode, beat) {
   if (playing && playbackMode === mode) playSeekBeat = beat;
 }
+// Timestamp of the start of a playhead drag in a ruler (0 = none): the live playback position must not move the playhead then.
+// Stale after 30 s, so a lost pointer-up can never freeze the cursor.
+let playheadScrubbing = 0;
+function isScrubbingPlayhead() { return playheadScrubbing > 0 && performance.now() - playheadScrubbing < 30000; }
+// After a seek the scheduler is restarted; positions it still reports from before the restart are ignored until one is near the target.
+let seekGuard = null;
 function stopPlayback(){ playing=false; playToken++; playbackMode = null;
   if (typeof hostBridge !== 'undefined' && hostBridge.isEmbedded) hostBridge.send('previewStop', {});
   document.getElementById('playBtn').disabled=false; document.getElementById('stopBtn').disabled=true;
@@ -437,6 +454,7 @@ function playFullSong() {
 // position (nePlayheadBeat). All bars are visible, so this is an absolute position. Auto-scrolls the rows so the sweep stays
 // visible on long blocks.
 function highlightBeat(beatPos) {
+  if (beatPos >= 0 && isScrubbingPlayhead()) return;
   if (beatPos < 0) {
     neShownBeat = nePlayheadBeat;
     neUpdatePlayheadEl();
@@ -461,6 +479,7 @@ function highlightBeat(beatPos) {
 
 // Song Generator playhead: same behaviour. beatPos is an absolute beat position from the top of the song (see assembleFullPattern).
 function highlightTimelineBeat(beatPos) {
+  if (beatPos >= 0 && isScrubbingPlayhead()) return;
   if (window.mxTimelineSetPlayhead) window.mxTimelineSetPlayhead(beatPos);
   tlShownBeat = beatPos < 0 ? tlPlayheadBeat : beatPos;
   tlUpdatePlayheadEl();

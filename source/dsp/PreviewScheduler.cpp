@@ -41,6 +41,15 @@ void PreviewScheduler::Stop() {
   mPlaying.store(false, std::memory_order_relaxed);
 }
 
+void PreviewScheduler::Seek(double beat) {
+  mCurrentBeat.store(std::max(0.0, beat), std::memory_order_relaxed);   // Advance() only persists its position if this value is unchanged
+}
+
+void PreviewScheduler::SetLoop(double loopStartBeat, double loopEndBeat) {
+  mLoopStartBeat.store(loopStartBeat, std::memory_order_relaxed);
+  mLoopEndBeat.store(loopEndBeat, std::memory_order_relaxed);
+}
+
 std::vector<DueEvent> PreviewScheduler::Advance(double bpm, int nFrames, double sampleRate) {
   std::vector<DueEvent> due;
 

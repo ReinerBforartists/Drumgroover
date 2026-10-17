@@ -29,6 +29,10 @@ public:
   // Stops playback; CurrentBeat() freezes at the stop position.
   void Stop();
 
+  // Move the running playback to another position / loop range; the pattern is untouched.
+  void Seek(double beat);
+  void SetLoop(double loopStartBeat, double loopEndBeat);
+
   bool   IsPlaying() const { return mPlaying.load(std::memory_order_relaxed); }
   double CurrentBeat() const { return mCurrentBeat.load(std::memory_order_relaxed); }
 

@@ -1357,7 +1357,7 @@
     bar.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.stopPropagation();
-      if (transportActive()) return;   // like the playhead: it only applies to the next start
+      if (hostPlaying) return;   // the host's transport cannot be moved from here
       const handle = e.target.closest('.loop-handle');
       if (handle && tlLoopStart != null) {
         // Dragging an edge of the existing loop: only that edge moves (the loop stays at least one bar long).
@@ -1400,7 +1400,7 @@
     bar.addEventListener('pointerup', finish);
     bar.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      if (transportActive()) return;
+      if (hostPlaying) return;
       tlLoopStart = null; tlLoopEnd = null;
       renderTimeline();
     });
@@ -1457,11 +1457,17 @@
       mxTimelineSetPlayhead(-1);
     };
     mxTl.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || transportActive()) return;   // the position only applies to the next start
-      mxTlDrag = true; try { mxTl.setPointerCapture(e.pointerId); } catch (_) {} setFromEvent(e);
+      if (e.button !== 0 || hostPlaying) return;   // the host's transport cannot be moved from here
+      mxTlDrag = true; playheadScrubbing = performance.now();   // the live position does not move the playhead while it is dragged
+      try { mxTl.setPointerCapture(e.pointerId); } catch (_) {} setFromEvent(e);
     });
     mxTl.addEventListener('pointermove', (e) => { if (mxTlDrag) setFromEvent(e); });
-    const endDrag = () => { if (!mxTlDrag) return; mxTlDrag = false; highlightTimelineBeat(-1); };
+    const endDrag = () => {
+      if (!mxTlDrag) return;
+      mxTlDrag = false; playheadScrubbing = 0;
+      requestPlaySeek('song', tlPlayheadBeat);   // while the song plays here, it continues from the new position (once, when the drag ends)
+      if (!transportActive()) highlightTimelineBeat(-1);
+    };
     mxTl.addEventListener('pointerup', endDrag);
     mxTl.addEventListener('pointercancel', endDrag);
     // Redraw whenever the available width changes (tab switch, window or UI scale, the Auto All button appearing).

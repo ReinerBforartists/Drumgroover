@@ -151,6 +151,7 @@ private:
   // Pattern JSON same as sync scheduler.
   void HandlePreviewPlay(const nlohmann::json& payload);
   void HandlePreviewStop(const nlohmann::json& payload);
+  void HandlePreviewSeek(const nlohmann::json& payload);
 
   // Regenerates kick group data from block and knob values; returns updated tracks.
   void HandleRegenerateKickGroup(const nlohmann::json& payload);

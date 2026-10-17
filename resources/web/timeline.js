@@ -166,23 +166,28 @@ function renderTimeline() {
     const x = clientX - rect.left + ruler.scrollLeft - tlLeadInPx;
     return Math.max(0, Math.min(totalBeats, x / pxPerBeat));
   };
-  // Scrubbing moves the playhead (the start position); if playback is active, the next tick overwrites it.
+  // Scrubbing moves the playhead (the start position); the live playback position does not move it while it is dragged.
   let scrubbing = false;
   ruler.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     scrubbing = true;
+    playheadScrubbing = performance.now();
     tlPlayheadBeat = beatAtRulerX(e.clientX);
     tlShownBeat = tlPlayheadBeat; tlUpdatePlayheadEl();
-    requestPlaySeek('song', tlPlayheadBeat);   // during playback: continue from here, and this is the new start position
     ruler.setPointerCapture(e.pointerId);
   });
   ruler.addEventListener('pointermove', (e) => {
     if (!scrubbing) return;
     tlPlayheadBeat = beatAtRulerX(e.clientX);
     tlShownBeat = tlPlayheadBeat; tlUpdatePlayheadEl();
-    requestPlaySeek('song', tlPlayheadBeat);
   });
-  const finishScrub = () => { if (scrubbing) { scrubbing = false; renderTimeline(); } };
+  const finishScrub = () => {
+    if (!scrubbing) return;
+    scrubbing = false;
+    playheadScrubbing = 0;
+    requestPlaySeek('song', tlPlayheadBeat);   // during playback: continue from here, once, when the drag ends
+    if (window.mxTimelineSetPlayhead) window.mxTimelineSetPlayhead(-1);   // the Mixer's copy of the timeline follows; no full redraw needed
+  };
   ruler.addEventListener('pointerup', finishScrub);
   ruler.addEventListener('pointercancel', finishScrub);
 

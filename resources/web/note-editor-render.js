@@ -318,21 +318,21 @@ function neBuildRuler(ctx) {
   ruler.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     scrubbing = true;
+    playheadScrubbing = performance.now();   // the live playback position does not move the playhead while it is dragged
     nePlayheadBeat = beatAtClientX(e.clientX);
     neShownBeat = nePlayheadBeat; neUpdatePlayheadEl();
-    requestPlaySeek('block', nePlayheadBeat);   // during playback: continue from here, and this is the new start position
     ruler.setPointerCapture(e.pointerId);
   });
   ruler.addEventListener('pointermove', (e) => {
     if (!scrubbing) return;
     nePlayheadBeat = beatAtClientX(e.clientX);
     neShownBeat = nePlayheadBeat; neUpdatePlayheadEl();
-    requestPlaySeek('block', nePlayheadBeat);
   });
   const finishScrub = () => {
     if (!scrubbing) return;
     scrubbing = false;
-    renderNoteEditor();
+    playheadScrubbing = 0;
+    requestPlaySeek('block', nePlayheadBeat);   // during playback: continue from here, once, when the drag ends
   };
   ruler.addEventListener('pointerup', finishScrub);
   ruler.addEventListener('pointercancel', finishScrub);
