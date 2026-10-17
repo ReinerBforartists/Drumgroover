@@ -720,7 +720,7 @@ function neRenderGroupHeader(t, ctx, refs) {
             if (idx < 0) return;
             const beforeLocked = snapshotLocked(block);
             const removed = block.data[gt.id].splice(idx, 1)[0];
-            markTrackManuallyEdited(block, gt.id);
+            markTrackManuallyEdited(block, gt.id, [removed]);
             const afterLocked = snapshotLocked(block);
             block.generated = false;
             rebuildFullFromEditedBlocks();
@@ -763,9 +763,9 @@ function neRenderGroupHeader(t, ctx, refs) {
       const arr = block.data[defaultTrack.id];
       const collide = neFindCollision(arr, beat, -1);
       const beforeLocked = snapshotLocked(block);
-      let undoFn, redoFn, previewVel;
+      let undoFn, redoFn, previewVel, editedNote;
       if (collide >= 0) {
-        const noteRef = arr[collide], oldBeat = noteRef.beat;
+        const noteRef = arr[collide], oldBeat = noteRef.beat; editedNote = noteRef;
         if (noteRef.turnaround) delete noteRef.turnaround;
         noteRef.beat = beat;
         previewVel = noteRef.vel;
@@ -773,14 +773,14 @@ function neRenderGroupHeader(t, ctx, refs) {
         undoFn = () => { noteRef.beat = oldBeat; arr.sort((a,b)=>a.beat-b.beat); block.generated=false; rebuildFullFromEditedBlocks(); renderNoteEditor(); };
         redoFn = () => { noteRef.beat = beat; arr.sort((a,b)=>a.beat-b.beat); block.generated=false; rebuildFullFromEditedBlocks(); renderNoteEditor(); };
       } else {
-        const newNote = { beat, vel:100 };
+        const newNote = { beat, vel:100 }; editedNote = newNote;
         arr.push(newNote);
         previewVel = newNote.vel;
         undoFn = () => { const i = arr.indexOf(newNote); if (i>=0) arr.splice(i,1); block.generated=false; rebuildFullFromEditedBlocks(); renderNoteEditor(); };
         redoFn = () => { if (arr.indexOf(newNote)<0) { arr.push(newNote); arr.sort((a,b)=>a.beat-b.beat); } block.generated=false; rebuildFullFromEditedBlocks(); renderNoteEditor(); };
       }
       nePreviewTrack(defaultTrack.id, previewVel);
-      markTrackManuallyEdited(block, defaultTrack.id);
+      markTrackManuallyEdited(block, defaultTrack.id, [editedNote]);
       const afterLocked = snapshotLocked(block);
       const plainUndoFn = undoFn, plainRedoFn = redoFn;
       undoFn = () => { plainUndoFn(); restoreLocked(block, beforeLocked); };
@@ -1054,9 +1054,9 @@ function neRenderTrackLeafRow(t, ctx, refs) {
     const arr = block.data[t.id];
     const collide = neFindCollision(arr, beat, -1);
     const beforeLocked = snapshotLocked(block);
-    let undoFn, redoFn, previewVel;
+    let undoFn, redoFn, previewVel, editedNote;
     if (collide >= 0) {
-      const noteRef = arr[collide], oldBeat = noteRef.beat;
+      const noteRef = arr[collide], oldBeat = noteRef.beat; editedNote = noteRef;
       if (noteRef.turnaround) delete noteRef.turnaround;
       noteRef.beat = beat;
       previewVel = noteRef.vel;
@@ -1064,14 +1064,14 @@ function neRenderTrackLeafRow(t, ctx, refs) {
       undoFn = () => { noteRef.beat = oldBeat; arr.sort((a,b)=>a.beat-b.beat); block.generated=false; rebuildFullFromEditedBlocks(); renderNoteEditor(); };
       redoFn = () => { noteRef.beat = beat; arr.sort((a,b)=>a.beat-b.beat); block.generated=false; rebuildFullFromEditedBlocks(); renderNoteEditor(); };
     } else {
-      const newNote = { beat, vel:100 };
+      const newNote = { beat, vel:100 }; editedNote = newNote;
       arr.push(newNote);
       previewVel = newNote.vel;
       undoFn = () => { const i = arr.indexOf(newNote); if (i>=0) arr.splice(i,1); block.generated=false; rebuildFullFromEditedBlocks(); renderNoteEditor(); };
       redoFn = () => { if (arr.indexOf(newNote)<0) { arr.push(newNote); arr.sort((a,b)=>a.beat-b.beat); } block.generated=false; rebuildFullFromEditedBlocks(); renderNoteEditor(); };
     }
     nePreviewTrack(t.id, previewVel);
-    markTrackManuallyEdited(block, t.id);
+    markTrackManuallyEdited(block, t.id, [editedNote]);
     const afterLocked = snapshotLocked(block);
     const plainUndoFn = undoFn, plainRedoFn = redoFn;
     undoFn = () => { plainUndoFn(); restoreLocked(block, beforeLocked); };
@@ -1111,7 +1111,7 @@ function neRenderTrackLeafRow(t, ctx, refs) {
         if (suppressNextContextMenu) { suppressNextContextMenu = false; return; }
         const beforeLocked = snapshotLocked(block);
         const removed = block.data[t.id].splice(ni,1)[0];
-        markTrackManuallyEdited(block, t.id);
+        markTrackManuallyEdited(block, t.id, [removed]);
         const afterLocked = snapshotLocked(block);
         block.generated = false;
         rebuildFullFromEditedBlocks();
@@ -1467,7 +1467,7 @@ function neBuildVelocityLane(ctx) {
   function commitVelChange() {
     if (!velCommitBefore) return;
     const touched = new Set(activeItems.map(it => it.trackId));
-    touched.forEach(tid => markTrackManuallyEdited(block, tid));
+    touched.forEach(tid => markTrackManuallyEdited(block, tid, activeItems.filter(it => it.trackId === tid).map(it => it.note)));
     block.generated = false;
     const beforeData = velCommitBefore.data, beforeLocked = velCommitBefore.locked;
     const afterData = JSON.stringify(block.data), afterLocked = JSON.stringify(block.lockedGroups || {});

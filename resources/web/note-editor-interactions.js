@@ -206,7 +206,7 @@ function attachRowPaintDrag(row, block, t, ctx, refs) {
     if (p.button === 2) suppressNextContextMenu = true;
     if (!p.entries.length) return;
     const beforeLocked = snapshotLocked(block);
-    markTrackManuallyEdited(block, t.id);
+    markTrackManuallyEdited(block, t.id, p.entries.map(en => en.note));
     const afterLocked = snapshotLocked(block);
     block.data[t.id].sort((a, b) => a.beat - b.beat);
     block.generated = false;
@@ -445,10 +445,7 @@ function attachVelDrag(myRef, allRefs, block) {
     const actuallyChanged = allRefs.some((r, i) => r.note.vel !== origVels[i]);
     const beforeLocked = snapshotLocked(block);
     const touched = new Set(allRefs.map(r => r.trackId));
-    touched.forEach(tid => markTrackManuallyEdited(block, tid));
-    if (actuallyChanged && allRefs.some(r => r.note.turnaround)) {
-      allRefs.forEach(r => { if (r.note.turnaround) delete r.note.turnaround; });
-    }
+    touched.forEach(tid => markTrackManuallyEdited(block, tid, allRefs.filter(r => r.trackId === tid).map(r => r.note)));
     const afterLocked = snapshotLocked(block);
     block.generated = false;
     rebuildFullFromEditedBlocks();
@@ -541,8 +538,7 @@ function attachVelLanePaint(velInner, velRefs, block) {
     if (!changed) return;
     const beforeLocked = snapshotLocked(block);
     const touchedTrackIds = new Set([...g.touched].map(r => r.trackId));
-    touchedTrackIds.forEach(tid => markTrackManuallyEdited(block, tid));
-    velRefs.forEach((r, i) => { if (r.note.turnaround && r.note.vel !== g.origVels[i]) delete r.note.turnaround; });
+    touchedTrackIds.forEach(tid => markTrackManuallyEdited(block, tid, [...g.touched].filter(r => r.trackId === tid).map(r => r.note)));
     const afterLocked = snapshotLocked(block);
     block.generated = false;
     velNudgeSelKey = null;

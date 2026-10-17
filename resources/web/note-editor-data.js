@@ -139,6 +139,7 @@ function nePasteClipboard(block, atBeat) {
 
   let placed = 0, skipped = 0, replaced = 0;
   const touchedTracks = new Set();
+  const editedNotes = new Map();
   const newKeys = [];
   noteClipboard.notes.forEach(cn => {
     const beat = neQuantizeForTrack(atBeat + cn.offset, g, block, cn.trackId);
@@ -150,7 +151,9 @@ function nePasteClipboard(block, atBeat) {
       arr.splice(collide, 1);
       replaced++;
     }
-    arr.push({ beat, vel: cn.vel });
+    const pasted = { beat, vel: cn.vel };
+    arr.push(pasted);
+    (editedNotes.get(cn.trackId) || editedNotes.set(cn.trackId, []).get(cn.trackId)).push(pasted);
     touchedTracks.add(cn.trackId);
     newKeys.push(cn.trackId + '|' + beat);
     placed++;
@@ -158,7 +161,7 @@ function nePasteClipboard(block, atBeat) {
   if (!placed) { neMsg('Paste skipped — target is out of range or locked'); return false; }
 
   touchedTracks.forEach(tid => block.data[tid].sort((a, b) => a.beat - b.beat));
-  touchedTracks.forEach(tid => markTrackManuallyEdited(block, tid));
+  touchedTracks.forEach(tid => markTrackManuallyEdited(block, tid, editedNotes.get(tid)));
   block.generated = false;
   selectedNotes.clear();
   newKeys.forEach(k => selectedNotes.add(k));
@@ -216,9 +219,13 @@ function neApplyNoteMoves(block, proposals) {
 
   // Phase 2b — commit the track/beat changes.
   const touchedTracks = new Set();
+  const editedNotes = new Map();
+  const noteEdited = (tid, n) => (editedNotes.get(tid) || editedNotes.set(tid, []).get(tid)).push(n);
   finalized.forEach(p => {
     touchedTracks.add(p.trackId);
     touchedTracks.add(p.targetTrackId);
+    noteEdited(p.trackId, { beat: p.note.beat, turnaround: p.note.turnaround }); // where the note was
+    noteEdited(p.targetTrackId, p.note);
     if (p.note.turnaround) delete p.note.turnaround; // manually edited — clear generator-placed flag
     if (p.targetTrackId !== p.trackId) {
       const oldArr = block.data[p.trackId];
@@ -243,7 +250,7 @@ function neApplyNoteMoves(block, proposals) {
     selectedNotes.add(tid + '|' + p.note.beat);
   });
 
-  touchedTracks.forEach(tid => markTrackManuallyEdited(block, tid));
+  touchedTracks.forEach(tid => markTrackManuallyEdited(block, tid, editedNotes.get(tid)));
   block.generated = false;
   return true;
 }
@@ -413,7 +420,7 @@ function neNudgeSelection(block, g, dirSteps) {
   items.forEach(it => selectedNotes.add(it.trackId + '|' + it.note.beat));
 
   items.forEach(it => { if (it.note.turnaround) delete it.note.turnaround; }); // manually edited — clear generator-placed flag
-  touchedTracks.forEach(tid => markTrackManuallyEdited(block, tid));
+  touchedTracks.forEach(tid => markTrackManuallyEdited(block, tid, items.filter(it => it.trackId === tid).map(it => it.note)));
   block.generated = false;
   return true;
 }
@@ -442,7 +449,7 @@ function neSnapSelectionToGrid(block, g) {
   selectedNotes.clear();
   items.forEach(it => selectedNotes.add(it.trackId + '|' + it.note.beat));
 
-  touchedTracks.forEach(tid => markTrackManuallyEdited(block, tid));
+  touchedTracks.forEach(tid => markTrackManuallyEdited(block, tid, items.filter(it => it.trackId === tid).map(it => it.note)));
   block.generated = false;
   return true;
 }

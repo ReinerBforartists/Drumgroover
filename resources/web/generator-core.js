@@ -469,15 +469,27 @@ const UI_GROUP_TO_ENGINE_GROUP = {
 
 // Mark a track as manually edited, locking its engine group.
 // Custom tracks lock their own namespaced group ('custom:<trackId>').
-function markTrackManuallyEdited(block, trackId) {
+// `touchedNotes` (optional) are the notes the edit changed. With them, an edit inside the turnaround area locks only the group's
+// turnaround, an edit elsewhere only the group's plain notes, and an edit in both locks both. Without them both are locked.
+function markTrackManuallyEdited(block, trackId, touchedNotes) {
   if (!block) return;
   const track = trackList.find(t => t.id === trackId);
   let groupId;
   if (track && track.role === 'custom') groupId = customGroupId(track.id);
   else groupId = track ? UI_GROUP_TO_ENGINE_GROUP[track.group] : undefined;
   if (!groupId) return;
+  let lockMain = true, lockTurnaround = true;
+  if (Array.isArray(touchedNotes) && touchedNotes.length && !(track && track.role === 'custom') && (block.turnaroundInterval || 0) > 0) {
+    const num = block.numerator;
+    const inArea = touchedNotes.map(n => neNoteInTurnaroundArea(block, n, num));
+    lockTurnaround = inArea.some(Boolean);
+    lockMain = inArea.some(x => !x);
+    // A hand-placed note in the fill window belongs to the turnaround: flagged, it is kept while the turnaround is locked.
+    touchedNotes.forEach((n, i) => { if (inArea[i]) n.turnaround = true; });
+  }
   block.lockedGroups = block.lockedGroups || {};
-  block.lockedGroups[groupId] = true;
+  if (lockMain) block.lockedGroups[groupId] = true;
+  if (lockTurnaround && !(track && track.role === 'custom')) block.lockedGroups[neTurnaroundLockKey(groupId)] = true;
   updateGroupLockUI();
 }
 
@@ -502,6 +514,7 @@ async function unlockGroup(groupId) {
   }
   block.lockedGroups = block.lockedGroups || {};
   block.lockedGroups[groupId] = false;
+  block.lockedGroups[neTurnaroundLockKey(groupId)] = false;
   tracksInEngineGroup(groupId).forEach(tid => { if (block.data[tid]) block.data[tid] = []; });
   if (groupId.indexOf('custom:') === 0) {
     const tid = groupId.slice('custom:'.length);
@@ -519,6 +532,32 @@ async function unlockGroup(groupId) {
   updateGroupLockUI();
 }
 
+// Discard the hand edits of one group's turnaround only: its fill notes are generated again from the Fill controls, the plain notes stay.
+async function unlockTurnaround(groupId) {
+  const block = findBlock(activeBlockId);
+  if (!block) return;
+  if (shouldShowConfirmDialogs()) {
+    const res = await showModal({
+      title: 'Hand the fill back to the dials?',
+      message: `This discards your manual edits to the ${groupId} turnaround in this block and generates it again from the Fill settings. Notes outside the turnaround stay as they are.`,
+      confirmLabel: 'Discard & regenerate',
+      danger: true,
+      checkbox: { label: "Don't ask again (can be re-enabled in Note Editor settings)" }
+    });
+    if (!res.confirmed) return;
+    if (res.dontShowAgain) setShowConfirmDialogs(false);
+  }
+  withBlockDataUndo(`Discard turnaround edits (${groupId})`, block, () => {
+    block.lockedGroups = block.lockedGroups || {};
+    block.lockedGroups[neTurnaroundLockKey(groupId)] = false;
+    block._turnaroundFillCache = {};
+    const tracks = tracksInEngineGroup(groupId);
+    if (block.lockedGroups[groupId]) regenerateTurnaroundOverlay(block, readGrid(), tracks);
+    else replicateGroupAcrossLength(block, readGrid(), tracks, getEnginePhrase(block, groupId));
+    block.generated = false;
+  });
+}
+
 // Check if a block has any discardable edits.
 function blockHasDiscardableEdits(block) {
   if (!block) return false;
@@ -528,7 +567,7 @@ function blockHasDiscardableEdits(block) {
     return mainGroups.some(g => block.lockedGroups && block.lockedGroups[g]) || !!(block.lockedGroups && block.lockedGroups.kick);
   }
   if (block.isFillBlock) return ALL_ENGINE_GROUPS.some(g => block.lockedGroups && block.lockedGroups[g]);
-  return ALL_ENGINE_GROUPS.some(g => block.lockedGroups && block.lockedGroups[g]);
+  return ALL_ENGINE_GROUPS.some(g => block.lockedGroups && (block.lockedGroups[g] || block.lockedGroups[neTurnaroundLockKey(g)]));
 }
 
 // Discard all edits on a block and regenerate it based on its type.
@@ -562,10 +601,11 @@ async function discardBlockBackToGenerator(block, g) {
 
 // Discard locked groups in the active block (must be the active block).
 async function discardLockedGroupsInActiveBlock(block) {
-  const lockedNow = ALL_ENGINE_GROUPS.filter(g => block.lockedGroups && block.lockedGroups[g]);
+  const lockedNow = ALL_ENGINE_GROUPS.filter(g => block.lockedGroups && (block.lockedGroups[g] || block.lockedGroups[neTurnaroundLockKey(g)]));
   if (!lockedNow.length) return false;
   await Promise.all(lockedNow.map(groupId => {
     block.lockedGroups[groupId] = false;
+    block.lockedGroups[neTurnaroundLockKey(groupId)] = false;
     tracksInEngineGroup(groupId).forEach(tid => { if (block.data[tid]) block.data[tid] = []; });
     if (groupId === 'kick') return regenerateKickGroup({ suppressUndo: true });
     else if (groupId === 'snare') return regenerateSnareGroup({ suppressUndo: true });
@@ -798,7 +838,11 @@ function applyAllUnlockedGroups(block, g) {
     toms: TOMS_ARTICULATION_TIERS.map(t => t.id), cymbals: CYMBALS_ARTICULATION_TIERS.map(t => t.id),
   };
   Object.entries(groupTracks).forEach(([groupId, tracks]) => {
-    if (block.lockedGroups && block.lockedGroups[groupId]) return;
+    if (block.lockedGroups && block.lockedGroups[groupId]) {
+      // The plain notes were edited by hand: only the turnaround follows the Fill controls (unless it was edited as well).
+      if (!neTurnaroundLocked(block, groupId)) regenerateTurnaroundOverlay(block, g, tracks);
+      return;
+    }
     replicateGroupAcrossLength(block, g, tracks, getEnginePhrase(block, groupId));
     applyInstrumentPhrases(block, g, groupId);
   });
@@ -832,8 +876,16 @@ function regenerateGroup(groupId, applyFn, label, opts, sendType, buildPayload, 
     block.lockedGroups[groupId] = false;
     const g = readGrid();
     const p = buildPayload(block, g);
+    // A hand-edited turnaround of this group survives the reroll of its plain notes.
+    const keptFills = {};
+    if (neTurnaroundLocked(block, groupId)) tracksInEngineGroup(groupId).forEach(tid => { keptFills[tid] = (block.data[tid] || []).filter(n => n.turnaround); });
     const res = await _sendBreakFillRequest(sendType, block.id, { block, grid: g, ...p });
-    if (res) applyResponse(block, res);
+    if (res) {
+      applyResponse(block, res);
+      Object.keys(keptFills).forEach(tid => {
+        block.data[tid] = (block.data[tid] || []).filter(n => !n.turnaround).concat(keptFills[tid]).sort((x, y) => x.beat - y.beat);
+      });
+    }
   };
 
   if (opts && opts.suppressUndo) {
@@ -1773,13 +1825,69 @@ function getTurnaroundBarDistribution(block, barIdx, num, seed) {
   return dist;
 }
 
+// A turnaround bar is every Nth bar (N = block.turnaroundInterval); its fill sits in the last `Fill Length` beats of the bar.
+function neIsTurnaroundBar(block, barIdx) {
+  const interval = block.turnaroundInterval || 0;
+  return interval > 0 && ((barIdx + 1) % interval === 0);
+}
+
+// Is this note part of the turnaround: a generated fill note, or any note in the fill window of a turnaround bar?
+function neNoteInTurnaroundArea(block, note, num) {
+  if (note.turnaround) return true;
+  if (!((block.turnaroundInterval || 0) > 0)) return false;
+  const barIdx = Math.floor(note.beat / num + 1e-9);
+  if (!neIsTurnaroundBar(block, barIdx)) return false;
+  return note.beat - barIdx * num >= num - resolveTurnaroundLengthBeats(block, num) - 1e-6;
+}
+
+// The generated turnaround notes of one track for one bar (fill notes, Fill Kick, closing crash), absolute beats. `sourceBar` are the
+// plain notes of that bar (bar-relative beats): fill notes never land on one of them.
+function neTurnaroundNotesForBar(block, tid, barIdx, len, num, sourceBar) {
+  const out = [];
+  if (!neIsTurnaroundBar(block, barIdx)) return out;
+  const userSeed = getTurnaroundSeed(block);
+  const varyPerBar = !!block.turnaroundVaryPerOccurrence;
+  const distSeed = userSeed !== undefined ? seededHash(`${block.id}|${varyPerBar ? barIdx : 0}|turnaroundfill|${userSeed}`) : 0;
+  const dist = getTurnaroundBarDistribution(block, barIdx, num, distSeed);
+  const fillVel = block.turnaroundFillVel ?? 112;
+  (dist[tid] || []).forEach(b => { if (!hasNoteNear(sourceBar, b)) out.push({ beat: b + barIdx * num, vel: fillVel, turnaround: true }); });
+  if (tid === 'kick') {
+    const kickDensity = block.turnaroundKickDensity ?? 100;
+    const kickSubdivision = block.turnaroundKickSubdivision ?? 1;
+    const kickSeed = block.turnaroundKickSeed ?? 0;
+    const lengthBeats = resolveTurnaroundLengthBeats(block, num);
+    const kickTotalSteps = num * kickSubdivision;
+    const kickZoneSteps = Math.max(2, Math.round(lengthBeats * kickSubdivision));
+    const kickHits = Math.max(1, Math.round((kickDensity/100) * kickZoneSteps));
+    const kickMask = buildEndAnchoredEuclidean(kickHits, kickZoneSteps, kickSeed);
+    kickMask.forEach((on, i) => {
+      if (!on) return;
+      const beat = (kickTotalSteps - kickZoneSteps + i) / kickSubdivision;
+      if (!hasNoteNear(sourceBar, beat)) out.push({ beat: beat + barIdx * num, vel: 115, turnaround: true });
+    });
+  }
+  if ((block.turnaroundCrash !== false) && tid === 'crash1' && !hasNoteNear(sourceBar, 0)) {
+    const targetBarIdx = (barIdx + 1 < len) ? barIdx + 1 : 0;
+    out.push({ beat: targetBarIdx * num, vel: 115, turnaround: true });
+  }
+  return out;
+}
+
+// The turnaround of an engine group has its own lock (key 't:<group>' in block.lockedGroups): set when the user edits a note in the
+// turnaround area, independent of the group's own lock (edits elsewhere in the block).
+function neTurnaroundLockKey(groupId) { return 't:' + groupId; }
+function neTurnaroundLocked(block, groupId) { return !!(block.lockedGroups && block.lockedGroups[neTurnaroundLockKey(groupId)]); }
+
 function replicateGroupAcrossLength(block, g, trackIds, phraseLen) {
   const len = Math.max(1, block.length || 1);
   const num = g.numerator;
   const phrase = Math.max(1, Math.min(len, Math.round(phraseLen) || 1));
-  const turnaroundInterval = block.turnaroundInterval || 0;
   const velocityBuild = block.velocityBuild || 0;
   trackIds.forEach(tid => {
+    // A hand-edited turnaround stays as it is: its notes are kept and no new fill is generated for this track.
+    const groupId = engineGroupForTrack(tid);
+    const keepFills = !!(groupId && neTurnaroundLocked(block, groupId));
+    const keptFills = keepFills ? (block.data[tid] || []).filter(n => n.turnaround) : [];
     const phraseSource = (block.data[tid] || []).filter(n => n.beat < phrase * num && !n.turnaround);
     const all = [];
     for (let barIdx = 0; barIdx < len; barIdx++) {
@@ -1788,43 +1896,35 @@ function replicateGroupAcrossLength(block, g, trackIds, phraseLen) {
       const sourceBar = phraseSource
         .filter(n => n.beat >= srcLo && n.beat < srcLo + num)
         .map(n => ({ beat: n.beat - srcLo, vel: n.vel }));
-      const turnaround = turnaroundInterval > 0 && ((barIdx + 1) % turnaroundInterval === 0);
       const buildFrac = len > 1 ? barIdx / (len - 1) : 0;
       sourceBar.forEach(n => {
         let beat = n.beat, vel = n.vel;
         if (velocityBuild > 0) vel = Math.max(1, Math.min(127, Math.round(vel + buildFrac * 20 * velocityBuild)));
         all.push({ beat: beat + barIdx * num, vel });
       });
-      if (turnaround) {
-        const userSeed = getTurnaroundSeed(block);
-        const varyPerBar = !!block.turnaroundVaryPerOccurrence;
-        const distSeed = userSeed !== undefined ? seededHash(`${block.id}|${varyPerBar ? barIdx : 0}|turnaroundfill|${userSeed}`) : 0;
-        const dist = getTurnaroundBarDistribution(block, barIdx, num, distSeed);
-        const fillVel = block.turnaroundFillVel ?? 112;
-        (dist[tid] || []).forEach(b => { if (!hasNoteNear(sourceBar, b)) all.push({ beat: b + barIdx * num, vel: fillVel, turnaround: true }); });
-      }
-      if (turnaround && tid === 'kick') {
-        const kickDensity = block.turnaroundKickDensity ?? 100;
-        const kickSubdivision = block.turnaroundKickSubdivision ?? 1;
-        const kickSeed = block.turnaroundKickSeed ?? 0;
-        const lengthBeats = resolveTurnaroundLengthBeats(block, num);
-        const kickTotalSteps = num * kickSubdivision;
-        const kickZoneSteps = Math.max(2, Math.round(lengthBeats * kickSubdivision));
-        const kickHits = Math.max(1, Math.round((kickDensity/100) * kickZoneSteps));
-        const kickMask = buildEndAnchoredEuclidean(kickHits, kickZoneSteps, kickSeed);
-        kickMask.forEach((on, i) => {
-          if (!on) return;
-          const beat = (kickTotalSteps - kickZoneSteps + i) / kickSubdivision;
-          if (!hasNoteNear(sourceBar, beat)) all.push({ beat: beat + barIdx * num, vel: 115, turnaround: true });
-        });
-      }
-      const turnaroundCrash = block.turnaroundCrash !== false;
-      if (turnaround && turnaroundCrash && tid === 'crash1' && !hasNoteNear(sourceBar, 0)) {
-        const targetBarIdx = (barIdx + 1 < len) ? barIdx + 1 : 0;
-        all.push({ beat: targetBarIdx * num, vel: 115, turnaround: true });
-      }
+      if (!keepFills) neTurnaroundNotesForBar(block, tid, barIdx, len, num, sourceBar).forEach(n => all.push(n));
     }
+    keptFills.forEach(n => all.push(n));
     block.data[tid] = all.sort((a, b) => a.beat - b.beat);
+  });
+}
+
+// Lays out only the turnaround of the given tracks again, leaving every other note as it is: for a group whose plain notes were
+// edited by hand (locked) while its turnaround is still driven by the Fill controls.
+function regenerateTurnaroundOverlay(block, g, trackIds) {
+  const len = Math.max(1, block.length || 1);
+  const num = g.numerator;
+  trackIds.forEach(tid => {
+    const base = (block.data[tid] || []).filter(n => !n.turnaround);
+    const byBar = new Map();
+    base.forEach(n => { const b = Math.floor(n.beat / num + 1e-9); (byBar.get(b) || byBar.set(b, []).get(b)).push(n); });
+    const fills = [];
+    for (let barIdx = 0; barIdx < len; barIdx++) {
+      if (!neIsTurnaroundBar(block, barIdx)) continue;
+      const sourceBar = (byBar.get(barIdx) || []).map(n => ({ beat: n.beat - barIdx * num, vel: n.vel }));
+      neTurnaroundNotesForBar(block, tid, barIdx, len, num, sourceBar).forEach(n => fills.push(n));
+    }
+    block.data[tid] = base.concat(fills).sort((a, b) => a.beat - b.beat);
   });
 }
 

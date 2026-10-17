@@ -284,17 +284,20 @@ function neRelevantEngineGroups(instruments) {
   return [...new Set((instruments||[]).map(i => FILL_INSTRUMENT_TO_ENGINE_GROUP[i]).filter(Boolean))];
 }
 
+const NE_TURNAROUND_LOCK_TIP = 'Locked\nNotes in the turnaround of this group were manually edited. Click to discard those edits and let the Fill controls drive the turnaround again.';
+
 // Displays lock icons and disables controls if all relevant groups are locked.
 function neApplyGroupLockState(labelEl, inputEl, groups, block, opts) {
   const showIcons = !opts || opts.showIcons !== false;
-  const lockedGroups = groups.filter(g => block.lockedGroups && block.lockedGroups[g]);
+  const turnaround = !!(opts && opts.turnaround);
+  const lockedGroups = groups.filter(g => block.lockedGroups && block.lockedGroups[turnaround ? neTurnaroundLockKey(g) : g]);
   if (showIcons) {
     lockedGroups.forEach(g => {
       const icon = document.createElement('span');
       icon.className = 'group-lock-icon';
       icon.textContent = '🔒';
-      icon.dataset.tooltip = 'Locked\nThis group was manually edited in the note editor. Click to discard those edits and let the knobs control it again.';
-      icon.addEventListener('click', (e) => { e.stopPropagation(); unlockGroup(g); });
+      icon.dataset.tooltip = turnaround ? NE_TURNAROUND_LOCK_TIP : 'Locked\nThis group was manually edited in the note editor. Click to discard those edits and let the knobs control it again.';
+      icon.addEventListener('click', (e) => { e.stopPropagation(); (turnaround ? unlockTurnaround : unlockGroup)(g); });
       labelEl.appendChild(icon);
     });
   }
@@ -387,16 +390,17 @@ function neAddRerollIcon(row, dials, title, onClick) {
 }
 
 // Applies lock state to a whole dial row (one icon per locked group, disables all dials if fully locked).
-function neApplyDialRowLock(row, dials, groups, block) {
+function neApplyDialRowLock(row, dials, groups, block, opts) {
   const iconHost = row.titleLabel || (dials[0] && dials[0].querySelector('.ctrl-label'));
-  const lockedGroups = groups.filter(g => block.lockedGroups && block.lockedGroups[g]);
+  const turnaround = !!(opts && opts.turnaround);
+  const lockedGroups = groups.filter(g => block.lockedGroups && block.lockedGroups[turnaround ? neTurnaroundLockKey(g) : g]);
   if (iconHost) {
     lockedGroups.forEach(g => {
       const icon = document.createElement('span');
       icon.className = 'group-lock-icon';
       icon.textContent = '🔒';
-      icon.dataset.tooltip = 'Locked\nThis group was manually edited in the note editor. Click to discard those edits and let the knobs control it again.';
-      icon.addEventListener('click', (e) => { e.stopPropagation(); unlockGroup(g); });
+      icon.dataset.tooltip = turnaround ? NE_TURNAROUND_LOCK_TIP : 'Locked\nThis group was manually edited in the note editor. Click to discard those edits and let the knobs control it again.';
+      icon.addEventListener('click', (e) => { e.stopPropagation(); (turnaround ? unlockTurnaround : unlockGroup)(g); });
       iconHost.appendChild(icon);
     });
   }
@@ -487,7 +491,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
   tcGroup.appendChild(tcLabel);
   panel.appendChild(tcGroup);
   tcGroup.classList.add('ne-ctl-nosep');
-  neApplyGroupLockState(tcText, tcCheck, ['cymbals'], block);
+  neApplyGroupLockState(tcText, tcCheck, ['cymbals'], block, { turnaround: true });
 
   // Vary per Occurrence
   const tvpGroup = document.createElement('div');
@@ -524,7 +528,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
     onChange: v => turnaroundUndoable('Fill amount', () => { block.turnaroundDensity = v; }),
   });
   const fillDialRow = neToolbarCluster('Fill', [tsDial, tdDial]);
-  const fillLocked = neApplyDialRowLock(fillDialRow, [tsDial, tdDial], fillGroups, block);
+  const fillLocked = neApplyDialRowLock(fillDialRow, [tsDial, tdDial], fillGroups, block, { turnaround: true });
   fillDialRow.classList.add('ne-ctl-nosep');
   neAddRerollIcon(fillDialRow, [tsDial, tdDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
     turnaroundUndoable('Reroll fill', () => { block.turnaroundSeed = Math.floor(Math.random()*1e9); });
@@ -562,7 +566,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
     onChange: v => turnaroundUndoable('Fill kick amount', () => { block.turnaroundKickDensity = v; }),
   });
   const kickDialRow = neToolbarCluster('Fill Kick', [tksDial, tkdDial]);
-  neApplyDialRowLock(kickDialRow, [tksDial, tkdDial], ['kick'], block);
+  neApplyDialRowLock(kickDialRow, [tksDial, tkdDial], ['kick'], block, { turnaround: true });
   neAddRerollIcon(kickDialRow, [tksDial, tkdDial], 'Reroll\nGenerates a new Fill Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
     turnaroundUndoable('Reroll fill kick', () => { block.turnaroundKickSeed = Math.floor(Math.random()*1e9); });
   });
