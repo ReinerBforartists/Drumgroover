@@ -448,8 +448,11 @@ function highlightBeat(beatPos) {
   const x = NE_LEFT_PAD + beatPos * neCurrentPxPerBeat;
   const rowsCol = document.querySelector('.ne-rows');
   if (rowsCol) {
+    // Follow the playhead only while the block does not fit: when its end is visible (e.g. at 100% zoom) the view stays put.
+    const blockEndX = NE_LEFT_PAD + (block.length || 1) * block.numerator * neCurrentPxPerBeat;
+    const blockFitsInView = blockEndX <= rowsCol.scrollLeft + rowsCol.clientWidth;
     const margin = 60;
-    if (x < rowsCol.scrollLeft + margin || x > rowsCol.scrollLeft + rowsCol.clientWidth - margin) {
+    if (!blockFitsInView && (x < rowsCol.scrollLeft + margin || x > rowsCol.scrollLeft + rowsCol.clientWidth - margin)) {
       rowsCol.scrollLeft = Math.max(0, x - rowsCol.clientWidth/2);
     }
   }

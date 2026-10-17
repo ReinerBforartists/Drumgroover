@@ -577,6 +577,8 @@ const PX_PER_BEAT = 50, NE_ROW_H = 26, NE_MERGE_EPS = 0.06, NE_LEFT_PAD = 28;
 const NE_ROWS_WRAP_H = 440;
 let NE_VEL_H = 80;
 const NE_ENDLESS_EXTRA_BARS = 8;
+// At 100% zoom the block fills the width minus this many beats, so the dimmed area behind the block's end is visible.
+const NE_END_GAP_BEATS = 1;
 const GROUPS = { kick: 'Kick', snare: 'Snare', hihat: 'Hi-Hat', rackTom1: 'Rack Tom 1', rackTom2: 'Rack Tom 2', rackTom3: 'Rack Tom 3', floorTom1: 'Floor Tom 1', floorTom2: 'Floor Tom 2', cymbal1: 'Cymbal 1', cymbal2: 'Cymbal 2', cymbal3: 'Cymbal 3', ride: 'Ride', cymbal4: 'Cymbal 4', cymbal5: 'Cymbal 5' };
 let expandedGroups = new Set();
 let selectedNotes = new Set();

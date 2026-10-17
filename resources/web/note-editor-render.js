@@ -213,7 +213,7 @@ function renderNoteEditor() {
   const rowsScrollbarVisible = (neCountVisibleRows() * NE_ROW_H) > rowsWrapH;
   const scrollbarPx = rowsScrollbarVisible ? 10 : 0;
   const availWidth = Math.max(50, drumGridWidth - 170 - NE_LEFT_PAD - NE_RIGHT_PAD - scrollbarPx);
-  const fitPxPerBeat = availWidth / blockBeats;
+  const fitPxPerBeat = availWidth / (blockBeats + NE_END_GAP_BEATS);
 
   // Auto-fit for locked Break block to show the break-tail.
   if (neAutoFitBreak) {
