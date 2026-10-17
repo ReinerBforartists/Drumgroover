@@ -32,7 +32,7 @@ howtoSet('howto-quickstart', `
 howtoSet('howto-playback', `
   <b>Play button.</b> <b>▶ Play</b> / <b>■ Stop</b> play inside the plugin at the tempo of your DAW. In the <b>Note Editor</b> it loops the open block; in the <b>Song Generator</b> and the <b>Mixer</b> it plays the whole song. The Drum Engine and How To tabs have no playback — switching to a tab of the other playback mode stops it. Edits you make while it plays are picked up live.<br>
   <b>DAW transport.</b> While your DAW plays, the plugin plays the song from the Song Generator at the DAW's position: the DAW's position zero is the start of the song. Jumping around in the DAW is followed. Without a loop range the song plays once and then stays silent; with one, it loops once the DAW position reaches the range.<br>
-  <b>Loop range.</b> In the Song Generator drag on the thin loop ruler above the clips to mark a range (at least one bar); click the ruler to clear it. The Note Editor has the same kind of ruler for looping part of the open block.<br>
+  <b>Loop range.</b> In the Song Generator drag on the thin loop ruler above the clips to mark a range (at least one bar); right-click the ruler to clear it. The Note Editor has the same kind of ruler for looping part of the open block.<br>
   <b>MIDI notes.</b> MIDI notes sent to the plugin play the matching instrument right away, so you can play the kit from a keyboard or from another MIDI track.<br>
   <b>Mute.</b> The <b>Mute</b> button (top right) silences DrumGroover's output completely, independently of the DAW's own mute.<br>
   <b>Where is the tempo?</b> There is no BPM setting in the plugin: tempo always comes from the DAW. The time signature is set per project in the Note Editor sidebar.
@@ -89,7 +89,7 @@ howtoSet('howto-song', `
   <b>Double-click</b> a clip to open its block in the Note Editor. <b>Right-click</b> a clip to delete it (right-drag deletes several); nothing else shifts. <b>Clear All</b> (also in the Generate Song menu) removes every clip but leaves the blocks.<br>
   <b>Selecting.</b> Click selects one clip, Shift+click selects a range, Ctrl/Cmd+click toggles. Drag on empty space to lasso-select (Shift adds, Ctrl/Cmd toggles). <b>Delete</b> removes the selection.<br>
   <b>View.</b> The Zoom slider or Ctrl+mouse wheel zooms, <b>F</b> fits the selected clips (or resets to 100%), and the handle under the timeline changes the clip height (double-click resets).<br>
-  <b>Loop.</b> Drag on the thin loop ruler above the clips for a loop range of at least one bar; click it to clear.<br>
+  <b>Loop.</b> Drag on the thin loop ruler above the clips for a loop range of at least one bar; right-click it to clear.<br>
   <b>Drag out.</b> Dragging a clip out of the plugin window onto your DAW inserts the whole song as MIDI (see <i>Export, drag to DAW &amp; projects</i>).
 `);
 

@@ -186,11 +186,11 @@ function renderTimeline() {
   ruler.addEventListener('pointerup', finishScrub);
   ruler.addEventListener('pointercancel', finishScrub);
 
-  // Loop row — drag defines range; plain click clears it.
+  // Loop row — drag defines range; right-click clears it.
   const loopRuler = document.getElementById('tlLoopRuler');
   loopRuler.innerHTML = '';
   loopRuler.style.width = totalW+'px';
-  loopRuler.dataset.tooltip = 'Loop Range\nDrag to set a loop range. Click to clear it.';
+  loopRuler.dataset.tooltip = 'Loop Range\nDrag to set a loop range. Right-click to clear it.';
   const loopOverlay = document.createElement('div');
   loopOverlay.className = 'tl-loop-overlay';
   if (tlLoopStart != null) {
@@ -200,6 +200,11 @@ function renderTimeline() {
   } else {
     loopOverlay.style.display = 'none';
   }
+  ['start', 'end'].forEach(edge => {
+    const h = document.createElement('div');
+    h.className = 'loop-handle ' + edge; h.dataset.edge = edge;
+    loopOverlay.appendChild(h);
+  });
   loopRuler.appendChild(loopOverlay);
   const beatAtLoopRulerX = (clientX) => {
     const rect = loopRuler.getBoundingClientRect();
@@ -209,12 +214,27 @@ function renderTimeline() {
   let loopDrag = null;
   loopRuler.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
+    const handle = e.target.closest('.loop-handle');
+    if (handle && tlLoopStart != null) {
+      // Dragging an edge of the existing loop: only that edge moves (the loop stays at least one bar long).
+      loopDrag = { edge: handle.dataset.edge, moved: true };
+      loopRuler.setPointerCapture(e.pointerId);
+      return;
+    }
     loopDrag = { startBeat: beatAtLoopRulerX(e.clientX), moved: false };
     loopRuler.setPointerCapture(e.pointerId);
   });
   loopRuler.addEventListener('pointermove', (e) => {
     if (!loopDrag) return;
     const beat = beatAtLoopRulerX(e.clientX);
+    if (loopDrag.edge) {
+      const lo = loopDrag.edge === 'start' ? Math.min(beat, tlLoopEnd - numerator) : tlLoopStart;
+      const hi = loopDrag.edge === 'end' ? Math.max(beat, tlLoopStart + numerator) : tlLoopEnd;
+      loopDrag.lo = Math.max(0, lo); loopDrag.hi = hi;
+      loopOverlay.style.left = (loopDrag.lo*pxPerBeat + tlLeadInPx) + 'px';
+      loopOverlay.style.width = ((hi-loopDrag.lo)*pxPerBeat) + 'px';
+      return;
+    }
     if (Math.abs(beat - loopDrag.startBeat) * pxPerBeat > 4) loopDrag.moved = true;
     if (loopDrag.moved) {
       const lo = Math.min(loopDrag.startBeat, beat), hi = Math.max(loopDrag.startBeat, beat);
@@ -225,17 +245,26 @@ function renderTimeline() {
   });
   const finishLoopDrag = (e) => {
     if (!loopDrag) return;
-    if (loopDrag.moved) {
+    if (loopDrag.edge) {
+      if (loopDrag.lo !== undefined) {
+        tlLoopStart = loopDrag.lo; tlLoopEnd = loopDrag.hi;
+        if (loopDrag.edge === 'start') tlPlayheadBeat = tlLoopStart;   // playback starts at the loop's start
+      }
+    } else if (loopDrag.moved) {
       const beat = beatAtLoopRulerX(e.clientX);
       const lo = Math.min(loopDrag.startBeat, beat), hi = Math.max(loopDrag.startBeat, beat);
       if (hi - lo >= numerator) { tlLoopStart = lo; tlLoopEnd = hi; tlPlayheadBeat = lo; } // At least one bar; snap playhead to loop start.
-    } else {
-      tlLoopStart = null; tlLoopEnd = null;
     }
     loopDrag = null;
     renderTimeline();
   };
   loopRuler.addEventListener('pointerup', finishLoopDrag);
+  // Right-click clears the loop.
+  loopRuler.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    tlLoopStart = null; tlLoopEnd = null;
+    renderTimeline();
+  });
   loopRuler.addEventListener('pointercancel', () => { loopDrag = null; });
 
   // Grid cells — one per bar. Bars past song end dimmed.

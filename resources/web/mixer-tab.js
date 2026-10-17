@@ -1351,35 +1351,59 @@
     mxTlLoopEl.style.width = ((hi - lo) * mxTlPxPerBeat) + 'px';
   }
   // Loop strip along the bottom edge: drag sets the loop range (playback then loops it and starts at its
-  // beginning), a plain click clears it. Same rules as the loop row of the Song Generator.
+  // beginning), a right-click clears it. Same rules as the loop row of the Song Generator.
   function attachMxLoopBar(bar) {
     let drag = null;
     bar.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.stopPropagation();
       if (transportActive()) return;   // like the playhead: it only applies to the next start
+      const handle = e.target.closest('.loop-handle');
+      if (handle && tlLoopStart != null) {
+        // Dragging an edge of the existing loop: only that edge moves (the loop stays at least one bar long).
+        drag = { edge: handle.dataset.edge, moved: true };
+        try { bar.setPointerCapture(e.pointerId); } catch (_) {}
+        return;
+      }
       drag = { start: mxBeatAtEvent(e), moved: false };
       try { bar.setPointerCapture(e.pointerId); } catch (_) {}
     });
     bar.addEventListener('pointermove', (e) => {
       if (!drag) return;
       const beat = mxBeatAtEvent(e);
+      if (drag.edge) {
+        const num = readGrid().numerator;
+        const lo = drag.edge === 'start' ? Math.min(beat, tlLoopEnd - num) : tlLoopStart;
+        const hi = drag.edge === 'end' ? Math.max(beat, tlLoopStart + num) : tlLoopEnd;
+        drag.lo = Math.max(0, lo); drag.hi = hi;
+        mxTimelineShowLoop(drag.lo, drag.hi);
+        return;
+      }
       if (Math.abs(beat - drag.start) * mxTlPxPerBeat > 4) drag.moved = true;
       if (drag.moved) mxTimelineShowLoop(Math.min(drag.start, beat), Math.max(drag.start, beat));
     });
     const finish = (e) => {
       if (!drag) return;
       const d = drag; drag = null;
-      if (d.moved) {
+      if (d.edge) {
+        if (d.lo !== undefined) {
+          tlLoopStart = d.lo; tlLoopEnd = d.hi;
+          if (d.edge === 'start') tlPlayheadBeat = tlLoopStart;   // playback starts at the loop's start
+        }
+      } else if (d.moved) {
         const beat = mxBeatAtEvent(e);
         const lo = Math.min(d.start, beat), hi = Math.max(d.start, beat);
         if (hi - lo >= readGrid().numerator) { tlLoopStart = lo; tlLoopEnd = hi; tlPlayheadBeat = lo; }   // at least one bar
-      } else {
-        tlLoopStart = null; tlLoopEnd = null;
       }
       renderTimeline();   // redraws the Song Generator and this view
     };
     bar.addEventListener('pointerup', finish);
+    bar.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (transportActive()) return;
+      tlLoopStart = null; tlLoopEnd = null;
+      renderTimeline();
+    });
     bar.addEventListener('pointercancel', () => { drag = null; renderMixerTimeline(); });
   }
   function renderMixerTimeline() {
@@ -1408,6 +1432,11 @@
     // Loop row directly under the ruler, same order and look as the Song Generator and the Note Editor.
     const bar = document.createElement('div'); bar.className = 'mx-tl-loopbar'; mxTl.appendChild(bar);
     mxTlLoopEl = document.createElement('div'); mxTlLoopEl.className = 'mx-tl-loop'; bar.appendChild(mxTlLoopEl);
+    ['start', 'end'].forEach(edge => {
+      const h = document.createElement('div');
+      h.className = 'loop-handle ' + edge; h.dataset.edge = edge;
+      mxTlLoopEl.appendChild(h);
+    });
     mxTimelineShowLoop(tlLoopStart, tlLoopEnd);
     attachMxLoopBar(bar);
     mxTlHead = document.createElement('div'); mxTlHead.className = 'mx-tl-head'; mxTl.appendChild(mxTlHead);

@@ -346,7 +346,7 @@ function neBuildLoopRuler(ctx) {
   const { blockBeats, pxPerBeat, totalW } = ctx;
   const loopRuler = document.createElement('div');
   loopRuler.className = 'ne-loop-ruler'; loopRuler.style.width = 'calc(100% - 170px)';
-  loopRuler.dataset.tooltip = 'Loop Range\nDrag to set a loop range. Click to clear it.';
+  loopRuler.dataset.tooltip = 'Loop Range\nDrag to set a loop range. Right-click to clear it.';
   loopRuler.style.overflowX = 'hidden';
   const inner = document.createElement('div');
   inner.style.cssText = `position:relative; width:${totalW}px; height:100%;`;
@@ -360,6 +360,11 @@ function neBuildLoopRuler(ctx) {
   } else {
     loopOverlay.style.display = 'none';
   }
+  ['start', 'end'].forEach(edge => {
+    const h = document.createElement('div');
+    h.className = 'loop-handle ' + edge; h.dataset.edge = edge;
+    loopOverlay.appendChild(h);
+  });
   inner.appendChild(loopOverlay);
 
   let dragState = null;
@@ -370,13 +375,27 @@ function neBuildLoopRuler(ctx) {
   };
   loopRuler.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
+    const handle = e.target.closest('.loop-handle');
+    if (handle && neLoopStart != null) {
+      // Dragging an edge of the existing loop: only that edge moves.
+      dragState = { edge: handle.dataset.edge, moved: true };
+      loopRuler.setPointerCapture(e.pointerId);
+      return;
+    }
     dragState = { startBeat: beatAtClientX(e.clientX), moved: false };
-    console.log('[loop-debug] pointerdown', { startBeat: dragState.startBeat, block: activeBlockId });   // temporary
     loopRuler.setPointerCapture(e.pointerId);
   });
   loopRuler.addEventListener('pointermove', (e) => {
     if (!dragState) return;
     const beat = beatAtClientX(e.clientX);
+    if (dragState.edge) {
+      const lo = dragState.edge === 'start' ? Math.min(beat, neLoopEnd - 0.01) : neLoopStart;
+      const hi = dragState.edge === 'end' ? Math.max(beat, neLoopStart + 0.01) : neLoopEnd;
+      dragState.lo = lo; dragState.hi = hi;
+      loopOverlay.style.left = (NE_LEFT_PAD + lo*pxPerBeat) + 'px';
+      loopOverlay.style.width = ((hi-lo)*pxPerBeat) + 'px';
+      return;
+    }
     if (Math.abs(beat - dragState.startBeat) * pxPerBeat > 4) dragState.moved = true;
     if (dragState.moved) {
       const lo = Math.min(dragState.startBeat, beat), hi = Math.max(dragState.startBeat, beat);
@@ -387,21 +406,27 @@ function neBuildLoopRuler(ctx) {
   });
   const finishDrag = (e) => {
     if (!dragState) return;
-    if (dragState.moved) {
+    if (dragState.edge) {
+      if (dragState.lo !== undefined) {
+        neLoopStart = dragState.lo; neLoopEnd = dragState.hi; neLoopFollowsBreak = false;
+        if (dragState.edge === 'start') nePlayheadBeat = neLoopStart;   // playback starts at the loop's start
+      }
+    } else if (dragState.moved) {
       const beat = beatAtClientX(e.clientX);
       const lo = Math.min(dragState.startBeat, beat), hi = Math.max(dragState.startBeat, beat);
-      if (hi - lo >= 1) { neLoopStart = lo; neLoopEnd = hi; nePlayheadBeat = lo; neLoopFollowsBreak = false; }   // at least one beat
-      else neMsg('The loop range needs at least one beat — drag a longer range.');
-      console.log('[loop-debug] drag', { lo, hi, length: hi - lo, set: hi - lo >= 1 });   // temporary: remove after the loop bug hunt
-    } else {
-      neLoopStart = null; neLoopEnd = null; neLoopFollowsBreak = false;
-      console.log('[loop-debug] click: loop cleared');   // temporary
+      neLoopStart = lo; neLoopEnd = hi; nePlayheadBeat = lo; neLoopFollowsBreak = false;
     }
     dragState = null;
     renderNoteEditor();
   };
   loopRuler.addEventListener('pointerup', finishDrag);
-  loopRuler.addEventListener('pointercancel', () => { console.log('[loop-debug] pointercancel (drag lost)'); dragState = null; });   // log is temporary
+  // Right-click clears the loop, like right-click deletes in the grid.
+  loopRuler.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    neLoopStart = null; neLoopEnd = null; neLoopFollowsBreak = false;
+    renderNoteEditor();
+  });
+  loopRuler.addEventListener('pointercancel', () => { dragState = null; });
 
   loopRuler.appendChild(inner);
   return loopRuler;

@@ -446,6 +446,11 @@ body.knob-dragging { user-select:none; cursor:ns-resize; }
 
 .tl-main { flex:1; overflow-x:auto; padding-bottom:3px; }
 .tl-ruler { position:relative; height:20px; border-bottom:1px solid var(--border); background:var(--bg); cursor:pointer; touch-action:none; }
+/* Grab zones on the two edges of a loop range: drag one to move just that edge. */
+.loop-handle { position:absolute; top:0; bottom:0; width:10px; cursor:ew-resize; pointer-events:auto; z-index:2; }
+.loop-handle.start { left:-6px; }
+.loop-handle.end { right:-6px; }
+.loop-handle:hover { background:rgba(251,191,36,.45); }
 .tl-ruler-mark, .ne-ruler-mark { position:absolute; top:0; bottom:0; display:flex; align-items:center; padding-left:4px; font-size:9px; color:var(--muted); border-left:1px solid var(--border); }
 .tl-ruler-bar, .ne-ruler-bar { border-left:2px solid var(--border2); color:var(--text-bright); font-weight:700; }
 .tl-ruler-endless, .ne-ruler-endless { opacity:.35; }
