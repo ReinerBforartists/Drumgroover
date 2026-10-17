@@ -1291,7 +1291,7 @@
       s.faderEl.dispatchEvent(new Event('input'));
       s.faderEl.disabled = true;
       if (k < 1) run.rampTimer = setTimeout(() => step(performance.now()), 16);
-      else autoCancel(chId);
+      else { autoCancel(chId); mixerUndoRebase(); }   // Auto Gain has its own undo; it is not a mixer edit
     };
     run.rampTimer = setTimeout(() => step(performance.now()), 0);
   }
@@ -1622,9 +1622,9 @@
       }
     });
     hostBridge.on('songPosition', (msg) => { hostPlaying = !!(msg && msg.playing); });
-    hostBridge.on('mixerState', (payload) => { applyHostState(payload); presetState.name = ''; presetBaseline(); });
+    hostBridge.on('mixerState', (payload) => { applyHostState(payload); presetState.name = ''; presetBaseline(); mixerUndoRebase(); });
     hostBridge.on('mixerPresetList', (payload) => { presetState.names = (payload && payload.presets) || []; });
-    hostBridge.on('mixerPresetLoaded', (payload) => { presetState.name = (payload && payload.name) || ''; presetBaseline(); });
+    hostBridge.on('mixerPresetLoaded', (payload) => { presetState.name = (payload && payload.name) || ''; presetBaseline(); mixerUndoRebase(); });
     hostBridge.on('mixerPresetRenamed', (payload) => { if (payload && presetState.name === payload.name) { presetState.name = payload.newName; updatePresetButton(); } });
   }
 
@@ -1667,6 +1667,7 @@
   }
   // Resets the mixer to zero values: every fader 0 dB, pan centre, sends 0, mute / solo off, kit gain 0 dB. The effect slots stay as they are.
   function resetMixerToZero() {
+    const beforeJson = mixerUndoJson();
     const zero = { gainDb: 0, pan: 0, mute: false, solo: false, sendReverb: 0, sendDelay: 0, autoTargetDb: 0 };
     const channels = {};
     for (const c of FIXED_CHANNELS) channels[c.id] = { ...zero };
@@ -1679,6 +1680,7 @@
       delayBus: { gainDb: 0, pan: 0, mute: false },
     });
     commitMixer();
+    mixerUndoStep('Reset mixer', beforeJson);
   }
   function renderPresetMenu() {
     const menu = document.getElementById('mixerPresetMenu');
@@ -1751,6 +1753,46 @@
       });
     }, true);
   }
+
+  // Undo for the mixer: the serialized state is compared with the last known one after every change, whatever caused it (mouse, wheel,
+  // keyboard, mute / solo, effect slots, kit gain). A difference becomes one undo step that restores the values like a load does.
+  let mixerUndoBaseline = null;   // serialized mixer as of the last undo step or host load
+  // Solo is a monitoring state and the Auto Gain targets belong to the Auto function (own undo): neither is part of a mixer undo step.
+  function mixerUndoJson() {
+    const p = buildPayload();
+    delete p.kitAutoTargetDb;
+    const strip = (c) => { if (c) { delete c.solo; delete c.autoTargetDb; } };
+    Object.values(p.channels).forEach(strip);
+    strip(p.master);
+    return JSON.stringify(p);
+  }
+  function mixerUndoRebase() { mixerUndoBaseline = mixerUndoJson(); }
+  function mixerUndoRestore(s) { autoCancelAll(); applyHostState(JSON.parse(s)); commitMixer(); mixerUndoRebase(); }
+  function mixerUndoStep(label, beforeJson) {
+    const afterJson = mixerUndoJson();
+    mixerUndoBaseline = afterJson;
+    if (afterJson === beforeJson || typeof pushUndo !== 'function') return;
+    pushUndo(label, () => mixerUndoRestore(beforeJson), () => mixerUndoRestore(afterJson), 'mixer');
+  }
+  (function wireMixerUndo() {
+    const panel = document.querySelector('.tab-panel.mixer-panel');
+    if (!panel) return;
+    mixerUndoRebase();
+    let timer = null;
+    const commit = () => {
+      const now = mixerUndoJson();
+      const base = mixerUndoBaseline === null ? now : mixerUndoBaseline;
+      mixerUndoBaseline = now;
+      if (now === base) return;
+      mixerUndoStep('Mixer edit', base);
+    };
+    // The delay lets the control's own handlers finish before the state is compared.
+    const check = (delay) => { clearTimeout(timer); timer = setTimeout(commit, delay); };
+    panel.addEventListener('change', () => check(80), true);
+    panel.addEventListener('pointerup', () => check(80), true);
+    panel.addEventListener('keyup', () => check(80), true);
+    panel.addEventListener('wheel', () => check(350), { capture: true, passive: true });
+  })();
 
   // Accessible hover-zoom for the per-slot knob panels (Pan/Rev/Del): one panel
   // per strip that pops out + scales on hover, like the drum-engine clusters.

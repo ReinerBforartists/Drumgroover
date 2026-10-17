@@ -1090,8 +1090,9 @@ DrumGroover::DrumGroover(const InstanceInfo& info)
   // Set initial JS message buffer size; will grow as needed.
   SetMaxJSStringLength(mMaxJSBufferSize);
 
-  // DevTools (right-click > Inspect) start off; the Options menu switches them on (HandleSetDevTools).
-  SetEnableDevTools(false);
+  // DevTools (right-click > Inspect) start on while debugging; the Options menu switches them off (HandleSetDevTools).
+  // Set this back to false for a release build.
+  SetEnableDevTools(true);
 
 #ifdef OS_WIN
   // The web UI lives inside the DLL. Setting DGG_WEB_ROOT to a folder with index.html loads it from there

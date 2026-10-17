@@ -46,9 +46,8 @@ function deserializeProject(proj) {
 
   stopPlayback();
 
-  // Clear undo/redo history — snapshots would be invalid for the new state.
-  undoHistory = []; 
-  redoHistory = [];
+  // Clear undo/redo history of every tab — snapshots would be invalid for the new state.
+  clearUndoHistory();
 
   // Invalidate any pending async default block generation that could overwrite loaded state.
   projectGeneration++;
@@ -170,8 +169,7 @@ async function newProject() {
 
   // Invalidate any pending async generation.
   projectGeneration++;
-  undoHistory = [];
-  redoHistory = [];
+  clearUndoHistory();
 
   blocksList = [];
   songEngine.songSequence = [];

@@ -1885,8 +1885,10 @@ function generateSong(structureKey) {
   if (!code) return;
   const savedScrollY = window.scrollY;
   const ids = ['intro', ...[...code].flatMap(letter => LETTER_EXPANSION[letter] || []), 'outro'];
-  songEngine.songSequence = []; songEngine.currentSection = null;
-  ids.forEach(id => { if (findBlock(id)) songEngine.addSlot(id); });
+  withSongSequenceUndo('Generate song', () => {
+    songEngine.songSequence = []; songEngine.currentSection = null;
+    ids.forEach(id => { if (findBlock(id)) songEngine.addSlot(id); });
+  });
   activeBlockId = 'verse';
   renderBlockTabs(); renderNoteEditor();
   fitTimelineZoom();

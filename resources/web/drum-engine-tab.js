@@ -227,6 +227,7 @@ let deVoiceParamStateConfigured = false;
 let deInstanceSyncCallbacks = {};
 let dePadPositionsCache = {};
 let dePadResyncCallbacks = {};
+let deUndoBaseline = null;   // sound state as of the last undo step or host load (see deInitUndo)
 
 function deVoiceParamStateFor(family, index, key) {
   if (!deVoiceParamStateCache) return undefined;
@@ -259,6 +260,7 @@ if (typeof hostBridge !== 'undefined' && hostBridge.on) {
     deApplyVoiceParamStateToDom();
     for (const key in dePadResyncCallbacks) dePadResyncCallbacks[key]();
     for (const key in deInstanceSyncCallbacks) deInstanceSyncCallbacks[key]();
+    deUndoRebase();   // a host load is not an edit
   });
   hostBridge.on('padPositionsState', (payload) => {
     dePadPositionsCache = payload || {};
@@ -266,6 +268,7 @@ if (typeof hostBridge !== 'undefined' && hostBridge.on) {
       const cb = dePadResyncCallbacks[key];
       if (typeof cb === 'function') cb();
     }
+    deUndoRebase();
   });
 }
 
@@ -318,6 +321,7 @@ if (typeof hostBridge !== 'undefined' && hostBridge.on) {
     for (const noteStr in payload) {
       deApplyArticulationGain(Number(noteStr), payload[noteStr]);
     }
+    deUndoRebase();
   });
 }
 
@@ -375,6 +379,7 @@ function deBuildCustomEngineLevelKnob(inst) {
     },
   });
   dial.classList.add('de-artic-vol-knob');
+  dial.dataset.customId = inst.customId;
   deWireKnobPreview(dial.slider, inst.previewNote);
   return dial;
 }
@@ -1370,6 +1375,154 @@ function deInitVoiceParamTabs() {
 
 const DE_POLY_FAMILIES = ['kick', 'snare', 'tom', 'ride'];
 
+// =========================================
+// Undo for the Drum Engine tab
+// =========================================
+// One generic layer: the sound state (voice parameters, articulation / custom volumes, pad positions, polyphony) is captured
+// when a gesture starts and compared when it ends; a difference becomes one undo step. Restoring writes the values to the
+// host again (and to the controls, if they exist), so it does not depend on which panels are currently built.
+
+function dePolySlider(family) {
+  return document.getElementById('dePoly' + family[0].toUpperCase() + family.slice(1));
+}
+
+function deUndoCapture() {
+  const panel = document.querySelector('.tab-panel[data-tab-panel="drumEngine"]');
+  const voice = {};
+  if (panel) {
+    panel.querySelectorAll('[data-family][data-param-key]').forEach((el) => {
+      const input = el.slider || el;
+      voice[el.dataset.family + '|' + el.dataset.index + '|' + el.dataset.paramKey] = String(input.value);
+    });
+  }
+  const poly = {};
+  for (const family of DE_POLY_FAMILIES) {
+    const slider = dePolySlider(family);
+    if (slider) poly[family] = String(slider.value);
+  }
+  return {
+    voice,
+    gains: { ...deArticulationGainCache },
+    customGains: { ...deCustomEngineGainCache },
+    pads: JSON.parse(JSON.stringify(dePadPositionsCache || {})),
+    poly,
+  };
+}
+
+function deUndoSetDial(dial, value) {
+  if (!dial || !dial.slider) return;
+  deKickIsWritingSliders = true;
+  dial.slider.value = String(value);
+  dial.slider.dispatchEvent(new Event('input'));
+  deKickIsWritingSliders = false;
+}
+
+// Moves the sound state from `current` to `target`; only entries that differ are written.
+function deUndoApply(target, current) {
+  for (const k in target.voice) {
+    if (current.voice[k] === target.voice[k]) continue;
+    const [family, idxStr, key] = k.split('|');
+    const index = Number(idxStr) < 0 ? undefined : Number(idxStr);
+    const value = Number(target.voice[k]);
+    deSendVoiceParam(family, key, value, index);
+    deSendVoiceParamCommit(family, key, value, index);
+    if (deVoiceParamStateCache) {
+      const cacheKey = family + ':' + (index === undefined ? -1 : index);
+      (deVoiceParamStateCache[cacheKey] = deVoiceParamStateCache[cacheKey] || {})[key] = value;
+    }
+    const el = document.querySelector(`[data-family="${family}"][data-index="${idxStr}"][data-param-key="${key}"]`);
+    if (el) {
+      const input = el.slider || el;
+      deSuppressSend = true; deKickIsWritingSliders = true;
+      input.value = String(value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      deKickIsWritingSliders = false; deSuppressSend = false;
+    }
+  }
+
+  const notes = new Set([...Object.keys(target.gains), ...Object.keys(current.gains)]);
+  notes.forEach((note) => {
+    if (current.gains[note] === target.gains[note]) return;
+    const dial = document.querySelector(`.de-artic-vol-knob[data-note="${note}"]`);
+    const value = (note in target.gains) ? target.gains[note] : Number(dial && dial.dataset.def != null ? dial.dataset.def : DE_LEVEL_DEFAULT);
+    deApplyArticulationGain(Number(note), value);
+    deSendArticulationLevel(Number(note), value);
+  });
+
+  const customIds = new Set([...Object.keys(target.customGains), ...Object.keys(current.customGains)]);
+  customIds.forEach((id) => {
+    if (current.customGains[id] === target.customGains[id]) return;
+    const dial = document.querySelector(`.de-artic-vol-knob[data-custom-id="${id}"]`);
+    if (id in target.customGains) deCustomEngineGainCache[id] = target.customGains[id]; else delete deCustomEngineGainCache[id];
+    if (dial) {
+      const value = (id in target.customGains) ? target.customGains[id] : Number(dial.dataset.def);
+      deUndoSetDial(dial, value);   // its input handler sends the preview gain
+    }
+  });
+
+  const padKeys = new Set([...Object.keys(target.pads), ...Object.keys(current.pads)]);
+  let padsChanged = false;
+  padKeys.forEach((padKey) => {
+    if (JSON.stringify(current.pads[padKey]) === JSON.stringify(target.pads[padKey])) return;
+    padsChanged = true;
+    if (!dePadPositionsCache) dePadPositionsCache = {};
+    const pos = target.pads[padKey];
+    if (pos === undefined) { delete dePadPositionsCache[padKey]; return; }
+    dePadPositionsCache[padKey] = pos;
+    const [family, index] = padKey.split(':');
+    if (typeof hostBridge !== 'undefined' && hostBridge.send) {
+      hostBridge.send('setPadPos', { family, index: Number(index), x: pos.x, y: pos.y, synced: pos.synced !== false });
+    }
+  });
+  if (padsChanged) for (const key in dePadResyncCallbacks) dePadResyncCallbacks[key]();
+
+  for (const family of DE_POLY_FAMILIES) {
+    const slider = dePolySlider(family);
+    if (!slider || target.poly[family] === undefined || slider.value === target.poly[family]) continue;
+    slider.value = target.poly[family];
+    slider.dispatchEvent(new Event('input'));
+  }
+}
+
+function deUndoLabel(before, after) {
+  const changed = Object.keys(after.voice).filter((k) => before.voice[k] !== after.voice[k]);
+  if (changed.length === 1) {
+    const [family, , key] = changed[0].split('|');
+    return `Drum Engine: ${family} ${key}`;
+  }
+  return 'Drum Engine edit';
+}
+
+// Makes the current state the reference for the next change (after a host load or an undo/redo).
+function deUndoRebase() { deUndoBaseline = deUndoCapture(); }
+
+function deInitUndo() {
+  const panel = document.querySelector('.tab-panel[data-tab-panel="drumEngine"]');
+  if (!panel || panel._deUndoWired) return;
+  panel._deUndoWired = true;
+  deUndoRebase();
+  let timer = null;
+  // Whatever caused a change (mouse, wheel, keyboard, Reset, pad), the undo step is the difference between the last known
+  // state and the current one; the events below only say "look now".
+  const commit = () => {
+    const now = deUndoCapture();
+    const base = deUndoBaseline || now;
+    for (const k in now.voice) if (!(k in base.voice)) base.voice[k] = now.voice[k];   // control built after the baseline was taken
+    deUndoBaseline = now;
+    if (JSON.stringify(now) === JSON.stringify(base)) return;
+    pushUndo(deUndoLabel(base, now),
+      () => { deUndoApply(base, deUndoCapture()); deUndoRebase(); },
+      () => { deUndoApply(now, deUndoCapture()); deUndoRebase(); },
+      'drumEngine');
+  };
+  // The delay lets the control's own handlers (reset buttons, pad release) finish before the state is compared.
+  const check = (delay) => { clearTimeout(timer); timer = setTimeout(commit, delay); };
+  panel.addEventListener('change', () => check(60), true);
+  panel.addEventListener('pointerup', () => check(60), true);
+  panel.addEventListener('keyup', () => check(60), true);
+  panel.addEventListener('wheel', () => check(350), { capture: true, passive: true });
+}
+
 function deInitPolyphonyControls() {
   for (const family of DE_POLY_FAMILIES) {
     const slider = document.getElementById('dePoly' + family[0].toUpperCase() + family.slice(1));
@@ -1440,6 +1593,7 @@ function deInitPolyphonyControls() {
         }
         if (valEl) valEl.textContent = String(value);
       }
+      deUndoRebase();
     });
   }
 
@@ -1742,6 +1896,9 @@ function deInitEngineModeControls() {
 
   select.addEventListener('change', () => {
     deEngineMode = select.value;
+    // The values in these histories belong to the previous engine; undoing them would write them into the new one.
+    clearUndoHistory('drumEngine');
+    clearUndoHistory('mixer');
     deRefreshParamPanelForFamily(deFocusFamily);
     if (typeof hostBridge === 'undefined' || !hostBridge.send) return;
     hostBridge.send('setEngineMode', { engine: deEngineMode });
@@ -1923,6 +2080,7 @@ function initDrumEngineTab() {
   deKeyboardBuilt = true;
 
   deInitEngineParams();
+  deInitUndo();
 
   const keyboard = document.getElementById('deKeyboard');
   if (!keyboard) return;

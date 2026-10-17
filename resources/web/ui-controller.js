@@ -118,7 +118,9 @@ function renderBlockTabs() {
       if (isBreakBlock(b)) { neMsg('Name comes from the parent block — rename it there.'); return; }
       const result = await showModal({ title:'Rename block', fields:[{label:'New name', value:b.name}], confirmLabel:'Rename' });
       const nn = result && result[0];
-      if (nn) { b.name = nn; b.generated = false; renderBlockTabs(); renderTimeline(); }
+      if (nn && nn !== b.name) {
+        withProjectUndoAsync(`Rename block (${b.name})`, async () => { b.name = nn; b.generated = false; renderBlockTabs(); renderTimeline(); });
+      }
     });
     item.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -300,39 +302,62 @@ function attachPalettePaintDeleteOnce() {
 }
 
 const UNDO_HISTORY_MAX = 40;
-let undoHistory = [];
-let redoHistory = [];
+// One undo history per tab (Note Editor, Song Generator, Mixer, Drum Engine): Ctrl+Z only touches the tab you are looking at.
+const undoStacks = {};
 
-function pushUndo(label, undoFn, redoFn) {
-  undoHistory.push({ label, undo: undoFn, redo: redoFn });
-  if (undoHistory.length > UNDO_HISTORY_MAX) undoHistory.shift();
-  redoHistory.length = 0;
+function undoTabKey() {
+  const btn = document.querySelector('#mainTabBar .tab-btn.active');
+  return (btn && btn.dataset.tab) || 'noteEditor';
+}
+
+function undoStack(tab) {
+  const key = tab || undoTabKey();
+  if (!undoStacks[key]) undoStacks[key] = { undo: [], redo: [] };
+  return undoStacks[key];
+}
+
+// Without a tab, every history is cleared (project load / new project).
+function clearUndoHistory(tab) {
+  if (tab) delete undoStacks[tab];
+  else Object.keys(undoStacks).forEach(k => delete undoStacks[k]);
+  refreshUndoRedoButtons();
+}
+
+// `tab` is optional: the entry goes to the history of the tab that is active when it is pushed.
+function pushUndo(label, undoFn, redoFn, tab) {
+  const st = undoStack(tab);
+  st.undo.push({ label, undo: undoFn, redo: redoFn });
+  if (st.undo.length > UNDO_HISTORY_MAX) st.undo.shift();
+  st.redo.length = 0;
   refreshUndoRedoButtons();
 }
 
 function performUndo() {
-  const entry = undoHistory.pop();
+  const st = undoStack();
+  const entry = st.undo.pop();
   if (!entry) return;
   entry.undo();
-  redoHistory.push(entry);
-  if (redoHistory.length > UNDO_HISTORY_MAX) redoHistory.shift();
+  st.redo.push(entry);
+  if (st.redo.length > UNDO_HISTORY_MAX) st.redo.shift();
   refreshUndoRedoButtons();
 }
 
 function performRedo() {
-  const entry = redoHistory.pop();
+  const st = undoStack();
+  const entry = st.redo.pop();
   if (!entry) return;
   entry.redo();
-  undoHistory.push(entry);
-  if (undoHistory.length > UNDO_HISTORY_MAX) undoHistory.shift();
+  st.undo.push(entry);
+  if (st.undo.length > UNDO_HISTORY_MAX) st.undo.shift();
   refreshUndoRedoButtons();
 }
 
 function refreshUndoRedoButtons() {
   const undoBtn = document.getElementById('undoBtn');
   const redoBtn = document.getElementById('redoBtn');
-  const topUndo = undoHistory[undoHistory.length - 1];
-  const topRedo = redoHistory[redoHistory.length - 1];
+  const st = undoStack();
+  const topUndo = st.undo[st.undo.length - 1];
+  const topRedo = st.redo[st.redo.length - 1];
   if (undoBtn) {
     undoBtn.disabled = !topUndo;
     undoBtn.dataset.tooltip = topUndo ? `Undo\n${topUndo.label}` : 'Undo\nNothing to undo';
@@ -381,6 +406,25 @@ function withBlockDataUndo(label, block, mutateFn) {
     if (activeBlockId === block.id) syncKnobsToBlock(block);
   };
   pushUndo(label, () => restore(beforeData, beforeLocked, beforeKnobs, beforeFeel, beforeShape), () => restore(afterData, afterLocked, afterKnobs, afterFeel, afterShape));
+}
+
+// Undo step over the whole block list, for changes that also touch other blocks (e.g. a length change resizing its Breaks).
+// `snapshotBefore` is for gestures that change the blocks before the undoable work starts (e.g. a checkbox drag).
+async function withProjectUndoAsync(label, asyncFn, snapshotBefore) {
+  const before = snapshotBefore !== undefined ? snapshotBefore : JSON.stringify(blocksList);
+  await asyncFn();
+  const after = JSON.stringify(blocksList);
+  if (before === after) return;
+  const restore = (s) => {
+    blocksList = JSON.parse(s);
+    rebuildFullFromEditedBlocks();
+    renderBlockTabs();
+    renderNoteEditor();
+    renderTimeline();
+    updateGroupLockUI();
+    syncKnobsToBlock(findBlock(activeBlockId));
+  };
+  pushUndo(label, () => restore(before), () => restore(after));
 }
 
 async function withBlockDataUndoAsync(label, block, asyncMutateFn) {
@@ -482,8 +526,9 @@ function attachPaletteDrag(item, b) {
       const over = e.clientX>=tr.left-20 && e.clientY>=tr.top-15 && e.clientY<=tr.bottom+15;
       if (over) {
         const desiredBar = computeDropBar(track, e.clientX, currentTlPxPerBar());
-        songEngine.placeSlotAtRipple(desiredBar, { blockId: b.id, loopCount: 1 });
-        renderTimeline(); rebuildFullFromEditedBlocks(); renderStats(readParams(), readGrid());
+        withSongSequenceUndo(`Add clip (${b.name})`, () => {
+          songEngine.placeSlotAtRipple(desiredBar, { blockId: b.id, loopCount: 1 });
+        });
       }
       hideDropMarker();
     } else if (b.id) {
@@ -1007,13 +1052,36 @@ function syncKnobsToBlock(block) {
   suppressKnobRegen = false;
 }
 
+// State a time signature / genre change replaces; the numerator comes from the blocks because the field has already changed.
+function neTsCapture() {
+  return {
+    blocks: JSON.stringify(blocksList),
+    numerator: (blocksList[0] && blocksList[0].numerator) || readGrid().numerator,
+    genre: selectedGenre,
+  };
+}
+
+function neTsRestore(st) {
+  blocksList = JSON.parse(st.blocks);
+  selectedGenre = st.genre;
+  document.getElementById('genreSelect').value = st.genre;
+  setParamValue('numerator', st.numerator);
+  rebuildFullFromEditedBlocks();
+  renderBlockTabs();
+  renderNoteEditor();
+  renderTimeline();
+  renderStats(readParams(), readGrid());
+  syncKnobsToBlock(findBlock(activeBlockId));
+}
+
 document.getElementById('genreSelect').addEventListener('change', (e) => {
+  const prev = neTsCapture();
   selectedGenre = e.target.value;
   setParamValue('numerator', (selectedGenre === 'three_four') ? '3' : '4');
-  neApplyTimeSignature((selectedGenre === 'swing') ? 'swing' : 'straight');
+  neApplyTimeSignature((selectedGenre === 'swing') ? 'swing' : 'straight', prev);
 });
 
-document.getElementById('numerator').addEventListener('change', () => neApplyTimeSignature(null));
+document.getElementById('numerator').addEventListener('change', () => neApplyTimeSignature(null, neTsCapture()));
 
 function neRegenerateMainBlocks(g, genreFeel) {
   const presets = currentSectionPresets();
@@ -1033,7 +1101,7 @@ function neRegenerateMainBlocks(g, genreFeel) {
 
 // A new bar length touches every block: the main blocks are regenerated, Intro/Outro and unlocked Breaks are
 // regenerated by the host, locked Breaks follow their parent, any other block only gets its notes trimmed.
-async function neApplyTimeSignature(genreFeel) {
+async function neApplyTimeSignature(genreFeel, prev) {
   const g = readGrid();
   blocksList.forEach(b => { b.numerator = g.numerator; });
   neRegenerateMainBlocks(g, genreFeel);
@@ -1061,6 +1129,10 @@ async function neApplyTimeSignature(genreFeel) {
   renderNoteEditor();
   renderStats(readParams(), readGrid());
   syncKnobsToBlock(findBlock(activeBlockId));
+  const after = { blocks: JSON.stringify(blocksList), numerator: g.numerator, genre: selectedGenre };
+  if (prev && (prev.blocks !== after.blocks || prev.numerator !== after.numerator || prev.genre !== after.genre)) {
+    pushUndo('Change time signature', () => neTsRestore(prev), () => neTsRestore(after));
+  }
 }
 
 function updateGroupLockUI() {
@@ -1634,13 +1706,35 @@ async function neAddTrack() {
   const label = def.name;
   const gm = parseInt(gmStr);
   const id = 'custom_' + label.toLowerCase().replace(/[^a-z0-9]/g,'_') + '_' + Date.now();
-  trackList.push({ id, label, color:'#ec4899', gm: isNaN(gm) ? findUnusedGmNote() : gm, role:'custom', customInstrument: instrumentId });
-  blocksList.forEach(b => { b.data[id] = []; });
-  focusedTrackId = id;
-  neSetActiveCustomTrack(id);   // the new track is what we set up next — cluster selects it
-  rebuildFullFromEditedBlocks();
-  renderNoteEditor();
-  syncCustomInstruments();
+  withTracksUndo(`Add track (${label})`, () => {
+    trackList.push({ id, label, color:'#ec4899', gm: isNaN(gm) ? findUnusedGmNote() : gm, role:'custom', customInstrument: instrumentId });
+    blocksList.forEach(b => { b.data[id] = []; });
+    focusedTrackId = id;
+    neSetActiveCustomTrack(id);   // the new track is what we set up next — cluster selects it
+    rebuildFullFromEditedBlocks();
+    renderNoteEditor();
+    syncCustomInstruments();
+  });
+}
+
+// Undo step over the track list and every block's data, for adding or deleting a custom track.
+function withTracksUndo(label, fn) {
+  const snap = () => ({ tracks: JSON.stringify(trackList), blocks: JSON.stringify(blocksList) });
+  const before = snap();
+  fn();
+  const after = snap();
+  const restore = (st) => {
+    trackList = JSON.parse(st.tracks);
+    blocksList = JSON.parse(st.blocks);
+    if (focusedTrackId && !trackList.some(t => t.id === focusedTrackId)) focusedTrackId = null;
+    if (activeCustomTrackId && !trackList.some(t => t.id === activeCustomTrackId)) activeCustomTrackId = null;
+    selectedNotes.clear();
+    rebuildFullFromEditedBlocks();
+    renderBlockTabs();
+    renderNoteEditor();
+    syncCustomInstruments();
+  };
+  pushUndo(label, () => restore(before), () => restore(after));
 }
 document.getElementById('neAddTrackTopBtn').addEventListener('click', neAddTrack);
 
@@ -1660,27 +1754,29 @@ function neRefreshAddTrackButton() {
 }
 
 // Delete a custom track (subtab ✕): removes it from the roster and its notes from every block,
-// freeing its instrument for a new track. Confirmed first — the notes are gone for good.
+// freeing its instrument for a new track. Confirmed first; Undo brings the track and its notes back.
 async function neDeleteCustomTrack(t) {
   let noteCount = 0;
   blocksList.forEach(b => { noteCount += (b.data[t.id] || []).length; });
   const ok = await showModal({
     title:'Delete track',
-    message:`Remove "${t.label}" and its ${noteCount} note${noteCount === 1 ? '' : 's'} from all blocks? This cannot be undone.`,
+    message:`Remove "${t.label}" and its ${noteCount} note${noteCount === 1 ? '' : 's'} from all blocks?`,
     confirmLabel:'Delete',
     danger:true
   });
   if (!ok) return;
-  const i = trackList.findIndex(x => x.id === t.id);
-  if (i >= 0) trackList.splice(i, 1);
-  blocksList.forEach(b => { delete b.data[t.id]; });
-  mutedInstruments.delete(t.id);
-  soloedInstruments.delete(t.id);
-  if (focusedTrackId === t.id) focusedTrackId = null;
-  if (activeCustomTrackId === t.id) activeCustomTrackId = null;   // cluster falls back to the first remaining track
-  for (const k of [...selectedNotes]) if (k.startsWith(t.id + '|')) selectedNotes.delete(k);
-  syncCustomInstruments();   // C++ drops the assignment (missing entry = unassigned)
-  renderNoteEditor();        // also re-enables "+ Add Track" via neRefreshAddTrackButton
+  withTracksUndo(`Delete track (${t.label})`, () => {
+    const i = trackList.findIndex(x => x.id === t.id);
+    if (i >= 0) trackList.splice(i, 1);
+    blocksList.forEach(b => { delete b.data[t.id]; });
+    mutedInstruments.delete(t.id);
+    soloedInstruments.delete(t.id);
+    if (focusedTrackId === t.id) focusedTrackId = null;
+    if (activeCustomTrackId === t.id) activeCustomTrackId = null;   // cluster falls back to the first remaining track
+    for (const k of [...selectedNotes]) if (k.startsWith(t.id + '|')) selectedNotes.delete(k);
+    syncCustomInstruments();   // C++ drops the assignment (missing entry = unassigned)
+    renderNoteEditor();        // also re-enables "+ Add Track" via neRefreshAddTrackButton
+  });
 }
 
 // =========================================
@@ -1695,6 +1791,7 @@ Object.entries(sliderMap).forEach(([id,[valId,fmt]]) => {
 
 ['numerator','subdivision'].forEach(id => document.getElementById(id).addEventListener('change', () => generateSequence(true)));
 document.getElementById('denominator')?.addEventListener('change', () => renderStats(readParams(), readGrid()));
+
 
 let randomizeGestureItems = null;
 function randomizeRegen() {
@@ -1915,6 +2012,7 @@ function initTabs() {
       document.querySelectorAll('.tab-panel').forEach(p => {
         p.classList.toggle('active', p.dataset.tabPanel === target);
       });
+      refreshUndoRedoButtons();   // the undo buttons follow the history of the tab that is now active
       if (blockPaletteWrap) blockPaletteWrap.style.display = (target === 'howto') ? 'none' : '';
       // Mixer & Drum Engine tabs: keep the transport row (Play/Stop/master vol),
       // but hide the block chips so the tab content gets the space.
@@ -2003,7 +2101,7 @@ document.getElementById('snapToGridBtn').addEventListener('click', () => {
   const label = count > 1 ? `Snap ${count} notes to grid` : 'Snap note to grid';
   let changed = false;
   withBlockDataUndo(label, block, () => { changed = neSnapSelectionToGrid(block, g); });
-  if (!changed) { undoHistory.pop(); refreshUndoRedoButtons(); }
+  if (!changed) { undoStack().undo.pop(); refreshUndoRedoButtons(); }
 });
 
 function eligibleNoteKeys(block) {
@@ -2102,13 +2200,16 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     doPasteClipboard();
   }
-  if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z' && !inField) {
+  // A <select>, slider or checkbox keeps focus after use but has no text to undo, so the shortcut must still reach the app.
+  const inTextField = inField && e.target.tagName !== 'SELECT'
+    && !(e.target.tagName === 'INPUT' && ['range', 'checkbox', 'radio', 'button'].includes(e.target.type));
+  if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z' && !inTextField) {
     e.preventDefault();
     const onMixer = document.querySelector('#mainTabBar .tab-btn.active')?.dataset.tab === 'mixer';
     if (e.shiftKey) performRedo();
     else if (!(onMixer && window.mxUndoAuto && window.mxUndoAuto())) performUndo();
   }
-  if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='y' && !inField) {
+  if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='y' && !inTextField) {
     e.preventDefault();
     performRedo();
   }
@@ -2486,13 +2587,14 @@ tooltipsToggles.forEach(t => {
   });
 });
 
-// Developer tools (right-click > Inspect). Off by default. The flag lives in plain localStorage, not in the per-instance
-// dgg* storage, so it survives restarts of the host and applies to every instance.
-const DEVTOOLS_ENABLED_KEY = 'dggDevToolsEnabled';
+// Developer tools (right-click > Inspect). On by default while debugging (set back to off for a release): only an explicit
+// "off" is remembered. The flag lives in plain localStorage, not in the per-instance dgg* storage, so it survives restarts of
+// the host and applies to every instance.
+const DEVTOOLS_ENABLED_KEY = 'dggDevToolsEnabled.v2';   // new key: the old one stored "0" on every start and would override the default
 const DEVTOOLS_TOGGLE_IDS = ['devToolsToggle', 'devToolsToggleSG', 'devToolsToggleDE', 'devToolsToggleMixer'];
 const devToolsToggles = DEVTOOLS_TOGGLE_IDS.map(id => document.getElementById(id)).filter(Boolean);
 function devToolsEnabled() {
-  try { return localStorage.getItem(DEVTOOLS_ENABLED_KEY) === '1'; } catch (e) { return false; }
+  try { return localStorage.getItem(DEVTOOLS_ENABLED_KEY) !== '0'; } catch (e) { return true; }
 }
 function applyDevTools(enabled) {
   try { localStorage.setItem(DEVTOOLS_ENABLED_KEY, enabled ? '1' : '0'); } catch (e) {}

@@ -1146,11 +1146,11 @@ function neBuildVelocityLane(ctx) {
   if (showBuild) {
     const buildSlider = buildCtrl.querySelector('#veBuildSlider');
     const buildNum = buildCtrl.querySelector('#veBuildNum');
-    const commitBuild = (val) => {
+    const commitBuild = (val) => neUndoable('Velocity build', () => {
       block.velocityBuild = val / 100;
       block.generated = false;
       applyAllUnlockedGroups(block, g);
-    };
+    });
     buildSlider.addEventListener('input', () => { buildNum.value = buildSlider.value; });
     // Ctrl+Click → Reset to 0 (straight through).
     buildSlider.addEventListener('pointerdown', (e) => {

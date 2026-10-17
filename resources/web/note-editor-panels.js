@@ -23,6 +23,11 @@ const NE_DEFAULTS = {
   fillKickDensity: 100,
 };
 
+// One undo step around a panel change; `fn` mutates the block and may return the promise of the regeneration it starts.
+function neUndoable(label, fn) {
+  return withProjectUndoAsync(label, async () => { await fn(); });
+}
+
 // Instrument-toggle checkbox rows (Turnaround/Break/Fill pickers)
 // with drag-paint gesture across checkboxes. Shared builder with attachCheckboxGroupPaintDrag.
 let instCbPaint = null; // state for a live paint-drag gesture
@@ -45,7 +50,7 @@ function attachCheckboxGroupPaintDrag(cb, applyMutation, commit) {
     e.stopPropagation();
     cb._pointerHandled = true;
     const target = !cb.checked;
-    instCbPaint = { target, touched: new Set(), commit, groupTag: cb.dataset.instGroup };
+    instCbPaint = { target, touched: new Set(), commit, groupTag: cb.dataset.instGroup, before: JSON.stringify(blocksList) };
     applyTo(cb);
     cb.setPointerCapture(e.pointerId);
   });
@@ -63,17 +68,18 @@ function attachCheckboxGroupPaintDrag(cb, applyMutation, commit) {
   const finish = () => {
     setTimeout(() => { cb._pointerHandled = false; }, 0);
     if (!instCbPaint) return;
-    const { touched, commit: doCommit } = instCbPaint;
+    const { touched, commit: doCommit, before } = instCbPaint;
     instCbPaint = null;
-    if (touched.size) doCommit();
+    if (touched.size) withProjectUndoAsync('Change instruments', async () => { await doCommit(); }, before);
   };
   cb.addEventListener('pointerup', finish);
   cb.addEventListener('pointercancel', finish);
   // Keyboard activation (Space/Enter) uses native change event.
   cb.addEventListener('change', () => {
     if (instCbPaint) return;
+    const before = JSON.stringify(blocksList);
     cb._applyMutation(cb.checked);
-    commit();
+    withProjectUndoAsync('Change instruments', async () => { await commit(); }, before);
   });
 }
 
@@ -172,30 +178,36 @@ function neBuildControlsPanel(ctx) {
       if (isNaN(v)) { lenInput.value = String(block.length || 1); return; }
       v = Math.max(1, Math.min(BLOCK_MAX_LENGTH, v));
       if (v === (block.length || 1)) { lenInput.value = String(v); return; }
+      const label = `Length: ${v} (${blockDisplayName(block)})`;
       if (block.isFillBlock) {
-        block.length = v;
-        const res = await requestRegenerateFillBlock(block, g);
-        if (!res) return;
-        block.data = res.data;
-        block.length = res.length;
-        block.fillBeats = res.fillBeats;
-        block.feel = res.feel;
-        block.generated = false;
-        rebuildFullFromEditedBlocks();
-        renderNoteEditor();
+        await withProjectUndoAsync(label, async () => {
+          block.length = v;
+          const res = await requestRegenerateFillBlock(block, g);
+          if (!res) return;
+          block.data = res.data;
+          block.length = res.length;
+          block.fillBeats = res.fillBeats;
+          block.feel = res.feel;
+          block.generated = false;
+          rebuildFullFromEditedBlocks();
+          renderNoteEditor();
+        });
         return;
       }
-      resizeBlockLength(block, g, v);
-      block.generated = false;
-      syncBreakLengthsToParent(block, g);
-      suppressKnobRegen = true;
-      syncPhraseKnobRanges(block);
-      suppressKnobRegen = false;
-      rebuildFullFromEditedBlocks();
-      renderNoteEditor();
+      await withProjectUndoAsync(label, async () => {
+        resizeBlockLength(block, g, v);
+        block.generated = false;
+        suppressKnobRegen = true;
+        syncPhraseKnobRanges(block);
+        suppressKnobRegen = false;
+        await syncBreakLengthsToParent(block, g);
+        rebuildFullFromEditedBlocks();
+        renderNoteEditor();
+      });
     };
-    lenInput.addEventListener('change', commitLen);
-    lenInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commitLen(); } });
+    // Leaving the field after a commit lets Ctrl+Z reach the app instead of the text box.
+    lenInput.addEventListener('change', async () => { await commitLen(); lenInput.blur(); });
+    lenInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); lenInput.blur(); } });
     lenGroup.appendChild(lenInput);
   }
   controls.appendChild(lenGroup);
@@ -407,9 +419,11 @@ function neBuildTurnaroundPanel(panel, ctx) {
   taSelect.dataset.tooltip = 'Fill Every\nHow often a turnaround (fill) occurs — every Nth bar (the last bar of each phrase). Off disables it.';
   wireCustomSelect(taSelect);
   taSelect.addEventListener('change', () => {
-    block.turnaroundInterval = +taSelect.value;
-    block.generated = false;
-    applyAllUnlockedGroups(block, g);
+    neUndoable('Fill every', () => {
+      block.turnaroundInterval = +taSelect.value;
+      block.generated = false;
+      applyAllUnlockedGroups(block, g);
+    });
   });
   taGroup.appendChild(taSelect);
   panel.appendChild(taGroup);
@@ -419,6 +433,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
     block.generated = false;
     applyAllUnlockedGroups(block, g);
   };
+  const turnaroundUndoable = (label, mutate) => neUndoable(label, () => { mutate(); applyTurnaroundChange(); });
 
   // Turnaround Length (Beats)
   const tlGroup = document.createElement('div');
@@ -436,8 +451,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
     if (isNaN(v)) { tlInput.value = String(current); return; }
     v = Math.max(0.25, Math.min(tlMaxBeats, Math.round(v*4)/4));
     if (v === current) { tlInput.value = String(v); return; }
-    block.turnaroundLengthBeats = v;
-    applyTurnaroundChange();
+    turnaroundUndoable('Fill length', () => { block.turnaroundLengthBeats = v; });
   };
   tlInput.addEventListener('change', commitTL);
   tlInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commitTL(); } });
@@ -454,7 +468,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
   const tcCheck = document.createElement('input');
   tcCheck.type = 'checkbox'; tcCheck.checked = block.turnaroundCrash !== false;
   tcCheck.dataset.tooltip = tcLabel.dataset.tooltip;
-  tcCheck.addEventListener('change', () => { block.turnaroundCrash = tcCheck.checked; applyTurnaroundChange(); });
+  tcCheck.addEventListener('change', () => turnaroundUndoable('Closing crash', () => { block.turnaroundCrash = tcCheck.checked; }));
   const tcText = document.createElement('span');
   tcText.className = 'ne-ctl-label';
   tcText.style.textTransform = 'none';
@@ -474,7 +488,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
   const tvpCheck = document.createElement('input');
   tvpCheck.type = 'checkbox'; tvpCheck.checked = !!block.turnaroundVaryPerOccurrence;
   tvpCheck.dataset.tooltip = tvpLabel.dataset.tooltip;
-  tvpCheck.addEventListener('change', () => { block.turnaroundVaryPerOccurrence = tvpCheck.checked; applyTurnaroundChange(); });
+  tvpCheck.addEventListener('change', () => turnaroundUndoable('Vary per occurrence', () => { block.turnaroundVaryPerOccurrence = tvpCheck.checked; }));
   const tvpText = document.createElement('span');
   tvpText.className = 'ne-ctl-label';
   tvpText.style.textTransform = 'none';
@@ -490,21 +504,20 @@ function neBuildTurnaroundPanel(panel, ctx) {
     def: Math.max(0, SUBDIVISION_KNOB_VALUES.indexOf(NE_DEFAULTS.subdivision)), // Default: subdivision
     format: v => SUBDIVISION_KNOB_LABELS[v],
     title: 'Subdivision\nResolution of the fill in steps per beat.',
-    onChange: v => { block.turnaroundSubdivision = SUBDIVISION_KNOB_VALUES[v]; applyTurnaroundChange(); },
+    onChange: v => turnaroundUndoable('Fill subdivision', () => { block.turnaroundSubdivision = SUBDIVISION_KNOB_VALUES[v]; }),
   });
   const tdDial = neCreateDial({
     label: 'Amnt', min: 0, max: 100, step: 5, value: block.turnaroundDensity ?? NE_DEFAULTS.turnaroundDensity,
     def: NE_DEFAULTS.turnaroundDensity,
     format: v => v + '%',
     title: 'Amount\nHow many hits land within the fill window — independent of its length.',
-    onChange: v => { block.turnaroundDensity = v; applyTurnaroundChange(); },
+    onChange: v => turnaroundUndoable('Fill amount', () => { block.turnaroundDensity = v; }),
   });
   const fillDialRow = neToolbarCluster('Fill', [tsDial, tdDial]);
   const fillLocked = neApplyDialRowLock(fillDialRow, [tsDial, tdDial], fillGroups, block);
   fillDialRow.classList.add('ne-ctl-nosep');
   neAddRerollIcon(fillDialRow, [tsDial, tdDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
-    block.turnaroundSeed = Math.floor(Math.random()*1e9);
-    applyTurnaroundChange();
+    turnaroundUndoable('Reroll fill', () => { block.turnaroundSeed = Math.floor(Math.random()*1e9); });
   });
 
   // Instrument picker
@@ -529,20 +542,19 @@ function neBuildTurnaroundPanel(panel, ctx) {
     def: Math.max(0, BREAK_KICK_SUBDIVISION_VALUES.indexOf(NE_DEFAULTS.kickSubdivision)), // Default: kick subdivision
     format: v => BREAK_KICK_SUBDIVISION_LABELS[v],
     title: 'Subdivision\nResolution of the Fill Kick pulse in steps per beat.',
-    onChange: v => { block.turnaroundKickSubdivision = BREAK_KICK_SUBDIVISION_VALUES[v]; applyTurnaroundChange(); },
+    onChange: v => turnaroundUndoable('Fill kick subdivision', () => { block.turnaroundKickSubdivision = BREAK_KICK_SUBDIVISION_VALUES[v]; }),
   });
   const tkdDial = neCreateDial({
     label: 'Amnt', min: 0, max: 100, step: 5, value: block.turnaroundKickDensity ?? NE_DEFAULTS.turnaroundKickDensity,
     def: NE_DEFAULTS.turnaroundKickDensity,
     format: v => v + '%',
     title: 'Amount\nHow full the Fill Kick pulse is — 100% = a hit on every step.',
-    onChange: v => { block.turnaroundKickDensity = v; applyTurnaroundChange(); },
+    onChange: v => turnaroundUndoable('Fill kick amount', () => { block.turnaroundKickDensity = v; }),
   });
   const kickDialRow = neToolbarCluster('Fill Kick', [tksDial, tkdDial]);
   neApplyDialRowLock(kickDialRow, [tksDial, tkdDial], ['kick'], block);
   neAddRerollIcon(kickDialRow, [tksDial, tkdDial], 'Reroll\nGenerates a new Fill Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
-    block.turnaroundKickSeed = Math.floor(Math.random()*1e9);
-    applyTurnaroundChange();
+    turnaroundUndoable('Reroll fill kick', () => { block.turnaroundKickSeed = Math.floor(Math.random()*1e9); });
   });
 }
 
@@ -601,7 +613,7 @@ function neBuildBreakPanel(panel, ctx) {
   ubCheck.type = 'checkbox'; ubCheck.checked = !!block.breakUnlocked;
   ubCheck.dataset.tooltip = 'Edit whole block\nAllows direct editing of the copied bars — they then stop following the parent block. Turning this off discards hand-edits and re-syncs them with the parent.';
   ubLabel.dataset.tooltip = ubCheck.dataset.tooltip;
-  ubCheck.addEventListener('change', async () => {
+  ubCheck.addEventListener('change', () => neUndoable('Edit whole block', async () => {
     block.breakUnlocked = ubCheck.checked;
     if (!block.breakUnlocked) {
       const res = await requestRegenerateBreakBlock(block, g, { forceAll: true });
@@ -616,7 +628,7 @@ function neBuildBreakPanel(panel, ctx) {
       rebuildFullFromEditedBlocks();
       renderNoteEditor();
     }
-  });
+  }));
   const ubText = document.createElement('span');
   ubText.className = 'ne-ctl-label';
   ubText.style.textTransform = 'none';
@@ -635,12 +647,14 @@ function neBuildBreakPanel(panel, ctx) {
         icon.className = 'group-lock-icon';
         icon.textContent = '🔒';
         icon.dataset.tooltip = 'Locked\nThis group was manually edited in the note editor. Click to discard those edits and let the knobs control it again.';
-        icon.addEventListener('click', async (e) => {
+        icon.addEventListener('click', (e) => {
           e.stopPropagation();
-          block.lockedGroups[gid] = false;
-          await regenerateFn();
-          updateGroupLockUI();
-          renderNoteEditor();
+          neUndoable('Discard edits', async () => {
+            block.lockedGroups[gid] = false;
+            await regenerateFn();
+            updateGroupLockUI();
+            renderNoteEditor();
+          });
         });
         iconHost.appendChild(icon);
       });
@@ -667,14 +681,16 @@ function neBuildBreakPanel(panel, ctx) {
     const maxBeats = Math.max(0.5, blockLen*g.numerator - 0.5);
     v = Math.max(0.5, Math.min(maxBeats, Math.round(v*4)/4));
     if (v === (block.breakBeats ?? BREAK_DEFAULT_BEATS)) { bbInput.value = String(v); return; }
-    block.breakBeats = v;
-    if (neLoopFollowsBreak) {
-      const newGrooveBeats = Math.max(0, blockBeats - v);
-      neLoopStart = newGrooveBeats;
-      neLoopEnd = blockBeats;
-      nePlayheadBeat = neLoopStart;
-    }
-    regenerateLength();
+    neUndoable('Break length', () => {
+      block.breakBeats = v;
+      if (neLoopFollowsBreak) {
+        const newGrooveBeats = Math.max(0, blockBeats - v);
+        neLoopStart = newGrooveBeats;
+        neLoopEnd = blockBeats;
+        nePlayheadBeat = neLoopStart;
+      }
+      return regenerateLength();
+    });
   };
   bbInput.addEventListener('change', commitBB);
   bbInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commitBB(); } });
@@ -688,22 +704,21 @@ function neBuildBreakPanel(panel, ctx) {
     def: Math.max(0, SUBDIVISION_KNOB_VALUES.indexOf(NE_DEFAULTS.subdivision)), // Default: subdivision
     format: v => SUBDIVISION_KNOB_LABELS[v],
     title: 'Subdivision\nResolution of the ' + neFillKind(block).toLowerCase() + ' in steps per beat.',
-    onChange: v => { neEnsureSeed(block, 'breakSeed'); block.breakSubdivision = SUBDIVISION_KNOB_VALUES[v]; regenerateMain(); },
+    onChange: v => neUndoable(neFillKind(block) + ' subdivision', () => { neEnsureSeed(block, 'breakSeed'); block.breakSubdivision = SUBDIVISION_KNOB_VALUES[v]; return regenerateMain(); }),
   });
   const bdDial = neCreateDial({
     label: 'Amnt', min: 0, max: 100, step: 5, value: block.breakDensity ?? NE_DEFAULTS.breakDensity,
     def: NE_DEFAULTS.breakDensity,
     format: v => v + '%',
     title: 'Amount\nHow many hits land within the ' + neFillKind(block).toLowerCase() + ' window — independent of its length.',
-    onChange: v => { neEnsureSeed(block, 'breakSeed'); block.breakDensity = v; regenerateMain(); },
+    onChange: v => neUndoable(neFillKind(block) + ' amount', () => { neEnsureSeed(block, 'breakSeed'); block.breakDensity = v; return regenerateMain(); }),
   });
   const breakFillDialRow = neToolbarCluster(neFillKind(block), [bsDial, bdDial]);
   lockBreakControlRow(breakFillDialRow, [bsDial, bdDial], mainGroups(), regenerateMain);
   breakFillDialRow.classList.add('ne-ctl-nosep');
   neAddRerollIcon(breakFillDialRow, [bsDial, bdDial], 'Reroll\nGenerates a new ' + neFillKind(block).toLowerCase() + ' with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
     if (mainIsLocked()) { neMsg('Manually edited — click the 🔒 above to discard first.'); return; }
-    block.breakSeed = Math.floor(Math.random()*1e9);
-    regenerateMain();
+    neUndoable('Reroll ' + neFillKind(block).toLowerCase(), () => { block.breakSeed = Math.floor(Math.random()*1e9); return regenerateMain(); });
   });
 
   // Instrument picker
@@ -728,21 +743,20 @@ function neBuildBreakPanel(panel, ctx) {
     def: Math.max(0, BREAK_KICK_SUBDIVISION_VALUES.indexOf(NE_DEFAULTS.kickSubdivision)), // Default: kick subdivision
     format: v => BREAK_KICK_SUBDIVISION_LABELS[v],
     title: 'Subdivision\nResolution of the ' + neFillKind(block) + ' Kick pulse in steps per beat.',
-    onChange: v => { block.breakKickSubdivision = BREAK_KICK_SUBDIVISION_VALUES[v]; regenerateKickOnly(); },
+    onChange: v => neUndoable(neFillKind(block) + ' kick subdivision', () => { block.breakKickSubdivision = BREAK_KICK_SUBDIVISION_VALUES[v]; return regenerateKickOnly(); }),
   });
   const bkdDial = neCreateDial({
     label: 'Amnt', min: 0, max: 100, step: 5, value: block.breakKickDensity ?? NE_DEFAULTS.breakKickDensity,
     def: NE_DEFAULTS.breakKickDensity,
     format: v => v + '%',
     title: 'Amount\nHow full the ' + neFillKind(block) + ' Kick pulse is — 100% = a hit on every step.',
-    onChange: v => { block.breakKickDensity = v; regenerateKickOnly(); },
+    onChange: v => neUndoable(neFillKind(block) + ' kick amount', () => { block.breakKickDensity = v; return regenerateKickOnly(); }),
   });
   const breakKickDialRow = neToolbarCluster(neFillKind(block) + ' Kick', [bksDial, bkdDial]);
   lockBreakControlRow(breakKickDialRow, [bksDial, bkdDial], ['kick'], regenerateKickOnly);
   neAddRerollIcon(breakKickDialRow, [bksDial, bkdDial], 'Reroll\nGenerates a new ' + neFillKind(block) + ' Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
     if (kickIsLocked()) { neMsg('Manually edited — click the 🔒 above to discard first.'); return; }
-    block.breakKickSeed = Math.floor(Math.random()*1e9);
-    regenerateKickOnly();
+    neUndoable('Reroll ' + neFillKind(block).toLowerCase() + ' kick', () => { block.breakKickSeed = Math.floor(Math.random()*1e9); return regenerateKickOnly(); });
   });
 }
 
@@ -778,8 +792,7 @@ function neBuildFillPanel(panel, ctx) {
     const maxBeats = Math.max(0.5, blockLen*g.numerator);
     v = Math.max(0.5, Math.min(maxBeats, Math.round(v*4)/4));
     if (v === (block.fillBeats ?? BREAK_DEFAULT_BEATS)) { fbInput.value = String(v); return; }
-    block.fillBeats = v;
-    regenerate();
+    neUndoable(neFillKind(block) + ' length', () => { block.fillBeats = v; return regenerate(); });
   };
   fbInput.addEventListener('change', commitFB);
   fbInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commitFB(); } });
@@ -793,20 +806,19 @@ function neBuildFillPanel(panel, ctx) {
     def: Math.max(0, SUBDIVISION_KNOB_VALUES.indexOf(NE_DEFAULTS.subdivision)), // Default: subdivision
     format: v => SUBDIVISION_KNOB_LABELS[v],
     title: 'Subdivision\nResolution of the ' + neFillKind(block).toLowerCase() + ' in steps per beat.',
-    onChange: v => { neEnsureSeed(block, 'fillSeed'); block.fillSubdivision = SUBDIVISION_KNOB_VALUES[v]; regenerate(); },
+    onChange: v => neUndoable(neFillKind(block) + ' subdivision', () => { neEnsureSeed(block, 'fillSeed'); block.fillSubdivision = SUBDIVISION_KNOB_VALUES[v]; return regenerate(); }),
   });
   const fdDial = neCreateDial({
     label: 'Amnt', min: 0, max: 100, step: 5, value: block.fillDensity ?? NE_DEFAULTS.fillDensity,
     def: NE_DEFAULTS.fillDensity,
     format: v => v + '%',
     title: 'Amount\nHow many hits land within the ' + neFillKind(block).toLowerCase() + ' window — independent of its length.',
-    onChange: v => { neEnsureSeed(block, 'fillSeed'); block.fillDensity = v; regenerate(); },
+    onChange: v => neUndoable(neFillKind(block) + ' amount', () => { neEnsureSeed(block, 'fillSeed'); block.fillDensity = v; return regenerate(); }),
   });
   const fillMainDialRow = neToolbarCluster(neFillKind(block), [fsDial, fdDial]);
   fillMainDialRow.classList.add('ne-ctl-nosep');
   neAddRerollIcon(fillMainDialRow, [fsDial, fdDial], 'Reroll\nGenerates a new ' + neFillKind(block).toLowerCase() + ' with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
-    block.fillSeed = Math.floor(Math.random()*1e9);
-    regenerate();
+    neUndoable('Reroll ' + neFillKind(block).toLowerCase(), () => { block.fillSeed = Math.floor(Math.random()*1e9); return regenerate(); });
   });
 
   // Instrument picker
@@ -830,18 +842,17 @@ function neBuildFillPanel(panel, ctx) {
     def: Math.max(0, BREAK_KICK_SUBDIVISION_VALUES.indexOf(NE_DEFAULTS.kickSubdivision)), // Default: kick subdivision
     format: v => BREAK_KICK_SUBDIVISION_LABELS[v],
     title: 'Subdivision\nResolution of the ' + neFillKind(block) + ' Kick pulse in steps per beat.',
-    onChange: v => { block.fillKickSubdivision = BREAK_KICK_SUBDIVISION_VALUES[v]; regenerate(); },
+    onChange: v => neUndoable(neFillKind(block) + ' kick subdivision', () => { block.fillKickSubdivision = BREAK_KICK_SUBDIVISION_VALUES[v]; return regenerate(); }),
   });
   const fkdDial = neCreateDial({
     label: 'Amnt', min: 0, max: 100, step: 5, value: block.fillKickDensity ?? NE_DEFAULTS.fillKickDensity,
     def: NE_DEFAULTS.fillKickDensity,
     format: v => v + '%',
     title: 'Amount\nHow full the ' + neFillKind(block) + ' Kick pulse is — 100% = a hit on every step.',
-    onChange: v => { block.fillKickDensity = v; regenerate(); },
+    onChange: v => neUndoable(neFillKind(block) + ' kick amount', () => { block.fillKickDensity = v; return regenerate(); }),
   });
   const fillKickDialRow = neToolbarCluster(neFillKind(block) + ' Kick', [fksDial, fkdDial]);
   neAddRerollIcon(fillKickDialRow, [fksDial, fkdDial], 'Reroll\nGenerates a new ' + neFillKind(block) + ' Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
-    block.fillKickSeed = Math.floor(Math.random()*1e9);
-    regenerate();
+    neUndoable('Reroll ' + neFillKind(block).toLowerCase() + ' kick', () => { block.fillKickSeed = Math.floor(Math.random()*1e9); return regenerate(); });
   });
 }
