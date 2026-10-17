@@ -414,20 +414,28 @@ function neBuildTurnaroundPanel(panel, ctx) {
   const taGroup = document.createElement('div');
   taGroup.className = 'ne-ctl-group ne-ctl-inline';
   taGroup.innerHTML = '<span class="ne-ctl-label">Fill Every</span>';
-  const taSelect = document.createElement('select');
-  taSelect.className = 'ne-len-input';
-  taSelect.innerHTML = '<option value="0">Off</option><option value="2">2</option><option value="4">4</option><option value="8">8</option>';
-  taSelect.value = String(block.turnaroundInterval || 0);
-  taSelect.dataset.tooltip = 'Fill Every\nHow often a turnaround (fill) occurs — every Nth bar (the last bar of each phrase). Off disables it.';
-  wireCustomSelect(taSelect);
-  taSelect.addEventListener('change', () => {
+  const taInput = document.createElement('input');
+  taInput.type = 'number'; taInput.className = 'ne-len-input';
+  taInput.min = '0'; taInput.max = String(BLOCK_MAX_LENGTH); taInput.step = '1';
+  taInput.value = String(block.turnaroundInterval || 0);
+  taInput.dataset.tooltip = `Fill Every\nHow often a turnaround (fill) occurs: every Nth bar, any whole number up to ${BLOCK_MAX_LENGTH} (the last bar of each phrase). 0 turns it off.`;
+  const commitTa = () => {
+    const current = block.turnaroundInterval || 0;
+    let v = parseInt(taInput.value, 10);
+    if (isNaN(v)) { taInput.value = String(current); return; }
+    v = Math.max(0, Math.min(BLOCK_MAX_LENGTH, v));
+    taInput.value = String(v);
+    if (v === current) return;
     neUndoable('Fill every', () => {
-      block.turnaroundInterval = +taSelect.value;
+      block.turnaroundInterval = v;
       block.generated = false;
       applyAllUnlockedGroups(block, g);
     });
-  });
-  taGroup.appendChild(taSelect);
+  };
+  // Leaving the field after a commit lets Ctrl+Z reach the app instead of the text box.
+  taInput.addEventListener('change', () => { commitTa(); taInput.blur(); });
+  taInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); taInput.blur(); } });
+  taGroup.appendChild(taInput);
   panel.appendChild(taGroup);
   taGroup.classList.add('ne-ctl-nosep');
 
