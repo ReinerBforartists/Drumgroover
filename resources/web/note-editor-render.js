@@ -320,6 +320,7 @@ function renderNoteEditor() {
   const { rowsWrap, rowsCol } = neBuildRows(ctx);
   container.appendChild(rowsWrap);
   attachRectSelect(rowsCol);
+  attachRightDragErase(rowsCol, block);
   neAttachGridZoomAndPan(rowsCol);
 
   const { velWrap, velLane } = neBuildVelocityLane(ctx);

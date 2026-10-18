@@ -111,7 +111,7 @@ function attachTripletRangeResize(handle, side, row, block, engineGroup, range, 
   handle.addEventListener('pointercancel', finish);
 }
 
-// Ctrl+drag = paint/erase along snap points; right-drag = erase only.
+// Ctrl+drag = paint/erase along snap points in this row (right-drag erase is attachRightDragErase).
 function attachRowPaintDrag(row, block, t, ctx, refs) {
   const { g, blockBeats, totalBeats, pxPerBeat, breakLocked, grooveBeats } = ctx;
   const { rowsCol } = refs;
@@ -166,12 +166,6 @@ function attachRowPaintDrag(row, block, t, ctx, refs) {
       if (e.target !== row) return;
       e.stopPropagation();
       paint = { sx: e.clientX, sy: e.clientY, moved: false, mode: null, touched: new Set(), entries: [] };
-    } else if (e.button === 2) {
-      e.preventDefault();
-      e.stopPropagation();
-      paint = { sx: e.clientX, sy: e.clientY, moved: false, mode: 'delete', touched: new Set(), entries: [], button: 2 };
-    } else {
-      return;
     }
   });
 
@@ -233,6 +227,86 @@ function attachRowPaintDrag(row, block, t, ctx, refs) {
   };
   row.addEventListener('pointerup', finish);
   row.addEventListener('pointercancel', finish);
+}
+
+// Right-drag erases every note the pointer sweeps over, in whatever rows it crosses (one undo step).
+function attachRightDragErase(rowsCol, block) {
+  let drag = null;
+
+  rowsCol.addEventListener('pointerdown', (e) => {
+    if (e.button !== 2) return;
+    if (!e.target.closest('.ne-row')) return;
+    // Notes as they are drawn right now (windowed, locked ones excluded): the sweep hits what is on screen.
+    const targets = [];
+    rowsCol.querySelectorAll('.ne-note[data-sel-key]').forEach(el => {
+      if (el.classList.contains('ne-note-locked') || el.classList.contains('ne-note-painting')) return;
+      const sep = el.dataset.selKey.lastIndexOf('|');
+      const r = el.getBoundingClientRect();
+      targets.push({ el, trackId: el.dataset.selKey.slice(0, sep), beat: parseFloat(el.dataset.selKey.slice(sep + 1)), r, gone: false });
+    });
+    drag = { sx: e.clientX, sy: e.clientY, lx: e.clientX, ly: e.clientY, moved: false, targets, erased: [] };
+  });
+
+  rowsCol.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (!drag.moved) {
+      if (Math.abs(e.clientX - drag.sx) < 4 && Math.abs(e.clientY - drag.sy) < 4) return;
+      drag.moved = true;
+      rowsCol.setPointerCapture(e.pointerId);
+    }
+    const dx = e.clientX - drag.lx, dy = e.clientY - drag.ly;
+    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 3));
+    for (let i = 1; i <= steps; i++) {
+      const px = drag.lx + dx * i / steps, py = drag.ly + dy * i / steps;
+      drag.targets.forEach(t => {
+        if (t.gone) return;
+        if (px < t.r.left - 2 || px > t.r.right + 2 || py < t.r.top - 2 || py > t.r.bottom + 2) return;
+        const arr = block.data[t.trackId];
+        const idx = arr ? arr.findIndex(n => Math.abs(n.beat - t.beat) < 1e-6) : -1;
+        if (idx < 0) return;
+        drag.erased.push({ trackId: t.trackId, note: arr.splice(idx, 1)[0] });
+        t.gone = true;
+        t.el.remove();
+      });
+    }
+    drag.lx = e.clientX; drag.ly = e.clientY;
+  });
+
+  const finish = (e) => {
+    if (!drag) return;
+    const d = drag; drag = null;
+    if (!d.moved) return;
+    suppressNextContextMenu = true;
+    suppressNextRowClick = true;
+    setTimeout(() => { suppressNextRowClick = false; }, 0);
+    if (!d.erased.length) return;
+    const beforeLocked = snapshotLocked(block);
+    const byTrack = new Map();
+    d.erased.forEach(en => (byTrack.get(en.trackId) || byTrack.set(en.trackId, []).get(en.trackId)).push(en.note));
+    byTrack.forEach((notes, tid) => markTrackManuallyEdited(block, tid, notes));
+    const afterLocked = snapshotLocked(block);
+    d.erased.forEach(en => selectedNotes.delete(en.trackId + '|' + en.note.beat));
+    block.generated = false;
+    rebuildFullFromEditedBlocks();
+    renderNoteEditor();
+    const entries = d.erased;
+    const apply = (adding) => {
+      entries.forEach(en => {
+        const arr = block.data[en.trackId] || (block.data[en.trackId] = []);
+        const i = arr.indexOf(en.note);
+        if (adding && i < 0) arr.push(en.note);
+        else if (!adding && i >= 0) arr.splice(i, 1);
+      });
+      Object.keys(block.data).forEach(tid => block.data[tid].sort((a, b) => a.beat - b.beat));
+      restoreLocked(block, adding ? beforeLocked : afterLocked);
+      block.generated = false;
+      rebuildFullFromEditedBlocks();
+      renderNoteEditor();
+    };
+    pushUndo(entries.length > 1 ? 'Erase ' + entries.length + ' notes' : 'Erase note', () => apply(true), () => apply(false));
+  };
+  rowsCol.addEventListener('pointerup', finish);
+  rowsCol.addEventListener('pointercancel', finish);
 }
 
 function attachRectSelect(rowsCol) {
