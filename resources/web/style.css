@@ -879,16 +879,19 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 }
 /* Live value badge while dragging (dggShowValueTip in ui-controller.js). */
 .dgg-value-tip { font-size:13px; font-weight:600; color:var(--amber); padding:4px 9px; border-color:var(--amber); }
-.app-modal-box { background:var(--panel); border:1px solid var(--border2); border-radius:8px; padding:20px; min-width:320px; max-width:90vw; box-shadow:0 12px 40px rgba(0,0,0,.5); }
-.app-modal-title { font-size:14px; font-weight:600; color:var(--text-bright); margin-bottom:10px; }
-.app-modal-message { font-size:12px; color:var(--muted); margin-bottom:14px; line-height:1.5; }
+.app-modal-box { background:var(--panel); border:1px solid var(--border2); border-radius:8px; padding:22px 24px; width:min(460px, 90vw); box-sizing:border-box; box-shadow:0 12px 40px rgba(0,0,0,.5); }
+.app-modal-title { font-size:17px; font-weight:600; color:var(--text-bright); margin-bottom:10px; }
+.app-modal-message { font-size:14px; color:var(--text); margin-bottom:16px; line-height:1.55; }
 .app-modal-label { display:block; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin:10px 0 4px; }
-.app-modal-checkbox-label { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text); text-transform:none; letter-spacing:normal; cursor:pointer; margin:12px 0 2px; }
+.app-modal-checkbox-label { display:flex; align-items:center; gap:7px; font-size:13px; color:var(--text); text-transform:none; letter-spacing:normal; cursor:pointer; margin:12px 0 2px; }
 .app-modal-input { width:100%; background:var(--bg); border:1px solid var(--border2); border-radius:4px; color:var(--text-bright); font-size:13px; padding:8px 10px; box-sizing:border-box; }
 .app-modal-input:focus { outline:none; border-color:var(--amber); }
 .app-modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
 .btn-danger { background:var(--red); border-color:var(--red); color:#fff; }
 .btn-danger:hover { opacity:.85; }
+/* Dialog buttons: large enough to read, and a dark red that white text stays legible on */
+.app-modal-actions .btn { font-size:13px; padding:9px 20px; }
+.app-modal-actions .btn-danger { background:#b91c1c; border-color:#ef4444; color:#fff; font-weight:600; }
 
 .howto-body { margin-top:8px; font-size:12px; color:var(--muted); line-height:1.6; }
 .howto-body b { color:var(--text-bright); }

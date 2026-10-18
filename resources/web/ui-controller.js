@@ -191,7 +191,7 @@ async function clearAllBlocks() {
       message: `This deletes all ${blocksList.length} block${blocksList.length>1?'s':''} and removes them from the timeline. Undo (Ctrl+Z) brings it all back if needed.`,
       confirmLabel: 'Clear all',
       danger: true,
-      checkbox: { label: "Don't ask again (can be re-enabled in Note Editor settings)" }
+      checkbox: { label: "Don't ask again (re-enable in Note Editor Options → Show confirmation dialogs)" }
     });
     if (!res.confirmed) return;
     if (res.dontShowAgain) setShowConfirmDialogs(false);

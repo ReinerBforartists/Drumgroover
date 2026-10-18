@@ -507,11 +507,11 @@ async function unlockGroup(groupId) {
   if (!block) return;
   if (shouldShowConfirmDialogs()) {
     const res = await showModal({
-      title: 'Hand back to knobs?',
-      message: `This discards your manual edits to ${groupId} in this block and regenerates it from the current knob settings.`,
+      title: 'Discard manual edits?',
+      message: `Your edits to ${groupId} in this block are discarded and it is generated again from the current knob settings.`,
       confirmLabel: 'Discard & regenerate',
       danger: true,
-      checkbox: { label: "Don't ask again (can be re-enabled in Note Editor settings)" }
+      checkbox: { label: "Don't ask again (re-enable in Note Editor Options → Show confirmation dialogs)" }
     });
     if (!res.confirmed) return;
     if (res.dontShowAgain) setShowConfirmDialogs(false);
@@ -542,11 +542,11 @@ async function unlockTurnaround(groupId) {
   if (!block) return;
   if (shouldShowConfirmDialogs()) {
     const res = await showModal({
-      title: 'Hand the fill back to the dials?',
-      message: `This discards your manual edits to the ${groupId} turnaround in this block and generates it again from the Fill settings. Notes outside the turnaround stay as they are.`,
+      title: 'Discard manual edits?',
+      message: `Your edits to the ${groupId} turnaround in this block are discarded and it is generated again from the Fill settings. Notes outside the turnaround stay as they are.`,
       confirmLabel: 'Discard & regenerate',
       danger: true,
-      checkbox: { label: "Don't ask again (can be re-enabled in Note Editor settings)" }
+      checkbox: { label: "Don't ask again (re-enable in Note Editor Options → Show confirmation dialogs)" }
     });
     if (!res.confirmed) return;
     if (res.dontShowAgain) setShowConfirmDialogs(false);
@@ -635,7 +635,7 @@ async function unlockAllGroups() {
       message: `This discards your manual edits in "${blockDisplayName(block)}" and regenerates it from its current knob/panel settings.`,
       confirmLabel: 'Discard all & regenerate',
       danger: true,
-      checkbox: { label: "Don't ask again (can be re-enabled in Note Editor settings)" }
+      checkbox: { label: "Don't ask again (re-enable in Note Editor Options → Show confirmation dialogs)" }
     });
     if (!res.confirmed) return;
     if (res.dontShowAgain) setShowConfirmDialogs(false);
@@ -659,7 +659,7 @@ async function unlockAllGroupsGlobal() {
       message: `This discards manual edits across ${targets.length} block${targets.length>1?'s':''} project-wide (${targets.map(blockDisplayName).join(', ')}) and regenerates each one from its own knob/panel settings.`,
       confirmLabel: 'Discard all & regenerate',
       danger: true,
-      checkbox: { label: "Don't ask again (can be re-enabled in Note Editor settings)" }
+      checkbox: { label: "Don't ask again (re-enable in Note Editor Options → Show confirmation dialogs)" }
     });
     if (!res.confirmed) return;
     if (res.dontShowAgain) setShowConfirmDialogs(false);
@@ -1693,7 +1693,7 @@ async function rerollAllBlocksGlobal() {
       message: `This rerolls all unlocked instrument groups across ${targets.length} block${targets.length>1?'s':''} project-wide (${targets.map(blockDisplayName).join(', ')}). Locked groups, and any Break/Fill blocks, are left untouched.`,
       confirmLabel: 'Reroll all',
       danger: true,
-      checkbox: { label: "Don't ask again (can be re-enabled in Note Editor settings)" }
+      checkbox: { label: "Don't ask again (re-enable in Note Editor Options → Show confirmation dialogs)" }
     });
     if (!res.confirmed) return;
     if (res.dontShowAgain) setShowConfirmDialogs(false);
@@ -2021,7 +2021,7 @@ async function clearSongSequence() {
       message: `This removes all ${songEngine.songSequence.length} clips from the timeline. Blocks themselves are untouched — rebuild with Generate Song or by dragging blocks back in.`,
       confirmLabel: 'Clear all',
       danger: true,
-      checkbox: { label: "Don't ask again (can be re-enabled in Note Editor settings)" }
+      checkbox: { label: "Don't ask again (re-enable in Note Editor Options → Show confirmation dialogs)" }
     });
     if (!res.confirmed) return;
     if (res.dontShowAgain) setShowConfirmDialogs(false);
