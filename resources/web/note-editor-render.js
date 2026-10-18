@@ -1285,6 +1285,7 @@ function neBuildVelGrayCanvas(items, pxPerBeat, velLane) {
     }
     return keys;
   };
+  canvas.itemAtClient = hitAt;   // the lane's click selection asks for the bar under the pointer
   let pressed = null;
   canvas.addEventListener('pointerdown', (e) => {
     pressed = e.button === 0 ? hitAt(e) : null;

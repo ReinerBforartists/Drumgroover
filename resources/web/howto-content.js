@@ -164,11 +164,13 @@ const DGG_HOTKEYS = {
   <b>Shift+drag</b> — toggle the notes it touches.<br>
   <b>Ctrl+drag</b> — paint / erase notes along a row.<br>
   <b>Right-drag</b> — erase every note it sweeps over, in all rows.<br>
+  <b>Click</b> a note — select it; <b>Shift+click</b> toggles it within the selection.<br>
   <b>Right-click</b> a note — delete it.<br>
   <b>Click</b> on the ruler — set the playhead (also while playing).<br>
   <b>Drag</b> on the loop ruler — set the loop range; drag its edges to adjust it; <b>right-click</b> clears it.<br>
   <b>Shift+drag</b> a Density knob — scale all six Density knobs together.<br>`,
   velocity: `
+  <b>Click</b> a bar or head — select that note; <b>Shift+click</b> toggles it within the selection.<br>
   <b>Drag</b> — rectangle select by loudness (only the velocity heads it touches).<br>
   <b>Shift+drag</b> — toggle the notes it touches.<br>
   <b>Right-drag</b> — deselect the notes it touches.<br>

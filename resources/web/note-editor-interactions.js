@@ -441,15 +441,19 @@ function attachNoteDrag(dia, block, trackId, idx, numerator, g, pxPerBeat) {
       f.el.style.top = ((rowInfo.localTop+rowInfo.localBottom)/2) + 'px';
     });
   });
-  const finish = () => {
+  const finish = (e) => {
     if (!dragging) return;
     dragging=false; dia.style.cursor='grab';
     if (!moved) {
       followEls.forEach(f => { f.el.style.position=''; f.el.style.left=''; f.el.style.top=''; f.el.style.zIndex=''; f.el.style.pointerEvents=''; });
       const key = trackId+'|'+block.data[trackId][idx].beat;
-      selectedNotes.clear();
-      selectedNotes.add(key);
-      nePreviewTrack(trackId, block.data[trackId][idx].vel);
+      if (e && e.shiftKey) {   // Shift+click toggles the note within the selection
+        if (selectedNotes.has(key)) selectedNotes.delete(key); else selectedNotes.add(key);
+      } else {
+        selectedNotes.clear();
+        selectedNotes.add(key);
+      }
+      if (selectedNotes.has(key)) nePreviewTrack(trackId, block.data[trackId][idx].vel);
       renderNoteEditor();
       return;
     }
@@ -484,6 +488,14 @@ function attachNoteDrag(dia, block, trackId, idx, numerator, g, pxPerBeat) {
   dia.addEventListener('pointercancel', finish);
 }
 
+// Click on a note's velocity bar or head: it becomes the selection; with Shift it is toggled within the selection instead.
+function neClickSelectNote(key, additive) {
+  if (additive) { if (selectedNotes.has(key)) selectedNotes.delete(key); else selectedNotes.add(key); }
+  else { selectedNotes.clear(); selectedNotes.add(key); }
+  velNudgeSelKey = null;
+  renderNoteEditor();
+}
+
 function attachVelDrag(myRef, allRefs, block) {
   let dragging=false, startY=0, origVels=[];
   myRef.handle.addEventListener('pointerdown', (e) => {
@@ -508,12 +520,16 @@ function attachVelDrag(myRef, allRefs, block) {
     });
     window.dggShowValueTip && window.dggShowValueTip('Vel ' + lastV, e.clientX, e.clientY);
   });
-  const finish = () => {
+  const finish = (e) => {
     if (!dragging) return;
     dragging=false; myRef.handle.style.cursor='ns-resize';
     window.dggHideValueTip && window.dggHideValueTip();
     neFlushVelocities();   // the host holds the last values of the gesture even when nothing is applied below
     const actuallyChanged = allRefs.some((r, i) => r.note.vel !== origVels[i]);
+    if (!actuallyChanged) {   // a click on the head: select it (Shift toggles), nothing was edited so nothing locks
+      neClickSelectNote(myRef.trackId + '|' + myRef.note.beat, !!(e && e.shiftKey));
+      return;
+    }
     const beforeLocked = snapshotLocked(block);
     const touched = new Set(allRefs.map(r => r.trackId));
     touched.forEach(tid => markTrackManuallyEdited(block, tid, allRefs.filter(r => r.trackId === tid).map(r => r.note)));
@@ -558,12 +574,16 @@ function attachVelLanePaint(velInner, velRefs, block) {
 
   // Rectangle select: picks the notes whose velocity head (handle) the rectangle touches, so a height range selects by loudness.
   let rectDrag = null;
-  const finishRect = () => {
+  const finishRect = (e) => {
     if (!rectDrag) return;
     const d = rectDrag; rectDrag = null;
     if (!d.moved) {
       // Right-click without dragging clears the whole selection.
-      if (d.deselect && selectedNotes.size) { selectedNotes.clear(); velNudgeSelKey = null; renderNoteEditor(); }
+      if (d.deselect) { if (selectedNotes.size) { selectedNotes.clear(); velNudgeSelKey = null; renderNoteEditor(); } return; }
+      // Left click on a bar: select that note (Shift toggles it within the selection).
+      const gray = velInner.querySelector('.ne-vel-gray-canvas');
+      const hit = gray && gray.itemAtClient && e ? gray.itemAtClient(e) : null;
+      if (hit) neClickSelectNote(hit.trackId + '|' + hit.beat, !!d.toggle);
       return;
     }
     const rr = d.el.getBoundingClientRect();
