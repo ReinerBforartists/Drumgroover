@@ -108,22 +108,23 @@ body { overflow:hidden; }
   width:234px;
   box-sizing:border-box;
   flex-shrink:0;
-  display:grid;
-  grid-template-columns:auto auto;
-  align-items:start;
-  justify-content:start;
-  gap:6px;
+  display:flex;
+  flex-direction:column;
+  gap:9px;
   background:var(--panel);
   border:1px solid var(--border);
-  border-bottom:none;
-  border-radius:var(--r) var(--r) 0 0;
-  padding:10px 10px 8px 24px;
+  border-radius:var(--r);
+  margin-bottom:8px;
+  padding:10px 10px 10px 18px;
   transition:width .15s ease, padding .15s ease, border-color .15s ease;
 }
-.ne-sidebar-top + .ne-sidebar { border-radius:0 0 var(--r) var(--r); }
-.ne-sidebar-top .ctrl { width:100%; min-width:0; align-items:stretch; padding:0 1px; }
+/* One row per setting, label in front of the control, like the other sidebar cards. */
+.ne-sidebar-top .ctrl { width:auto; min-width:0; flex-direction:row; align-items:center; justify-content:space-between; gap:8px; padding:0; }
 .ne-sidebar-top .ctrl.select-only { padding-top:0; } /* beat the toolbar-era alignment padding */
-.ne-sidebar-top .ctrl select { width:100%; }
+.ne-sidebar-top .ctrl-label { width:auto; font-family:'Inter','SF Pro Text',-apple-system,system-ui,sans-serif; font-size:9px; font-weight:400; letter-spacing:.1em; line-height:inherit; flex:0 1 auto; } /* same face as the row labels of the other cards */
+.ne-sidebar-top .ctrl select { width:84px; flex:none; }
+.ne-sidebar-top .ctrl .timesig-row { width:84px; flex:none; }
+.ne-sidebar-top .ctrl .timesig-row select { width:auto; }
 .ne-layout.ne-sidebar-collapsed .ne-sidebar-top { width:0; max-height:0; overflow:hidden; padding-left:0; padding-right:0; border-color:transparent; }
 /* Compact instrument selector in the Custom cluster title (about two knob widths, so the dice and lock icons still fit). */
 #customTrackSelect { font-size:10px; background:var(--bg); border:1px solid var(--border2); color:var(--text); padding:1px 3px; border-radius:2px; max-width:80px; text-overflow:ellipsis; cursor:pointer; }
@@ -199,7 +200,7 @@ body.a11y-hover-zoom .fx-pop .lim-knobs-inner:hover .ctrl {
 .knob-cluster input:disabled { opacity:.35; cursor:not-allowed; }
 /* Fill and Fill Kick: a different kind of group than the instrument groups, so their titles carry another colour. */
 .ne-fill-cluster .cluster-title, .ne-sidebar-heading { color:var(--cyan); }
-.ne-sidebar-heading { font-size:9px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; }
+.ne-sidebar-heading { font-size:10px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; }
 .ne-fill-cluster.ne-ctl-locked .cluster-knobs { opacity:.45; cursor:not-allowed; }
 .ctrl.knob-disabled .knob-visual { opacity:.35; cursor:not-allowed; }
 /* Locked groups dim only the interactive elements — never the label or the lock
@@ -624,11 +625,8 @@ body.knob-dragging { user-select:none; cursor:ns-resize; }
   width:234px;
   display:flex;
   flex-direction:column;
-  gap:2px;
-  background:var(--panel);
-  border:1px solid var(--border);
-  border-radius:var(--r);
-  padding:10px 10px 10px 24px;
+  gap:8px;
+  padding:0;
   overflow-y:auto;
   overflow-x:hidden;
   transition:width .15s ease, padding .15s ease, border-color .15s ease;
@@ -637,7 +635,7 @@ body.knob-dragging { user-select:none; cursor:ns-resize; }
 .ne-layout.ne-sidebar-collapsed .ne-sidebar { width:0; max-height:0; overflow:hidden; padding-left:0; padding-right:0; border-color:transparent; }
 .ne-sidebar:empty { display:none; }
 
-.ne-sidebar .ne-controls { flex-direction:column; align-items:stretch; flex-wrap:nowrap; gap:12px; border-bottom:none; padding:0; margin-bottom:0; }
+.ne-sidebar .ne-controls { flex-direction:column; align-items:stretch; flex-wrap:nowrap; gap:8px; border-bottom:none; padding:0; margin-bottom:0; }
 .ne-sidebar .ne-ctl-group { flex-direction:column; align-items:stretch; gap:5px; }
 .ne-sidebar .ne-ctl-label { font-size:9px; }
 .ne-sidebar .ne-len-input, .ne-sidebar .ne-select { width:100%; }
@@ -646,6 +644,15 @@ body.knob-dragging { user-select:none; cursor:ns-resize; }
 /* Opt-out for adjacent groups that belong together (e.g. Length (Bars) + Feel,
    or a Fill dial row above its instrument picker): same gap, no dividing line. */
 .ne-sidebar .ne-ctl-group.ne-ctl-nosep:not(:last-child) { padding-bottom:0; border-bottom:none; }
+/* Framed sections of the sidebar, like the cards of the Drum Engine */
+.ne-section { display:flex; flex-direction:column; gap:9px; background:var(--panel); border:1px solid var(--border); border-radius:var(--r); padding:9px 10px 10px 18px; }
+.ne-section > .ne-sidebar-heading { margin-bottom:1px; }
+/* The content of a card sits a little further in than its heading */
+.ne-section > :not(.ne-sidebar-heading), .ne-sidebar-top > :not(.ne-sidebar-heading) { margin-left:10px; }
+.ne-sidebar .ne-section .ne-ctl-group:not(:last-child) { padding-bottom:0; border-bottom:none; }
+/* One type size for the controls in the cards: field values and checkbox texts 11 px in the app's field font, row labels small caps 9 px */
+.ne-section .ne-len-input { font-family:'SF Mono','Fira Code',Consolas,Menlo,'DejaVu Sans Mono',monospace; font-size:11px; }
+.ne-section label > .ne-ctl-label { font-size:11px; letter-spacing:normal; text-transform:none; color:var(--text); }
 /* Inline variant (e.g. Length (Bars)/Break Length): label + input on one line
    instead of the stacked sidebar layout. */
 .ne-sidebar .ne-ctl-group.ne-ctl-inline { flex-direction:row; align-items:center; justify-content:space-between; gap:8px; }

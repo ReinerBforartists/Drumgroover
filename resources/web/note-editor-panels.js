@@ -89,7 +89,7 @@ function attachCheckboxGroupPaintDrag(cb, applyMutation, commit) {
 function neInstrumentCheckboxRow(container, instrumentList, getArr, setArr, commit, groupTag, disabled, title) {
   instrumentList.forEach(([val, label]) => {
     const lab = document.createElement('label');
-    lab.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text-dim);cursor:pointer;white-space:nowrap;';
+    lab.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);cursor:pointer;white-space:nowrap;';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.checked = getArr().includes(val);
@@ -126,14 +126,19 @@ function neSidebarHeading(text) {
   return heading;
 }
 
-// Fill instrument picker: a label above the checkboxes, which are indented under it.
-function neAppendFillInstruments(group, box, text) {
-  const label = document.createElement('div');
-  label.className = 'ne-ctl-label';
-  label.textContent = text || 'Fill instruments:';
-  label.style.marginBottom = '4px';
-  box.style.marginLeft = '12px';
-  group.appendChild(label);
+// The sidebar is a stack of framed sections, each with its own heading. Builders append to the current section of the root.
+function neNewSection(root, title) {
+  const sec = document.createElement('div');
+  sec.className = 'ne-section';
+  if (title) sec.appendChild(neSidebarHeading(title));
+  root.appendChild(sec);
+  root._section = sec;
+  return sec;
+}
+function neSec(root) { return root._section || root; }
+
+// Fill instrument picker: the checkboxes sit in a section whose heading names them.
+function neAppendFillInstruments(group, box) {
   group.appendChild(box);
 }
 
@@ -152,8 +157,7 @@ function neBuildControlsPanel(ctx) {
   const controls = document.createElement('div');
   controls.className = 'ne-controls';
 
-  if (block.isFillBlock) controls.appendChild(neSidebarHeading(neFillKind(block)));
-
+  neNewSection(controls, block.isFillBlock ? neFillKind(block) : 'Block');
 
   // Length (Bars)
   const lenGroup = document.createElement('div');
@@ -212,12 +216,12 @@ function neBuildControlsPanel(ctx) {
     lenInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); lenInput.blur(); } });
     lenGroup.appendChild(lenInput);
   }
-  controls.appendChild(lenGroup);
+  neSec(controls).appendChild(lenGroup);
   if (!isBreak) lenGroup.classList.add('ne-ctl-nosep');
 
   // Feel
   if (!isBreak) {
-    controls.appendChild(neBuildFeelGroup(ctx));
+    neSec(controls).appendChild(neBuildFeelGroup(ctx));
   }
 
   // Turnaround (regular), Break (Break), or Fill (standalone Intro/Outro)
@@ -394,7 +398,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
   const { block, g } = ctx;
   const fillGroups = neRelevantEngineGroups(block.turnaroundInstruments || ['snare']);
 
-  panel.appendChild(neSidebarHeading('Turnaround (Fill)'));
+  neNewSection(panel, 'Turnaround (Fill)');
   const taGroup = document.createElement('div');
   taGroup.className = 'ne-ctl-group ne-ctl-inline';
   taGroup.innerHTML = '<span class="ne-ctl-label">Fill Every</span>';
@@ -420,7 +424,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
   taInput.addEventListener('change', () => { commitTa(); taInput.blur(); });
   taInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); taInput.blur(); } });
   taGroup.appendChild(taInput);
-  panel.appendChild(taGroup);
+  neSec(panel).appendChild(taGroup);
   taGroup.classList.add('ne-ctl-nosep');
 
   const applyTurnaroundChange = () => {
@@ -450,7 +454,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
   tlInput.addEventListener('change', commitTL);
   tlInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commitTL(); } });
   tlGroup.appendChild(tlInput);
-  panel.appendChild(tlGroup);
+  neSec(panel).appendChild(tlGroup);
   tlGroup.classList.add('ne-ctl-nosep');
 
   // Vary per Occurrence
@@ -469,7 +473,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
   tvpText.textContent = 'Vary per Occurrence';
   tvpLabel.appendChild(tvpCheck); tvpLabel.appendChild(tvpText);
   tvpGroup.appendChild(tvpLabel);
-  panel.appendChild(tvpGroup);
+  neSec(panel).appendChild(tvpGroup);
 
   // Has Hi-Hat: whether the hi-hat keeps playing in the fill window. Off = silent there. (Not a fill instrument: the fill never adds hi-hat figures.)
   const thGroup = document.createElement('div');
@@ -487,7 +491,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
   thText.textContent = 'Has Hi-Hat';
   thLabel.appendChild(thCheck); thLabel.appendChild(thText);
   thGroup.appendChild(thLabel);
-  panel.appendChild(thGroup);
+  neSec(panel).appendChild(thGroup);
 
   // Fill Subdivision/Amount
   const tsIdx = Math.max(0, SUBDIVISION_KNOB_VALUES.indexOf(block.turnaroundSubdivision ?? NE_DEFAULTS.subdivision));
@@ -524,7 +528,8 @@ function neBuildTurnaroundPanel(panel, ctx) {
     applyTurnaroundChange, 'turnaround-fill', false,
     'Fill Instruments\nWhich instruments the fill can use. Drag across checkboxes to set several at once.');
   neAppendFillInstruments(tiGroup, tiBox);
-  panel.appendChild(tiGroup);
+  neNewSection(panel, 'Fill Instruments');
+  neSec(panel).appendChild(tiGroup);
 
   // Kick layer
   const tksIdx = Math.max(0, BREAK_KICK_SUBDIVISION_VALUES.indexOf(block.turnaroundKickSubdivision ?? NE_DEFAULTS.kickSubdivision));
@@ -638,7 +643,7 @@ function neBuildBreakPanel(panel, ctx) {
   ubText.textContent = 'Edit whole block';
   ubLabel.appendChild(ubCheck); ubLabel.appendChild(ubText);
   ubGroup.appendChild(ubLabel);
-  panel.appendChild(ubGroup);
+  neSec(panel).appendChild(ubGroup);
 
   // Lock display for Break controls (uses specific regenerate functions)
   const lockBreakControlRow = (row, dials, groups, regenerateFn) => {
@@ -667,7 +672,7 @@ function neBuildBreakPanel(panel, ctx) {
     row.classList.toggle('ne-ctl-locked', fullyLocked);
   };
 
-  panel.appendChild(neSidebarHeading(neFillKind(block)));
+  neNewSection(panel, neFillKind(block));
   // Break Length (Beats)
   const bbGroup = document.createElement('div');
   bbGroup.className = 'ne-ctl-group ne-ctl-inline';
@@ -698,7 +703,7 @@ function neBuildBreakPanel(panel, ctx) {
   bbInput.addEventListener('change', commitBB);
   bbInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commitBB(); } });
   bbGroup.appendChild(bbInput);
-  panel.appendChild(bbGroup);
+  neSec(panel).appendChild(bbGroup);
 
   // Fill Subdivision/Amount
   const bsIdx = Math.max(0, SUBDIVISION_KNOB_VALUES.indexOf(block.breakSubdivision ?? NE_DEFAULTS.subdivision));
@@ -735,8 +740,9 @@ function neBuildBreakPanel(panel, ctx) {
     (arr) => { block.breakInstruments = arr; },
     () => { neEnsureSeed(block, 'breakSeed'); return regenerateMainAlways(); }, 'break-fill', false,
     neFillKind(block) + ' Instruments\nWhich instruments the ' + neFillKind(block).toLowerCase() + ' can use. Drag across checkboxes to set several at once.');
-  neAppendFillInstruments(biGroup, biBox, neFillKind(block) + ' instruments:');
-  panel.appendChild(biGroup);
+  neAppendFillInstruments(biGroup, biBox);
+  neNewSection(panel, neFillKind(block) + ' Instruments');
+  neSec(panel).appendChild(biGroup);
 
   // Kick layer
   const bksIdx = Math.max(0, BREAK_KICK_SUBDIVISION_VALUES.indexOf(block.breakKickSubdivision ?? NE_DEFAULTS.kickSubdivision));
@@ -799,7 +805,7 @@ function neBuildFillPanel(panel, ctx) {
   fbInput.addEventListener('change', commitFB);
   fbInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commitFB(); } });
   fbGroup.appendChild(fbInput);
-  panel.appendChild(fbGroup);
+  neSec(panel).appendChild(fbGroup);
 
   // Fill Subdivision/Amount
   const fsIdx = Math.max(0, SUBDIVISION_KNOB_VALUES.indexOf(block.fillSubdivision ?? NE_DEFAULTS.subdivision));
@@ -834,8 +840,9 @@ function neBuildFillPanel(panel, ctx) {
     (arr) => { block.fillInstruments = arr; },
     () => { neEnsureSeed(block, 'fillSeed'); return regenerate(); }, 'fill-fill', undefined,
     neFillKind(block) + ' Instruments\nWhich instruments the ' + neFillKind(block).toLowerCase() + ' can use. Drag across checkboxes to set several at once.');
-  neAppendFillInstruments(fiGroup, fiBox, neFillKind(block) + ' instruments:');
-  panel.appendChild(fiGroup);
+  neAppendFillInstruments(fiGroup, fiBox);
+  neNewSection(panel, neFillKind(block) + ' Instruments');
+  neSec(panel).appendChild(fiGroup);
 
   // Kick layer
   const fksIdx = Math.max(0, BREAK_KICK_SUBDIVISION_VALUES.indexOf(block.fillKickSubdivision ?? NE_DEFAULTS.kickSubdivision));
