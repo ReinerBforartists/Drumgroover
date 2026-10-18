@@ -128,14 +128,13 @@ function defaultProjectFilename() {
 // Embedded: delegate to C++ (native Save dialog + disk write).
 // Standalone: Blob download. Status text updated accordingly.
 function saveProjectToFile() {
-  const projectData = serializeProject();
-
   if (hostBridge.isEmbedded) {
-    hostBridge.send('saveProject', { json: JSON.stringify(projectData, null, 2), suggestedFilename: defaultProjectFilename() });
+    hostBridge.send('saveProject', { json: JSON.stringify(serializeProject()), suggestedFilename: defaultProjectFilename() });
     return;
   }
+  const projectData = serializeProject();
 
-  const json = JSON.stringify(projectData, null, 2);
+  const json = JSON.stringify(projectData);
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -209,13 +208,17 @@ async function applyLoadedProjectText(text) {
   try {
     proj = JSON.parse(text);
   } catch (err) {
+    dggHideBusy();
     await showModal({ title: 'Load Project', message: 'That file isn\u2019t valid JSON — is it really a DGG project file?', confirmLabel: 'OK' });
     return;
   }
 
+  dggHideBusy(); // the discard question may be on screen
   const ok = await confirmDiscardCurrentProject();
   if (!ok) return;
 
+  dggShowBusy('Loading project...');
+  await dggNextPaint(); // the status is drawn before the editor is rebuilt
   try {
     deserializeProject(proj);
     markProjectClean();
@@ -223,6 +226,7 @@ async function applyLoadedProjectText(text) {
     const status = document.getElementById('statusText');
     if (status) status.textContent = 'Project loaded';
   } catch (err) {
+    dggHideBusy();
     await showModal({ title: 'Load Project', message: `Could not load this project: ${err.message}`, confirmLabel: 'OK' });
   }
 }
@@ -312,11 +316,39 @@ document.getElementById('loadProjectInput')?.addEventListener('change', (e) => {
   if (file) loadProjectFromFile(file);
 });
 
+// Save/load can take a moment with long blocks: the status text (top right) says so once the host starts the file work.
+const DGG_BUSY_TEXTS = ['Saving project...', 'Loading project...'];
+function dggShowBusy(text) {
+  const status = document.getElementById('statusText');
+  if (status) status.textContent = text;
+}
+function dggHideBusy() {
+  const status = document.getElementById('statusText');
+  if (status && DGG_BUSY_TEXTS.includes(status.textContent)) status.textContent = 'ready';
+}
+// Resolves once the page has had a chance to draw (a page that is not being drawn gets no frames, hence the timeout).
+function dggNextPaint() {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(finish, 30)));
+    setTimeout(finish, 250);
+  });
+}
+// The host has a file chosen and waits for this reply before it starts the blocking read or write, so the note is on screen first.
+hostBridge.on('projectIoBusy', (payload) => {
+  dggShowBusy((payload && payload.text) || 'Working...');
+  dggNextPaint().then(() => hostBridge.send('projectIoGo', {}));
+});
+
+hostBridge.on('projectIoDone', dggHideBusy); // dialog cancelled or file error
+
 // Embedded replies from C++.
 hostBridge.on('projectLoaded', (payload) => {
   if (payload && typeof payload.text === 'string') applyLoadedProjectText(payload.text);
 });
 hostBridge.on('projectSaved', () => {
+  dggHideBusy();
   const status = document.getElementById('statusText');
   if (status) status.textContent = 'Project saved';
   markProjectClean();

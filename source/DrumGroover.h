@@ -143,6 +143,7 @@ private:
   // Saves the How-To as a standalone HTML file chosen in a save dialog; payload: { html, suggestedFilename }.
   void HandleExportHowTo(const nlohmann::json& payload);
   void HandleRequestLoadProject();
+  void HandleProjectIoGo();
 
   // Updates the host‑sync scheduler with fullPattern JSON from JS; loopStart/End optional.
   void HandleSyncPlaybackPattern(const nlohmann::json& payload);
@@ -318,6 +319,10 @@ private:
 
   // Guards mCachedProjectJson and mPadPositions: the UI thread writes them, while the host may call SerializeState/UnserializeState
   // from its own thread.
+  // Project file work waits here between the busy note and the page's go-ahead, so the note is drawn before the host blocks.
+  std::string mPendingIoPath;
+  std::string mPendingIoJson;
+  bool mPendingIoIsSave = false;
   mutable std::mutex mStateMutex;
 
   std::vector<dgg::Track> mTracks;

@@ -1624,6 +1624,7 @@ bool DrumGroover::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* p
     else if (type == "saveProject")      HandleSaveProject(payload);
     else if (type == "exportHowTo")      HandleExportHowTo(payload);
     else if (type == "requestLoadProject") HandleRequestLoadProject();
+    else if (type == "projectIoGo")      HandleProjectIoGo();
     else if (type == "setUIScale")       HandleSetUIScale(payload);
     else if (type == "cacheState")       HandleCacheState(payload);
     else if (type == "midiNoteOn")       HandleMidiNoteOn(payload);
@@ -1887,15 +1888,16 @@ void DrumGroover::HandleSaveProject(const nlohmann::json& payload)
   const std::string path;
 #endif
 
-  if (path.empty()) return;
+  if (path.empty())
+  {
+    SendBridgeMessage("projectIoDone", {});
+    return;
+  }
 
-  std::ofstream out(path, std::ios::binary);
-  if (!out) return;
-
-  out << json;
-  out.close();
-
-  SendBridgeMessage("projectSaved", {});
+  mPendingIoPath = path;
+  mPendingIoJson = std::move(json);
+  mPendingIoIsSave = true;
+  SendBridgeMessage("projectIoBusy", { {"text", "Saving project..."} });
 }
 
 void DrumGroover::HandleExportHowTo(const nlohmann::json& payload)
@@ -1934,6 +1936,36 @@ void DrumGroover::HandleRequestLoadProject()
   if (path.empty())
   {
     DGG_Log("HandleRequestLoadProject: dialog cancelled or failed");
+    SendBridgeMessage("projectIoDone", {});
+    return;
+  }
+
+  mPendingIoPath = path;
+  mPendingIoJson.clear();
+  mPendingIoIsSave = false;
+  SendBridgeMessage("projectIoBusy", { {"text", "Loading project..."} });
+}
+
+// Second half of project save/load: the page has drawn its busy note and asks for the actual file work.
+void DrumGroover::HandleProjectIoGo()
+{
+  const std::string path = std::move(mPendingIoPath);
+  mPendingIoPath.clear();
+  if (path.empty()) return;
+
+  if (mPendingIoIsSave)
+  {
+    std::string json = std::move(mPendingIoJson);
+    mPendingIoJson.clear();
+    std::ofstream out(path, std::ios::binary);
+    if (!out)
+    {
+      SendBridgeMessage("projectIoDone", {});
+      return;
+    }
+    out << json;
+    out.close();
+    SendBridgeMessage("projectSaved", {});
     return;
   }
 
@@ -1941,6 +1973,7 @@ void DrumGroover::HandleRequestLoadProject()
   if (!in)
   {
     DGG_Log("HandleRequestLoadProject: could not open file: " + path);
+    SendBridgeMessage("projectIoDone", {});
     return;
   }
 
