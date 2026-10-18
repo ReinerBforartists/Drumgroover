@@ -1682,7 +1682,7 @@ function neExtendGridToBottom() {
   });
   const rowsInner = rowsCol.querySelector(':scope > div');
   if (rowsInner) {
-    rowsInner.querySelectorAll('.ne-endless-overlay, .ne-break-lock-overlay').forEach(src => {
+    rowsInner.querySelectorAll('.ne-endless-overlay, .ne-break-lock-overlay, .ne-turnaround-zone').forEach(src => {
       const clone = document.createElement('div');
       clone.className = src.className;
       clone.style.left = src.style.left;
