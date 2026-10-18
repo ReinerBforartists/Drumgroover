@@ -100,15 +100,17 @@ function neFindCollision(arr, beat, skipIdx) {
 function neDeleteNoteKeys(block, keys, label) {
   if (!block || !keys.length) return;
   withBlockDataUndo(label, block, () => {
+    const removedByTrack = new Map();
     keys.forEach(key => {
       const sep = key.indexOf('|');
       const tid = key.slice(0, sep);
       const beat = parseFloat(key.slice(sep + 1));
       const idx = (block.data[tid]||[]).findIndex(n => n.beat === beat);
       if (idx >= 0) {
-        block.data[tid].splice(idx, 1);
+        (removedByTrack.get(tid) || removedByTrack.set(tid, []).get(tid)).push(block.data[tid].splice(idx, 1)[0]);
       }
     });
+    removedByTrack.forEach((notes, tid) => markTrackManuallyEdited(block, tid, notes));
     selectedNotes.clear();
     block.generated = false;
   });
