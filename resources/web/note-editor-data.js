@@ -479,6 +479,36 @@ function neShadeGridNote(trackId, note) {
   els.forEach(el => { if (!el.classList.contains('ne-note-locked')) el.style.background = bg; });
 }
 
+// Velocity preview: while the mouse is held on ONE note of a velocity gesture, that note plays at the Drum Engine's retrigger rate
+// with its current velocity, so the loudness being set is heard (as in Superior Drummer). Only one note ever plays: with several
+// notes selected it is the one under the mouse (the grabbed head, the note a paint stroke has just reached) or, for the VEL/DYN/RND
+// sliders, the first selected note in time. Not while a pattern plays: there the live velocity update (previewVelocity) is heard,
+// and extra hits on top would only muddy it. Follows the Drum Engine's "Preview sound on knob turn" switch.
+let neVelPreview = null;
+function neVelPreviewAllowed() { return !playing && typeof deKnobPreviewEnabled === 'function' && deKnobPreviewEnabled(); }
+function neVelPreviewStop() {
+  if (!neVelPreview) return;
+  clearInterval(neVelPreview.timer);
+  neVelPreview = null;
+}
+function neVelPreviewStart(trackId, note) {
+  if (neVelPreview && neVelPreview.note === note) return;
+  neVelPreviewStop();
+  if (!neVelPreviewAllowed()) return;
+  const tick = () => {
+    if (!neVelPreviewAllowed()) { neVelPreviewStop(); return; }
+    nePreviewTrack(trackId, note.vel);
+  };
+  tick();
+  neVelPreview = { note, timer: setInterval(tick, typeof deKickRetriggerMs === 'number' ? deKickRetriggerMs : 450) };
+  window.addEventListener('pointerup', neVelPreviewStop, { once: true, capture: true });
+  window.addEventListener('pointercancel', neVelPreviewStop, { once: true, capture: true });
+}
+// A single click on a bar plays the note once.
+function neVelPreviewOnce(trackId, note) {
+  if (neVelPreviewAllowed()) nePreviewTrack(trackId, note.vel);
+}
+
 // A velocity changed mid-gesture: the grid note takes its shade at once, and while a block plays the change is heard at once too:
 // the host gets only the changed velocities (collected for 50 ms), the running pattern is neither sent again nor restarted. On
 // release the normal full sync follows. Without a host (standalone browser) the playback loop just re-reads the block.

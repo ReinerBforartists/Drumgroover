@@ -503,6 +503,7 @@ function attachVelDrag(myRef, allRefs, block) {
     origVels = allRefs.map(r => r.note.vel);
     myRef.handle.style.cursor='grabbing';
     myRef.handle.setPointerCapture(e.pointerId);
+    neVelPreviewStart(myRef.trackId, myRef.note);   // the grabbed note is the one that plays
   });
   myRef.handle.addEventListener('pointermove', (e) => {
     if (!dragging) return;
@@ -523,6 +524,7 @@ function attachVelDrag(myRef, allRefs, block) {
   const finish = (e) => {
     if (!dragging) return;
     dragging=false; myRef.handle.style.cursor='ns-resize';
+    neVelPreviewStop();
     window.dggHideValueTip && window.dggHideValueTip();
     neFlushVelocities();   // the host holds the last values of the gesture even when nothing is applied below
     const actuallyChanged = allRefs.some((r, i) => r.note.vel !== origVels[i]);
@@ -570,6 +572,7 @@ function attachVelLanePaint(velInner, velRefs, block) {
     ref.line.style.height = h + 'px';
     ref.handle.style.bottom = (h - 5.5) + 'px';
     neVelocityLive(ref.trackId, ref.note);
+    neVelPreviewStart(ref.trackId, ref.note);   // the note the stroke has just reached plays
   };
 
   // Rectangle select: picks the notes whose velocity head (handle) the rectangle touches, so a height range selects by loudness.
@@ -583,7 +586,11 @@ function attachVelLanePaint(velInner, velRefs, block) {
       // Left click on a bar: select that note (Shift toggles it within the selection).
       const gray = velInner.querySelector('.ne-vel-gray-canvas');
       const hit = gray && gray.itemAtClient && e ? gray.itemAtClient(e) : null;
-      if (hit) neClickSelectNote(hit.trackId + '|' + hit.beat, !!d.toggle);
+      if (hit) {
+        const track = block.data[hit.trackId], note = track && track.find(n => n.beat === hit.beat);
+        if (note) neVelPreviewOnce(hit.trackId, note);
+        neClickSelectNote(hit.trackId + '|' + hit.beat, !!d.toggle);
+      }
       return;
     }
     const rr = d.el.getBoundingClientRect();
@@ -683,6 +690,7 @@ function attachVelLanePaint(velInner, velRefs, block) {
     if (!gesture) return;
     window.dggHideValueTip && window.dggHideValueTip();
     const g = gesture; gesture = null;
+    neVelPreviewStop();
     neFlushVelocities();
     const changed = velRefs.some((r, i) => r.note.vel !== g.origVels[i]);
     if (!changed) return;

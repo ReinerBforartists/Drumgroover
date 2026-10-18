@@ -171,6 +171,7 @@ const DGG_HOTKEYS = {
   <b>Shift+drag</b> a Density knob — scale all six Density knobs together.<br>`,
   velocity: `
   <b>Click</b> a bar or head — select that note; <b>Shift+click</b> toggles it within the selection.<br>
+  <b>Hold</b> a head, a bar or a velocity slider — the note plays and retriggers while you set its velocity (not while a pattern plays).<br>
   <b>Drag</b> — rectangle select by loudness (only the velocity heads it touches).<br>
   <b>Shift+drag</b> — toggle the notes it touches.<br>
   <b>Right-drag</b> — deselect the notes it touches.<br>

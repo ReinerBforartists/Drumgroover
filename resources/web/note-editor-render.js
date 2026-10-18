@@ -1521,12 +1521,19 @@ function neBuildVelocityLane(ctx) {
     slider.addEventListener('input', () => preview(+slider.value));
     // Ctrl+Click → Reset to neutral (0 = no adjustment).
     slider.addEventListener('pointerdown', (e) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
+      if (!(e.ctrlKey || e.metaKey)) {
+        // The first selected note in time plays while the slider is held.
+        if (!slider.disabled && activeItems.length) {
+          const first = activeItems.reduce((a, b) => (b.note.beat < a.note.beat ? b : a));
+          neVelPreviewStart(first.trackId, first.note);
+        }
+        return;
+      }
       e.preventDefault();
       if (slider.disabled) return;
       preview(0); commitVelChange();
     });
-    slider.addEventListener('pointerup', () => commitVelChange());
+    slider.addEventListener('pointerup', () => { neVelPreviewStop(); commitVelChange(); });
     num.addEventListener('change', () => {
       const val = Math.max(+num.min, Math.min(+num.max, +num.value || 0));
       preview(val); commitVelChange();
