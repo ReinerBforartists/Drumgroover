@@ -2746,3 +2746,45 @@ function updatePaletteScrollbar() {
     }, RESET_MS);
   }).observe(el, { childList: true, characterData: true, subtree: true });
 })();
+
+// Shortcut panel: the ? button next to Mute (also ? and F1) opens a floating list of the keys and gestures of the active tab.
+// The lists come from howto-content.js (dggHotkeysHtml), the same source as the How To tab.
+(function initHotkeysPanel() {
+  const btn = document.getElementById('hotkeysBtn');
+  if (!btn) return;
+  let panel = null;
+  function activeTab() { return document.querySelector('#mainTabBar .tab-btn.active')?.dataset.tab || 'noteEditor'; }
+  function fill() {
+    if (!panel) return;
+    const tab = activeTab();
+    const names = { noteEditor: 'Note Editor', timeline: 'Song Generator', mixer: 'Mixer', drumEngine: 'Drum Engine', howto: 'How To' };
+    panel.querySelector('.hotkeys-panel-title').textContent = 'Shortcuts — ' + (names[tab] || '');
+    panel.querySelector('.hotkeys-panel-body').innerHTML = dggHotkeysHtml(tab);
+  }
+  function place() {
+    const r = btn.getBoundingClientRect();
+    panel.style.top = (r.bottom + 6) + 'px';
+    panel.style.right = Math.max(4, window.innerWidth - r.right) + 'px';
+  }
+  function close() { if (panel) { panel.remove(); panel = null; } btn.classList.remove('active'); }
+  function open() {
+    panel = document.createElement('div');
+    panel.className = 'hotkeys-panel';
+    panel.innerHTML = '<div class="hotkeys-panel-head"><span class="hotkeys-panel-title"></span><button class="hotkeys-panel-close" title="Close">×</button></div><div class="hotkeys-panel-body"></div>';
+    panel.querySelector('.hotkeys-panel-close').addEventListener('click', close);
+    document.body.appendChild(panel);
+    fill(); place();
+    btn.classList.add('active');
+  }
+  function toggle() { if (panel) close(); else open(); }
+  btn.addEventListener('click', toggle);
+  document.getElementById('mainTabBar')?.addEventListener('click', () => setTimeout(fill, 0));
+  window.addEventListener('resize', () => { if (panel) place(); });
+  document.addEventListener('keydown', (e) => {
+    const t = e.target;
+    const inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+    if (e.key === 'Escape' && panel) { close(); return; }
+    if (inField || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'F1' || e.key === '?') { e.preventDefault(); toggle(); }
+  });
+})();

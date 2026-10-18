@@ -144,41 +144,68 @@ howtoSet('howto-options', `
   Tooltips show the name, what the control does and how to use it; hold the pointer still over any control.
 `);
 
-howtoSet('howto-hotkeys', `
-  Shortcuts work on every tab unless noted, and nothing fires while you are typing in a text field or a dropdown.<br>
-  <b style="display:block;margin-top:12px">Global</b>
+// The shortcut lists: one source for the How To tab and for the ? panel next to Mute (dggHotkeysHtml).
+const DGG_HOTKEYS = {
+  global: `
   <b>Space</b> — play / stop (not on the Drum Engine tab, where the keyboard at the bottom is for testing sounds).<br>
   <b>F</b> — fit the view: the current block in the Note Editor, or the whole song (or the selected clips) in the Song Generator.<br>
   <b>Ctrl+Z</b> / <b>Ctrl+Shift+Z</b> (or <b>Ctrl+Y</b>) — undo / redo.<br>
   <b>Ctrl+A</b> / <b>Alt+A</b> — select all eligible notes or clips / clear the selection.<br>
   <b>Ctrl+I</b> — invert the selection (notes in the Note Editor, clips in the Song Generator).<br>
   <b>Del</b> / <b>Backspace</b> — delete the selected notes or clips.<br>
-  <b style="display:block;margin-top:12px">Note Editor</b>
+  <b>?</b> or <b>F1</b> — show / hide the shortcut panel next to Mute.<br>`,
+  noteEditor: `
   <b>Tab</b> — show / hide the sidebar.<br>
   <b>Arrow Left/Right</b> — nudge the selected notes by one Snap step (<b>Shift</b> = 4×).<br>
   <b>Arrow Up/Down</b> — switch each selected note to the previous / next articulation of its group.<br>
   <b>Ctrl+C</b> / <b>Ctrl+X</b> / <b>Ctrl+V</b> — copy / cut / paste.<br>
   <b>Ctrl + mouse wheel</b> — zoom at the cursor; <b>middle-drag</b> pans.<br>
-  Mouse gestures are described in <i>Note Editor — editing by hand</i>.<br>
-  <b style="display:block;margin-top:12px">Song Generator</b>
+  <b>Drag</b> — rectangle select.<br>
+  <b>Shift+drag</b> — toggle the notes it touches.<br>
+  <b>Ctrl+drag</b> — paint / erase notes along a row.<br>
+  <b>Right-drag</b> — erase every note it sweeps over, in all rows.<br>
+  <b>Right-click</b> a note — delete it.<br>
+  <b>Click</b> on the ruler — set the playhead (also while playing).<br>
+  <b>Drag</b> on the loop ruler — set the loop range; drag its edges to adjust it; <b>right-click</b> clears it.<br>
+  <b>Shift+drag</b> a Density knob — scale all six Density knobs together.<br>`,
+  velocity: `
+  <b>Drag</b> — rectangle select by loudness (only the velocity heads it touches).<br>
+  <b>Shift+drag</b> — toggle the notes it touches.<br>
+  <b>Right-drag</b> — deselect the notes it touches.<br>
+  <b>Right-click</b> — clear the selection.<br>
+  <b>Ctrl+drag</b> — paint velocity freehand.<br>
+  <b>Alt+drag</b> — straight ramp between two points.<br>
+  <b>Drag</b> a velocity head — change its velocity (the whole selection moves together).<br>`,
+  timeline: `
   <b>Shift+click</b> a clip — select the range from the anchor clip; <b>Ctrl/Cmd+click</b> toggles it.<br>
   <b>Drag</b> on empty space — lasso-select; <b>Shift+drag</b> adds, <b>Ctrl/Cmd+drag</b> toggles.<br>
   <b>Shift+drag</b> a clip — duplicate instead of move.<br>
   <b>Ctrl + mouse wheel</b> — zoom at the cursor.<br>
-  <b style="display:block;margin-top:12px">Mixer</b>
+  <b>Double-click</b> a clip — open its block in the Note Editor.<br>
+  <b>Right-click</b> a clip — delete it; <b>right-drag</b> deletes several.<br>
+  <b>Drag</b> on the loop ruler — set the loop range; <b>right-click</b> clears it.<br>`,
+  mixer: `
   <b>Ctrl+click</b> a fader or knob — reset it to its default.<br>
-  <b>Double-click</b> the dB value under a fader — type an exact value; <b>Enter</b> commits, <b>Escape</b> cancels.<br>
-  <b style="display:block;margin-top:12px">Drum Engine</b>
-  <b>Ctrl+click</b> any slider or knob — reset it to its default.<br>
-  <b style="display:block;margin-top:12px">Knobs and value fields (everywhere)</b>
+  <b>Double-click</b> the dB value under a fader — type an exact value; <b>Enter</b> commits, <b>Escape</b> cancels.<br>`,
+  drumEngine: `
+  <b>Ctrl+click</b> any slider or knob — reset it to its default.<br>`,
+  knobs: `
   <b>Mouse wheel</b> over a knob — step it by one increment.<br>
   <b>Double-click</b> a knob's value — type an exact number; <b>Enter</b> commits, <b>Escape</b> cancels.<br>
-  <b>Ctrl+click</b> a knob — reset it to its default.<br>
-  <b>Shift+drag</b> one of the six Density knobs — Energy macro: all six scale proportionally.<br>
-  <b style="display:block;margin-top:12px">Dialogs and dropdowns</b>
-  Confirmation dialogs: <b>Enter</b> confirms, <b>Escape</b> cancels, <b>Arrow Left/Right</b> switches between the two buttons (when no text field is focused).<br>
-  Dropdowns: with the control focused, <b>Enter</b>, <b>Space</b>, <b>F4</b> or <b>Alt+Arrow Up/Down</b> opens the list; <b>Escape</b> closes it.
-`);
+  <b>Ctrl+click</b> a knob — reset it to its default.<br>`
+};
+const DGG_HOTKEY_TITLES = { global: 'Global', noteEditor: 'Note Editor', velocity: 'Velocity lane', timeline: 'Song Generator', mixer: 'Mixer', drumEngine: 'Drum Engine', knobs: 'Knobs and value fields' };
+function dggHotkeySection(key) {
+  return `<b class="hk-title" style="display:block;margin-top:12px">${DGG_HOTKEY_TITLES[key]}</b>${DGG_HOTKEYS[key]}`;
+}
+// The panel next to Mute: global keys, the keys of the tab you are on, and the knob keys. No tab means How To: everything.
+function dggHotkeysHtml(tab) {
+  const own = tab === 'noteEditor' ? ['noteEditor', 'velocity'] : (DGG_HOTKEYS[tab] ? [tab] : []);
+  return ['global', ...own, 'knobs'].map(dggHotkeySection).join('');
+}
+
+howtoSet('howto-hotkeys', `
+  Shortcuts work on every tab unless noted, and nothing fires while you are typing in a text field or a dropdown. The <b>?</b> button next to Mute opens the shortcuts of the tab you are on.<br>` + ['global', 'noteEditor', 'velocity', 'timeline', 'mixer', 'drumEngine', 'knobs'].map(k => dggHotkeySection(k) + (k === 'noteEditor' ? '  Mouse gestures are described in <i>Note Editor — editing by hand</i>.<br>' : '')).join(''));
 
 howtoSet('howto-troubleshooting', `
   <b>No sound.</b> (1) Is the <b>Mute</b> button (top right) lit? (2) In the Mixer, check the channel's fader, M/S buttons and Kit Gain, and the effects on the master. (3) In your DAW the plugin must be loaded as an instrument with its output routed to a mixer track. (4) Press the plugin's own <b>▶ Play</b>, or start the DAW transport and check that the Song Generator contains clips. (5) On the very first start wait until the <i>Preparing the sound cache</i> dialog is gone.<br>

@@ -1470,3 +1470,15 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 
 /* Visible "+ Add Track" button in the toolbar corner above the track list */
 .ne-toolbar-corner .ne-add-track-btn { font-size:10px; padding:4px 9px; white-space:nowrap; }
+
+/* Shortcut panel (? next to Mute): floating, outside .app, so it applies the UI scale itself */
+#hotkeysBtn { margin-left:6px; min-width:26px; padding:5px 8px; }
+#hotkeysBtn.active { color:var(--amber); border-color:var(--amber); background:var(--raised); }
+.hotkeys-panel { position:fixed; z-index:60; width:360px; max-height:calc(88vh / var(--ui-scale, 1)); overflow-y:auto; background:var(--panel); border:1px solid var(--cyan); border-radius:var(--r); padding:10px 14px 14px; box-shadow:0 8px 24px rgba(0,0,0,.5); transform:scale(var(--ui-scale, 1)); transform-origin:top right; font-size:12px; line-height:1.55; color:var(--text); }
+.hotkeys-panel-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:2px; }
+.hotkeys-panel-title { font-size:10px; color:var(--cyan); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
+.hotkeys-panel b { color:var(--amber); font-weight:600; }
+.hotkeys-panel b.hk-title { color:var(--cyan); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin-top:14px; padding-bottom:2px; border-bottom:1px solid var(--border); margin-bottom:3px; }
+.hotkeys-panel-body > b.hk-title:first-child { margin-top:6px; }
+.hotkeys-panel-close { width:18px; height:18px; line-height:15px; padding:0; border-radius:4px; border:1px solid var(--border2); background:var(--raised); color:var(--muted); font-size:12px; cursor:pointer; }
+.hotkeys-panel-close:hover { color:#fff; border-color:#ef4444; background:rgba(239,68,68,.15); }
