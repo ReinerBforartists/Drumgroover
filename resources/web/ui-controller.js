@@ -2521,6 +2521,9 @@ function wireNudgeKnob() {
   let el = null;
   let showTimer = null;
   let currentTarget = null;
+  // The note editor's working area (grid, velocity lane, rulers) never shows tooltips: they cover what is being edited.
+  const WORKSPACE_SELECTOR = '.ne-rows, .ne-vel-lane, .ne-ruler, .ne-loop-ruler';
+  let buttonDown = false; // no tooltip while a mouse button is held (a drag in progress)
 
   function ensureEl() {
     if (!el) {
@@ -2563,14 +2566,15 @@ function wireNudgeKnob() {
   }
 
   document.addEventListener('mouseover', (e) => {
-    if (!tooltipsEnabled()) return;
+    if (!tooltipsEnabled() || buttonDown) return;
     const target = e.target.closest('[data-tooltip]');
     if (!target || target === currentTarget) return;
+    if (target.closest(WORKSPACE_SELECTOR)) { hide(); return; }
     hide();
     currentTarget = target;
     const x = e.clientX, y = e.clientY;
     showTimer = setTimeout(() => {
-      if (currentTarget === target) show(target, x, y);
+      if (currentTarget === target && !buttonDown) show(target, x, y);
     }, SHOW_DELAY_MS);
   });
 
@@ -2582,7 +2586,11 @@ function wireNudgeKnob() {
   });
 
   document.addEventListener('mousedown', hide, { capture: true });
-  document.addEventListener('pointerdown', hide, { capture: true });
+  document.addEventListener('pointerdown', () => { buttonDown = true; hide(); }, { capture: true });
+  const buttonUp = () => { buttonDown = false; };
+  document.addEventListener('pointerup', buttonUp, { capture: true });
+  document.addEventListener('pointercancel', buttonUp, { capture: true });
+  window.addEventListener('blur', buttonUp);
   document.addEventListener('scroll', hide, { capture: true, passive: true });
 })();
 

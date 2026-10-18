@@ -241,7 +241,7 @@ function attachRectSelect(rowsCol) {
   rowsCol.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     if (!e.target.classList.contains('ne-row')) return;
-    drag = { sx:e.clientX, sy:e.clientY, moved:false, rect:null, deleteMode:e.shiftKey };
+    drag = { sx:e.clientX, sy:e.clientY, moved:false, rect:null, toggle:e.shiftKey };
   });
   rowsCol.addEventListener('pointermove', (e) => {
     if (!drag) return;
@@ -250,7 +250,7 @@ function attachRectSelect(rowsCol) {
       drag.moved = true;
       rowsCol.setPointerCapture(e.pointerId);
       drag.rect = document.createElement('div');
-      drag.rect.className = 'ne-select-rect' + (drag.deleteMode ? ' delete-mode' : '');
+      drag.rect.className = 'ne-select-rect';
       document.body.appendChild(drag.rect);
     }
     if (drag.rect) {
@@ -273,15 +273,10 @@ function attachRectSelect(rowsCol) {
       suppressNextRowClick = true;
       setTimeout(() => { suppressNextRowClick = false; }, 0);
       drag.rect.remove();
-      if (drag.deleteMode) {
-        const block = findBlock(activeBlockId);
-        const label = touched.length > 1 ? `Delete ${touched.length} notes` : 'Delete note';
-        neDeleteNoteKeys(block, touched, label);
-      } else {
-        selectedNotes.clear();
-        touched.forEach(key => selectedNotes.add(key));
-        renderNoteEditor();
-      }
+      // Shift toggles what the rectangle catches; without Shift the rectangle replaces the selection.
+      if (drag.toggle) touched.forEach(key => { if (selectedNotes.has(key)) selectedNotes.delete(key); else selectedNotes.add(key); });
+      else { selectedNotes.clear(); touched.forEach(key => selectedNotes.add(key)); }
+      renderNoteEditor();
     }
     drag = null;
   };
@@ -465,9 +460,10 @@ function attachVelDrag(myRef, allRefs, block) {
   myRef.handle.addEventListener('pointercancel', finish);
 }
 
-// Freehand (plain drag) or straight-line ramp (Shift+drag) on the velocity lane background.
+// Velocity lane background: drag = rectangle select (the notes whose velocity head the rectangle touches, shown in colour or gray),
+// right-drag = rectangle deselect, right-click = clear the selection, Shift+drag = toggle what the rectangle catches, Ctrl+drag = freehand paint,
+// Alt+drag = straight-line ramp.
 function attachVelLanePaint(velInner, velRefs, block) {
-  if (!velRefs.length) return;
   let gesture = null;
 
   const velAtClientY = (clientY) => {
@@ -483,14 +479,54 @@ function attachVelLanePaint(velInner, velRefs, block) {
     ref.handle.style.bottom = (h - 5.5) + 'px';
   };
 
+  // Rectangle select: picks the notes whose velocity head (handle) the rectangle touches, so a height range selects by loudness.
+  let rectDrag = null;
+  const finishRect = () => {
+    if (!rectDrag) return;
+    const d = rectDrag; rectDrag = null;
+    if (!d.moved) {
+      // Right-click without dragging clears the whole selection.
+      if (d.deselect && selectedNotes.size) { selectedNotes.clear(); velNudgeSelKey = null; renderNoteEditor(); }
+      return;
+    }
+    const rr = d.el.getBoundingClientRect();
+    d.el.remove();
+    const keys = [];
+    velRefs.forEach(r => {
+      const hr = r.handle.getBoundingClientRect();
+      if (hr.left < rr.right && hr.right > rr.left && hr.top < rr.bottom && hr.bottom > rr.top) keys.push(r.trackId + '|' + r.note.beat);
+    });
+    const grayCanvas = velInner.querySelector('.ne-vel-gray-canvas');
+    if (grayCanvas && grayCanvas.keysInRect) grayCanvas.keysInRect(rr).forEach(k => keys.push(k));
+    if (d.deselect) keys.forEach(k => selectedNotes.delete(k));
+    else if (d.toggle) keys.forEach(k => { if (selectedNotes.has(k)) selectedNotes.delete(k); else selectedNotes.add(k); });
+    else { selectedNotes.clear(); keys.forEach(k => selectedNotes.add(k)); }
+    velNudgeSelKey = null;
+    renderNoteEditor();
+  };
+  velInner.addEventListener('pointerup', finishRect);
+  velInner.addEventListener('pointercancel', finishRect);
+
+  velInner.addEventListener('contextmenu', (e) => e.preventDefault());
   velInner.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 && e.button !== 2) return;
     if (e.target.closest('.ne-vel-handle')) return;
+    if (e.button === 2) {
+      rectDrag = { sx: e.clientX, sy: e.clientY, moved: false, el: null, deselect: true };
+      velInner.setPointerCapture(e.pointerId);
+      return;
+    }
+    if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+      rectDrag = { sx: e.clientX, sy: e.clientY, moved: false, el: null, deselect: false, toggle: e.shiftKey };
+      velInner.setPointerCapture(e.pointerId);
+      return;
+    }
+    if (!velRefs.length) return;
     const rect = velInner.getBoundingClientRect();
     const x = (e.clientX - rect.left) / currentUIScale();
     const y = velAtClientY(e.clientY);
     gesture = {
-      mode: e.shiftKey ? 'ramp' : 'paint',
+      mode: e.altKey ? 'ramp' : 'paint', // only reached with Ctrl or Alt held
       startX: x, startY: y,
       lastX: x, lastY: y,
       origVels: velRefs.map(r => r.note.vel),
@@ -505,6 +541,22 @@ function attachVelLanePaint(velInner, velRefs, block) {
   });
 
   velInner.addEventListener('pointermove', (e) => {
+    if (rectDrag) {
+      const dx = e.clientX - rectDrag.sx, dy = e.clientY - rectDrag.sy;
+      if (!rectDrag.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        rectDrag.moved = true;
+        rectDrag.el = document.createElement('div');
+        rectDrag.el.className = 'ne-select-rect' + (rectDrag.deselect ? ' delete-mode' : '');
+        document.body.appendChild(rectDrag.el);
+      }
+      if (rectDrag.el) {
+        rectDrag.el.style.left = Math.min(rectDrag.sx, e.clientX) + 'px';
+        rectDrag.el.style.top = Math.min(rectDrag.sy, e.clientY) + 'px';
+        rectDrag.el.style.width = Math.abs(dx) + 'px';
+        rectDrag.el.style.height = Math.abs(dy) + 'px';
+      }
+      return;
+    }
     if (!gesture) return;
     const rect = velInner.getBoundingClientRect();
     const x = (e.clientX - rect.left) / currentUIScale();

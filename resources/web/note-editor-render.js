@@ -1268,10 +1268,23 @@ function neBuildVelGrayCanvas(items, pxPerBeat, velLane) {
     }
     return best;
   };
+  // Selection keys of the bars whose head the screen rectangle touches (for the lane's rectangle select).
+  canvas.keysInRect = (rr) => {
+    const cr = canvas.getBoundingClientRect();
+    const s = currentUIScale();
+    const sl = velLane.scrollLeft;
+    const keys = [];
+    for (const it of items) {
+      const cx = cr.left + (barX(it) - sl) * s, cy = cr.top + (NE_VEL_H - barH(it)) * s, r = 5.5 * s;
+      if (cx - r < rr.right && cx + r > rr.left && cy - r < rr.bottom && cy + r > rr.top) keys.push(it.trackId + '|' + it.beat);
+    }
+    return keys;
+  };
   let pressed = null;
   canvas.addEventListener('pointerdown', (e) => {
     pressed = e.button === 0 ? hitAt(e) : null;
-    if (pressed) e.stopPropagation();   // a click on a bar selects it; it must not start a paint gesture
+    // A click on a bar selects it; with Ctrl/Alt it must not start a paint gesture. A plain press may still start a rectangle.
+    if (pressed && (e.ctrlKey || e.metaKey || e.altKey)) e.stopPropagation();
   });
   canvas.addEventListener('click', (e) => {
     const it = pressed; pressed = null;
@@ -1417,7 +1430,7 @@ function neBuildVelocityLane(ctx) {
   velLane.className = 'ne-vel-lane';
   const velInner = document.createElement('div');
   velInner.style.cssText = `position:relative; width:${totalW}px; height:${NE_VEL_H}px;`;
-  velInner.dataset.tooltip = 'Velocity\nDrag to paint velocities freehand · Shift+drag for a straight line between two points.';
+  velInner.dataset.tooltip = 'Velocity\nDrag a rectangle to select the notes whose velocity head it touches · Shift+drag to toggle · Right-drag to deselect, right-click to clear · Ctrl+drag to paint velocities freehand · Alt+drag for a straight line between two points.';
   velInner.appendChild(neBuildCssGrid(totalBeats, pxPerBeat, g.snap, null, true));
   const baseline = document.createElement('div');
   baseline.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:1px;background:var(--border);';
