@@ -286,26 +286,6 @@ function neRelevantEngineGroups(instruments) {
 
 const NE_TURNAROUND_LOCK_TIP = 'Locked\nNotes in the turnaround of this group were manually edited. Click to discard those edits and let the Fill controls drive the turnaround again.';
 
-// Displays lock icons and disables controls if all relevant groups are locked.
-function neApplyGroupLockState(labelEl, inputEl, groups, block, opts) {
-  const showIcons = !opts || opts.showIcons !== false;
-  const turnaround = !!(opts && opts.turnaround);
-  const lockedGroups = groups.filter(g => block.lockedGroups && block.lockedGroups[turnaround ? neTurnaroundLockKey(g) : g]);
-  if (showIcons) {
-    lockedGroups.forEach(g => {
-      const icon = document.createElement('span');
-      icon.className = 'group-lock-icon';
-      icon.textContent = '🔒';
-      icon.dataset.tooltip = turnaround ? NE_TURNAROUND_LOCK_TIP : 'Locked\nThis group was manually edited in the note editor. Click to discard those edits and let the knobs control it again.';
-      icon.addEventListener('click', (e) => { e.stopPropagation(); (turnaround ? unlockTurnaround : unlockGroup)(g); });
-      labelEl.appendChild(icon);
-    });
-  }
-  const fullyLocked = groups.length > 0 && lockedGroups.length === groups.length;
-  inputEl.disabled = fullyLocked;
-  inputEl.closest('.ne-ctl-group').classList.toggle('ne-ctl-locked', fullyLocked);
-}
-
 // ── Compact sidebar dials (rotary knobs) ──
 // Built fresh every render; uses wireKnob from ui-controller.js.
 // opts: { label, min, max, step, value, format(v)->string, title, onInput(v), onChange(v) }
@@ -473,26 +453,6 @@ function neBuildTurnaroundPanel(panel, ctx) {
   panel.appendChild(tlGroup);
   tlGroup.classList.add('ne-ctl-nosep');
 
-  // Closing Crash
-  const tcGroup = document.createElement('div');
-  tcGroup.className = 'ne-ctl-group';
-  const tcLabel = document.createElement('label');
-  tcLabel.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;';
-  tcLabel.dataset.tooltip = 'Closing Crash\nAdds a crash hit on the downbeat of the bar after the turnaround.';
-  const tcCheck = document.createElement('input');
-  tcCheck.type = 'checkbox'; tcCheck.checked = block.turnaroundCrash !== false;
-  tcCheck.dataset.tooltip = tcLabel.dataset.tooltip;
-  tcCheck.addEventListener('change', () => turnaroundUndoable('Closing crash', () => { block.turnaroundCrash = tcCheck.checked; }));
-  const tcText = document.createElement('span');
-  tcText.className = 'ne-ctl-label';
-  tcText.style.textTransform = 'none';
-  tcText.textContent = 'Closing Crash';
-  tcLabel.appendChild(tcCheck); tcLabel.appendChild(tcText);
-  tcGroup.appendChild(tcLabel);
-  panel.appendChild(tcGroup);
-  tcGroup.classList.add('ne-ctl-nosep');
-  neApplyGroupLockState(tcText, tcCheck, ['cymbals'], block, { turnaround: true });
-
   // Vary per Occurrence
   const tvpGroup = document.createElement('div');
   tvpGroup.className = 'ne-ctl-group';
@@ -569,6 +529,18 @@ function neBuildTurnaroundPanel(panel, ctx) {
   neAddRerollIcon(kickDialRow, [tksDial, tkdDial], 'Reroll\nGenerates a new Fill Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
     turnaroundUndoable('Reroll fill kick', () => { block.turnaroundKickSeed = Math.floor(Math.random()*1e9); });
   });
+
+  // C Crash (Closing Crash): an Off/On knob in the toolbar next to Fill and Fill Kick. On adds a crash hit on the downbeat of the bar
+  // after the turnaround; locked (like them) once the cymbals' turnaround was edited by hand.
+  const crashDial = neCreateDial({
+    label: 'Crash', min: 0, max: 1, step: 1, value: block.turnaroundCrash !== false ? 1 : 0,
+    def: 1,
+    format: v => v ? 'On' : 'Off',
+    title: 'Closing Crash\nAdds a crash hit on the downbeat of the bar after the turnaround.',
+    onChange: v => turnaroundUndoable('Closing crash', () => { block.turnaroundCrash = !!v; }),
+  });
+  const crashRow = neToolbarCluster('C Crash', [crashDial]);
+  neApplyDialRowLock(crashRow, [crashDial], ['cymbals'], block, { turnaround: true });
 }
 
 // Break panel — fill inside a Break block's trailing breakBeats window.
