@@ -725,6 +725,11 @@ void applyCustomGroupToBlock(Block& block, const Grid& grid, const std::string& 
   replicateGroupAcrossLength(block, grid, { trackId }, phrase, cache);
 }
 
+// Snare ghost notes. The 808 snare circuit only switches on from about velocity 55 (accent voltage ~1.4 V): at 45 a ghost note is
+// ~55 dB below the full-velocity hit, at 58 about 14 dB, which is where a ghost note belongs. Must stay at or below 60: main hits are
+// told apart from ghosts by velocity > 60 (articulation variation, snare ghost layer).
+constexpr int kSnareGhostVel = 58;
+
 void applySnareGroupToBlock(Block& block, const Grid& grid, double densityPct, double ghostDensityPct,
                              double variationPct, int subdivisionIndex, Feel feel, int phrase,
                              TurnaroundFillCache& cache, const std::vector<double>& anchorBeats) {
@@ -764,7 +769,7 @@ void applySnareGroupToBlock(Block& block, const Grid& grid, double densityPct, d
     }
 
     for (const auto& ab : anchoredResult) notes.push_back({ab.beat + barIdx * grid.numerator, 110});
-    for (double b : ghostBeats) notes.push_back({b + barIdx * grid.numerator, 45});
+    for (double b : ghostBeats) notes.push_back({b + barIdx * grid.numerator, kSnareGhostVel});
   }
   std::sort(notes.begin(), notes.end(), [](const Note& a, const Note& b) { return a.beat < b.beat; });
   block.data["snare"] = notes;
@@ -818,7 +823,7 @@ void applySnareGhostLayer(Block& block, const Grid& grid, double ghostDensityPct
       const int beatIdx = static_cast<int>(std::floor(step / subdivision));
       const double fracWithinBeat = std::fmod(static_cast<double>(step), subdivision) / subdivision;
       const double beat = beatIdx + applyFeelWarp(fracWithinBeat, feel);
-      notes.push_back({beat + lo, 45});
+      notes.push_back({beat + lo, kSnareGhostVel});
     }
 
     // Preserve existing main hits (vel>60, non-turnaround) on 'snare'.

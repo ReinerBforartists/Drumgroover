@@ -975,6 +975,11 @@ function regenerateCustomGroup(opts) {
     (block, g) => buildCustomCommitPayload(block, track.id), applyCustomCommitResponse);
 }
 
+// Snare ghost notes. The 808 snare circuit only switches on from about velocity 55 (accent voltage ~1.4 V): at 45 a ghost note is
+// ~55 dB below the full-velocity hit, at 58 about 14 dB, which is where a ghost note belongs. Must stay at or below 60: main hits are
+// told apart from ghosts by velocity > 60 (articulation variation, snare ghost layer).
+const SNARE_GHOST_VEL = 58;
+
 function applySnareGroupToBlock(block, g, ov) {
   if (!block) return;
   if (block.lockedGroups && block.lockedGroups.snare) return;
@@ -1016,7 +1021,7 @@ function applySnareGroupToBlock(block, g, ov) {
     }
 
     beats.forEach(b => notes.push({ beat: b + barIdx * g.numerator, vel: 110 }));
-    ghostBeats.forEach(b => notes.push({ beat: b + barIdx * g.numerator, vel: 45 }));
+    ghostBeats.forEach(b => notes.push({ beat: b + barIdx * g.numerator, vel: SNARE_GHOST_VEL }));
   }
   block.data['snare'] = notes.sort((a,b) => a.beat-b.beat);
   replicateGroupAcrossLength(block, g, ['snare'], phrase);
@@ -1066,7 +1071,7 @@ function applySnareGhostLayer(block, g, ov) {
       const beatIdx = Math.floor(step/subdivision);
       const fracWithinBeat = (step%subdivision)/subdivision;
       const beat = beatIdx + applyFeelWarp(fracWithinBeat, feel);
-      notes.push({ beat: beat + lo, vel: 45 });
+      notes.push({ beat: beat + lo, vel: SNARE_GHOST_VEL });
     });
 
     (block.data['snare'] || []).filter(n => n.vel > 60 && !n.turnaround && n.beat >= lo && n.beat < hi)
