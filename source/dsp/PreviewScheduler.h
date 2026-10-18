@@ -8,14 +8,24 @@
 // on every Advance() call to stay in sync with live tempo changes.
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "Scheduler.h"  // reuses DueEvent
 #include "Types.h"
 
 namespace dgg {
+
+// A velocity changed while the preview keeps running (a velocity gesture in the Note Editor).
+struct VelocityEdit {
+  std::string trackId;
+  double      beatAbs;
+  int         vel;
+};
 
 class PreviewScheduler {
 public:
@@ -33,6 +43,10 @@ public:
   void Seek(double beat);
   void SetLoop(double loopStartBeat, double loopEndBeat);
 
+  // Changes the velocity of single notes of the running pattern without replacing it or restarting playback. The changes lie in a
+  // small overlay that Advance() consults; the next SetPattern() drops it (the new pattern carries the final velocities).
+  void SetVelocities(const std::vector<VelocityEdit>& edits);
+
   bool   IsPlaying() const { return mPlaying.load(std::memory_order_relaxed); }
   double CurrentBeat() const { return mCurrentBeat.load(std::memory_order_relaxed); }
 
@@ -43,9 +57,15 @@ public:
 
 private:
   std::shared_ptr<const FullPattern> SnapshotPattern() const;
+  static uint64_t VelocityKey(const std::string& trackId, double beatAbs);
 
   std::shared_ptr<const FullPattern> mPattern;
   mutable std::mutex                 mPatternMutex;
+
+  // Velocity overlay: written by the UI thread, read by the audio thread, which only try-locks and otherwise plays the pattern's own velocity.
+  mutable std::mutex                 mVelMutex;
+  std::unordered_map<uint64_t, int>  mVelOverride;
+  std::atomic<bool>                  mHasVelOverride{false};
 
   std::atomic<bool>   mPlaying{false};
   std::atomic<double> mCurrentBeat{0.0};

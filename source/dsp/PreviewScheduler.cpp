@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 namespace dgg {
 
@@ -21,7 +22,24 @@ void PreviewScheduler::SetPattern(FullPattern pattern) {
     std::lock_guard<std::mutex> lock(mPatternMutex);
     mPattern.swap(shared);
   }
+  {
+    std::lock_guard<std::mutex> lock(mVelMutex);
+    mVelOverride.clear();
+    mHasVelOverride.store(false, std::memory_order_relaxed);
+  }
   // The previous pattern is released here, outside the lock, so the audio thread never waits for its deallocation.
+}
+
+uint64_t PreviewScheduler::VelocityKey(const std::string& trackId, double beatAbs) {
+  const uint64_t beatKey = static_cast<uint64_t>(std::llround(beatAbs * 1.0e6));
+  return std::hash<std::string>{}(trackId) ^ (beatKey * 0x9E3779B97F4A7C15ULL);
+}
+
+void PreviewScheduler::SetVelocities(const std::vector<VelocityEdit>& edits) {
+  if (edits.empty()) return;
+  std::lock_guard<std::mutex> lock(mVelMutex);
+  for (const auto& e : edits) mVelOverride[VelocityKey(e.trackId, e.beatAbs)] = e.vel;
+  mHasVelOverride.store(true, std::memory_order_relaxed);
 }
 
 std::shared_ptr<const FullPattern> PreviewScheduler::SnapshotPattern() const {
@@ -58,6 +76,10 @@ std::vector<DueEvent> PreviewScheduler::Advance(double bpm, int nFrames, double 
 
   std::shared_ptr<const FullPattern> pattern = SnapshotPattern();
   if (!pattern || pattern->events.empty() || pattern->totalBeats <= 0.0) return due;
+
+  // Never wait for the UI thread here: without the lock the pattern's own velocities play for this block.
+  std::unique_lock<std::mutex> velLock(mVelMutex, std::try_to_lock);
+  const bool useVelOverride = velLock.owns_lock() && mHasVelOverride.load(std::memory_order_relaxed);
 
   double loopStart = mLoopStartBeat.load(std::memory_order_relaxed);
   double loopEnd    = mLoopEndBeat.load(std::memory_order_relaxed);
@@ -113,7 +135,12 @@ std::vector<DueEvent> PreviewScheduler::Advance(double bpm, int nFrames, double 
       double beatIntoBlock = consumedBeats + (it->beatAbs - windowStart);
       int sampleOffset = static_cast<int>(std::lround(beatIntoBlock * samplesPerBeat));
       sampleOffset = std::clamp(sampleOffset, 0, nFrames - 1);
-      due.push_back({it->trackId, it->vel, sampleOffset});
+      int vel = it->vel;
+      if (useVelOverride) {
+        const auto found = mVelOverride.find(VelocityKey(it->trackId, it->beatAbs));
+        if (found != mVelOverride.end()) vel = found->second;
+      }
+      due.push_back({it->trackId, vel, sampleOffset});
     }
 
     consumedBeats  += segLen;

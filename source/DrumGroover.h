@@ -138,6 +138,7 @@ private:
   // Runs OLE DoDragDrop for a file; returns true if dropped. Caller manages file deletion.
   bool RunNativeFileExportDrag(const std::string& path, const char* logPrefix);
 #endif
+  void HandlePreviewVelocity(const nlohmann::json& payload);
   void HandleSaveProject(const nlohmann::json& payload);
 
   // Saves the How-To as a standalone HTML file chosen in a save dialog; payload: { html, suggestedFilename }.

@@ -1485,6 +1485,7 @@ function neBuildVelocityLane(ctx) {
       const h = (r.note.vel/127)*(NE_VEL_H-14);
       r.line.style.height = h+'px';
       r.handle.style.bottom = (h-5.5)+'px';
+      neVelocityLive(r.trackId, r.note);
     });
   }
   function commitVelChange() {

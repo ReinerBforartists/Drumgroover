@@ -462,6 +462,43 @@ function fadedColor(hex, alpha) {
   return `rgba(${r},${g},${b},${Math.max(0.35,alpha)})`;
 }
 
+// While a velocity gesture is still going, the grid notes of the changed notes take their new shade at once (no re-render).
+let neShadeCache = null;
+function neShadeGridNote(trackId, note) {
+  const rowsCol = document.querySelector('#drumGrid .ne-rows');
+  if (!rowsCol) return;
+  if (!neShadeCache || neShadeCache.root !== rowsCol) {
+    const map = new Map();
+    rowsCol.querySelectorAll('.ne-note[data-sel-key]').forEach(el => { (map.get(el.dataset.selKey) || map.set(el.dataset.selKey, []).get(el.dataset.selKey)).push(el); });
+    neShadeCache = { root: rowsCol, map };
+  }
+  const els = neShadeCache.map.get(trackId + '|' + note.beat);
+  const track = trackList.find(t => t.id === trackId);
+  if (!els || !track) return;
+  const bg = fadedColor(track.color, note.vel / 127);
+  els.forEach(el => { if (!el.classList.contains('ne-note-locked')) el.style.background = bg; });
+}
+
+// A velocity changed mid-gesture: the grid note takes its shade at once, and while a block plays the change is heard at once too:
+// the host gets only the changed velocities (collected for 50 ms), the running pattern is neither sent again nor restarted. On
+// release the normal full sync follows. Without a host (standalone browser) the playback loop just re-reads the block.
+const neVelPending = new Map();
+let neVelTimer = null;
+function neFlushVelocities() {
+  neVelTimer = null;
+  if (!neVelPending.size) return;
+  const edits = [...neVelPending.values()];
+  neVelPending.clear();
+  hostBridge.send('previewVelocity', { edits });
+}
+function neVelocityLive(trackId, note) {
+  neShadeGridNote(trackId, note);
+  if (!(playing && playbackMode === 'block')) return;
+  if (!hostBridge.isEmbedded) { dataGeneration++; return; }
+  neVelPending.set(trackId + '|' + note.beat, { trackId, beatAbs: note.beat, vel: note.vel });
+  if (!neVelTimer) neVelTimer = setTimeout(neFlushVelocities, 50);
+}
+
 // Cache grid-line fragments by fingerprint for performance; evict oldest.
 const NE_GRID_CACHE_MAX = 24; // bounded so the cache can't grow unboundedly over a long session
 const neGridLineCache = new Map(); // fingerprint -> DocumentFragment, cloned per row

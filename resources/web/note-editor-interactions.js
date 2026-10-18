@@ -504,6 +504,7 @@ function attachVelDrag(myRef, allRefs, block) {
       const h = (v/127)*(NE_VEL_H-14);
       r.line.style.height = h+'px';
       r.handle.style.bottom = (h-5.5)+'px';
+      neVelocityLive(r.trackId, r.note);
     });
     window.dggShowValueTip && window.dggShowValueTip('Vel ' + lastV, e.clientX, e.clientY);
   });
@@ -511,6 +512,7 @@ function attachVelDrag(myRef, allRefs, block) {
     if (!dragging) return;
     dragging=false; myRef.handle.style.cursor='ns-resize';
     window.dggHideValueTip && window.dggHideValueTip();
+    neFlushVelocities();   // the host holds the last values of the gesture even when nothing is applied below
     const actuallyChanged = allRefs.some((r, i) => r.note.vel !== origVels[i]);
     const beforeLocked = snapshotLocked(block);
     const touched = new Set(allRefs.map(r => r.trackId));
@@ -551,6 +553,7 @@ function attachVelLanePaint(velInner, velRefs, block) {
     const h = (v / 127) * (NE_VEL_H - 14);
     ref.line.style.height = h + 'px';
     ref.handle.style.bottom = (h - 5.5) + 'px';
+    neVelocityLive(ref.trackId, ref.note);
   };
 
   // Rectangle select: picks the notes whose velocity head (handle) the rectangle touches, so a height range selects by loudness.
@@ -660,6 +663,7 @@ function attachVelLanePaint(velInner, velRefs, block) {
     if (!gesture) return;
     window.dggHideValueTip && window.dggHideValueTip();
     const g = gesture; gesture = null;
+    neFlushVelocities();
     const changed = velRefs.some((r, i) => r.note.vel !== g.origVels[i]);
     if (!changed) return;
     const beforeLocked = snapshotLocked(block);

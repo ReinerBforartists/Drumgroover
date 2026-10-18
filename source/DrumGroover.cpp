@@ -1610,6 +1610,7 @@ bool DrumGroover::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* p
     else if (type == "previewPlay")       HandlePreviewPlay(payload);
     else if (type == "previewStop")       HandlePreviewStop(payload);
     else if (type == "previewSeek")       HandlePreviewSeek(payload);
+    else if (type == "previewVelocity")   HandlePreviewVelocity(payload);
     else if (type == "regenerateKickGroup") HandleRegenerateKickGroup(payload);
     else if (type == "regenerateSnareGroup") HandleRegenerateSnareGroup(payload);
     else if (type == "regenerateSnareGhostLayer") HandleRegenerateSnareGhostLayer(payload);
@@ -2078,6 +2079,19 @@ void DrumGroover::HandlePreviewPlay(const nlohmann::json& payload)
   DGG_Log("HandlePreviewPlay: " + std::to_string(eventCount) + " events, totalBeats="
     + std::to_string(totalBeats) + " startBeat=" + std::to_string(startBeat)
     + " loopStart=" + std::to_string(loopStart) + " loopEnd=" + std::to_string(loopEnd));
+}
+
+// Velocity changes while the user still drags in the Note Editor: only the changed notes arrive, the running pattern is not replaced.
+void DrumGroover::HandlePreviewVelocity(const nlohmann::json& payload)
+{
+  if (!payload.contains("edits") || !payload["edits"].is_array()) return;
+  std::vector<dgg::VelocityEdit> edits;
+  edits.reserve(payload["edits"].size());
+  for (const auto& e : payload["edits"]) {
+    if (!e.contains("trackId") || !e.contains("beatAbs") || !e.contains("vel")) continue;
+    edits.push_back({ e["trackId"].get<std::string>(), e["beatAbs"].get<double>(), e["vel"].get<int>() });
+  }
+  mPreviewScheduler.SetVelocities(edits);
 }
 
 void DrumGroover::HandlePreviewStop(const nlohmann::json& /*payload*/)
