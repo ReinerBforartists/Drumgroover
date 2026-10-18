@@ -1799,7 +1799,9 @@ function getTurnaroundBarDistribution(block, barIdx, num, seed) {
     const feel = block.feel || 'straight';
     const lengthBeats = resolveTurnaroundLengthBeats(block, num);
     const densityPct = block.turnaroundDensity ?? 50;
-    const stepsPerBeat = block.turnaroundSubdivision ?? 4;
+    // The fill needs at least two steps inside its window: a window shorter than two steps of the chosen Subdiv gets a finer grid,
+    // so Fill Length is what it says.
+    const stepsPerBeat = Math.max(block.turnaroundSubdivision ?? 4, Math.ceil(2 / lengthBeats - 1e-9));
     const totalSteps = num * stepsPerBeat;
     const zoneSteps = Math.max(2, Math.round(lengthBeats * stepsPerBeat));
     const rawHits = Math.max(1, Math.round((densityPct/100) * zoneSteps));
@@ -1853,9 +1855,9 @@ function neTurnaroundNotesForBar(block, tid, barIdx, len, num, sourceBar) {
   (dist[tid] || []).forEach(b => { if (!hasNoteNear(sourceBar, b)) out.push({ beat: b + barIdx * num, vel: fillVel, turnaround: true }); });
   if (tid === 'kick') {
     const kickDensity = block.turnaroundKickDensity ?? 100;
-    const kickSubdivision = block.turnaroundKickSubdivision ?? 1;
     const kickSeed = block.turnaroundKickSeed ?? 0;
     const lengthBeats = resolveTurnaroundLengthBeats(block, num);
+    const kickSubdivision = Math.max(block.turnaroundKickSubdivision ?? 1, Math.ceil(2 / lengthBeats - 1e-9)); // same rule as the fill grid
     const kickTotalSteps = num * kickSubdivision;
     const kickZoneSteps = Math.max(2, Math.round(lengthBeats * kickSubdivision));
     const kickHits = Math.max(1, Math.round((kickDensity/100) * kickZoneSteps));

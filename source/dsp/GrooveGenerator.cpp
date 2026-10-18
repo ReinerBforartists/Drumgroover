@@ -64,7 +64,8 @@ const std::unordered_map<std::string, std::vector<double>>& getTurnaroundBarDist
     const Feel feel = block.feel;
     const double lengthBeats = resolveTurnaroundLengthBeats(block, numerator);
     const double densityPct = block.turnaroundDensity;
-    const double stepsPerBeat = block.turnaroundSubdivision;
+    // At least two steps must fit in the window: a shorter window gets a finer grid, so Fill Length is what it says.
+    const double stepsPerBeat = std::max(static_cast<double>(block.turnaroundSubdivision), std::ceil(2.0 / lengthBeats - 1e-9));
     const int totalSteps = static_cast<int>(numerator * stepsPerBeat);
     const int zoneSteps = std::max(2, static_cast<int>(std::round(lengthBeats * stepsPerBeat)));
     const int rawHits = std::max(1, static_cast<int>(std::round((densityPct / 100.0) * zoneSteps)));
@@ -577,13 +578,14 @@ void replicateGroupAcrossLength(Block& block, const Grid& grid, const std::vecto
       // Kick's own independent turnaround layer.
       if (turnaround && tid == "kick") {
         const double lengthBeats = resolveTurnaroundLengthBeats(block, num);
-        const int kickTotalSteps = static_cast<int>(num * block.turnaroundKickSubdivision);
-        const int kickZoneSteps = std::max(2, static_cast<int>(std::round(lengthBeats * block.turnaroundKickSubdivision)));
+        const double kickSubdivision = std::max(static_cast<double>(block.turnaroundKickSubdivision), std::ceil(2.0 / lengthBeats - 1e-9));
+        const int kickTotalSteps = static_cast<int>(num * kickSubdivision);
+        const int kickZoneSteps = std::max(2, static_cast<int>(std::round(lengthBeats * kickSubdivision)));
         const int kickHits = std::max(1, static_cast<int>(std::round((block.turnaroundKickDensity / 100.0) * kickZoneSteps)));
         auto kickMask = buildEndAnchoredEuclidean(kickHits, kickZoneSteps, block.turnaroundKickSeed);
         for (int i = 0; i < static_cast<int>(kickMask.size()); i++) {
           if (!kickMask[i]) continue;
-          const double beat = (kickTotalSteps - kickZoneSteps + i) / block.turnaroundKickSubdivision;
+          const double beat = (kickTotalSteps - kickZoneSteps + i) / kickSubdivision;
           if (!hasNoteNear(sourceBarBeats, beat)) all.push_back({beat + barIdx * num, 115, true});
         }
       }
