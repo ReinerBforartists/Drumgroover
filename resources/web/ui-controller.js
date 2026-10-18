@@ -2729,3 +2729,20 @@ function updatePaletteScrollbar() {
 
   updatePaletteScrollbar();
 })();
+// One-off result messages in the status text (top right) fall back to the transport state after a few seconds.
+// Ongoing states (baking, auto gain, exporting, saving/loading) are not in the list and stay until their own code changes them.
+(function initStatusAutoReset() {
+  const el = document.getElementById('statusText');
+  if (!el) return;
+  const TRANSIENT = /^(New project started|Project saved|Project loaded|MIDI Song exported|No blocks to export|Exported |Export complete|Export failed|Drag export failed)/;
+  const RESET_MS = 4000;
+  let timer = null;
+  new MutationObserver(() => {
+    clearTimeout(timer);
+    const text = el.textContent;
+    if (!TRANSIENT.test(text)) return;
+    timer = setTimeout(() => {
+      if (el.textContent === text) el.textContent = (typeof playing !== 'undefined' && playing) ? 'playing…' : 'ready';
+    }, RESET_MS);
+  }).observe(el, { childList: true, characterData: true, subtree: true });
+})();
