@@ -73,6 +73,7 @@ struct Block {
   bool   turnaroundVaryPerOccurrence = false;
   int    turnaroundFillVel = 112;
   bool   turnaroundCrash   = true; // default true, can be opted out
+  bool   turnaroundHiHat   = true; // false: the hi-hat is silent in the fill window
 
   double   turnaroundKickDensity     = 100.0;
   double   turnaroundKickSubdivision = 1.0;

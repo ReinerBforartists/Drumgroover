@@ -481,7 +481,11 @@ function markTrackManuallyEdited(block, trackId, touchedNotes) {
   let lockMain = true, lockTurnaround = true;
   if (Array.isArray(touchedNotes) && touchedNotes.length && !(track && track.role === 'custom') && (block.turnaroundInterval || 0) > 0) {
     const num = block.numerator;
-    const inArea = touchedNotes.map(n => neNoteInTurnaroundArea(block, n, num));
+    // The turnaround only owns the groups the fill drives (its instruments, the Fill Kick, the closing crash). A plain note of any other
+    // group inside the fill window, e.g. a hi-hat that keeps playing, is part of that group's own pattern.
+    const driven = neRelevantEngineGroups(block.turnaroundInstruments || ['snare']).includes(groupId)
+      || groupId === 'kick' || (groupId === 'cymbals' && block.turnaroundCrash !== false);
+    const inArea = touchedNotes.map(n => !!n.turnaround || (driven && neNoteInTurnaroundArea(block, n, num)));
     lockTurnaround = inArea.some(Boolean);
     lockMain = inArea.some(x => !x);
     // A hand-placed note in the fill window belongs to the turnaround: flagged, it is kept while the turnaround is locked.
@@ -1753,7 +1757,7 @@ const BLOCK_DEFAULT_LENGTH = { intro:1, verse:8, chorus:8, bridge:8, outro:1, fi
 const BREAK_DEFAULT_BEATS = 2;
 const DEFAULT_BREAK_PARENT = { verseBreak:'verse', chorusBreak:'chorus', bridgeBreak:'bridge' };
 
-const TURNAROUND_INSTRUMENT_TRACKS = { toms: ['tomHi','rackTom2Center','tomMid'], snare: ['snare'], hihat: ['chh'], floorTom: ['tomLow'], crash: ['crash1'] };
+const TURNAROUND_INSTRUMENT_TRACKS = { toms: ['tomHi','rackTom2Center','tomMid'], snare: ['snare'], hihat: ['chh'], floorTom: ['tomLow'], crash: ['crash1'] }; // hihat: Break/Intro/Outro fills only; the turnaround's hi-hat is the "Has Hi-Hat" setting
 
 function getTurnaroundSeed(block) {
   return block.turnaroundSeed;
@@ -1891,6 +1895,9 @@ function replicateGroupAcrossLength(block, g, trackIds, phraseLen) {
     const keepFills = !!(groupId && neTurnaroundLocked(block, groupId));
     const keptFills = keepFills ? (block.data[tid] || []).filter(n => n.turnaround) : [];
     const phraseSource = (block.data[tid] || []).filter(n => n.beat < phrase * num && !n.turnaround);
+    // "Has Hi-Hat" off: the hi-hat is silent in the fill window.
+    const silenceWindow = groupId === 'hihat' && block.turnaroundHiHat === false;
+    const windowStart = num - resolveTurnaroundLengthBeats(block, num) - 1e-6;
     const all = [];
     for (let barIdx = 0; barIdx < len; barIdx++) {
       const sourceBarIdx = barIdx % phrase;
@@ -1899,7 +1906,9 @@ function replicateGroupAcrossLength(block, g, trackIds, phraseLen) {
         .filter(n => n.beat >= srcLo && n.beat < srcLo + num)
         .map(n => ({ beat: n.beat - srcLo, vel: n.vel }));
       const buildFrac = len > 1 ? barIdx / (len - 1) : 0;
+      const barSilent = silenceWindow && neIsTurnaroundBar(block, barIdx);
       sourceBar.forEach(n => {
+        if (barSilent && n.beat >= windowStart) return;
         let beat = n.beat, vel = n.vel;
         if (velocityBuild > 0) vel = Math.max(1, Math.min(127, Math.round(vel + buildFrac * 20 * velocityBuild)));
         all.push({ beat: beat + barIdx * num, vel });

@@ -471,6 +471,24 @@ function neBuildTurnaroundPanel(panel, ctx) {
   tvpGroup.appendChild(tvpLabel);
   panel.appendChild(tvpGroup);
 
+  // Has Hi-Hat: whether the hi-hat keeps playing in the fill window. Off = silent there. (Not a fill instrument: the fill never adds hi-hat figures.)
+  const thGroup = document.createElement('div');
+  thGroup.className = 'ne-ctl-group';
+  const thLabel = document.createElement('label');
+  thLabel.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;';
+  thLabel.dataset.tooltip = 'Has Hi-Hat\nOn: the hi-hat keeps playing through the fill. Off: the hi-hat is silent in the fill window.';
+  const thCheck = document.createElement('input');
+  thCheck.type = 'checkbox'; thCheck.checked = block.turnaroundHiHat !== false;
+  thCheck.dataset.tooltip = thLabel.dataset.tooltip;
+  thCheck.addEventListener('change', () => turnaroundUndoable('Fill hi-hat', () => { block.turnaroundHiHat = thCheck.checked; }));
+  const thText = document.createElement('span');
+  thText.className = 'ne-ctl-label';
+  thText.style.textTransform = 'none';
+  thText.textContent = 'Has Hi-Hat';
+  thLabel.appendChild(thCheck); thLabel.appendChild(thText);
+  thGroup.appendChild(thLabel);
+  panel.appendChild(thGroup);
+
   // Fill Subdivision/Amount
   const tsIdx = Math.max(0, SUBDIVISION_KNOB_VALUES.indexOf(block.turnaroundSubdivision ?? NE_DEFAULTS.subdivision));
   const tsDial = neCreateDial({
@@ -500,7 +518,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
   const tiBox = document.createElement('div');
   tiBox.className = 'ne-ctl-row-items';
   tiBox.style.cssText = 'display:flex;flex-direction:column;align-items:flex-start;gap:4px;';
-  neInstrumentCheckboxRow(tiBox, [['snare','Snare'],['toms','Toms'],['hihat','Hi-Hat'],['floorTom','Floor Tom'],['crash','2x Crash']],
+  neInstrumentCheckboxRow(tiBox, [['snare','Snare'],['toms','Toms'],['floorTom','Floor Tom'],['crash','2x Crash']],
     () => block.turnaroundInstruments || ['snare'],
     (arr) => { block.turnaroundInstruments = arr; },
     applyTurnaroundChange, 'turnaround-fill', false,

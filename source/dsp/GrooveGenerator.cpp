@@ -550,7 +550,12 @@ void replicateGroupAcrossLength(Block& block, const Grid& grid, const std::vecto
       const bool turnaround = block.turnaroundInterval > 0 && ((barIdx + 1) % block.turnaroundInterval == 0);
       const double buildFrac = len > 1 ? static_cast<double>(barIdx) / (len - 1) : 0.0;
 
+      // "Has Hi-Hat" off: the hi-hat is silent in the fill window.
+      const bool silenceWindow = turnaround && tid == "chh" && !block.turnaroundHiHat;
+      const double windowStart = num - resolveTurnaroundLengthBeats(block, num) - 1e-6;
+
       for (const auto& n : sourceBar) {
+        if (silenceWindow && n.beat >= windowStart) continue;
         int vel = n.vel;
         if (block.velocityBuild > 0.0) {
           vel = std::max(1, std::min(127, static_cast<int>(std::round(vel + buildFrac * 20.0 * block.velocityBuild))));

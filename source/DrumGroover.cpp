@@ -447,6 +447,7 @@ dgg::Block BlockFromJson(const nlohmann::json& j)
   b.turnaroundVaryPerOccurrence = j.value("turnaroundVaryPerOccurrence", b.turnaroundVaryPerOccurrence);
   b.turnaroundFillVel           = j.value("turnaroundFillVel", b.turnaroundFillVel);
   b.turnaroundCrash             = j.value("turnaroundCrash", true);
+  b.turnaroundHiHat             = j.value("turnaroundHiHat", true);
 
   b.turnaroundKickDensity     = j.value("turnaroundKickDensity", b.turnaroundKickDensity);
   b.turnaroundKickSubdivision = j.value("turnaroundKickSubdivision", b.turnaroundKickSubdivision);
