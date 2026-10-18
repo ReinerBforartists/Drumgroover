@@ -334,6 +334,10 @@ function renderNoteEditor() {
   ph.id = 'nePlayhead'; ph.className = 'dg-playhead';
   phLayer.appendChild(ph);
   container.appendChild(phLayer);
+  // The playhead ends above the velocity lane's horizontal scrollbar (present only while the lane scrolls).
+  const fitPhToScrollbar = () => { phLayer.style.bottom = Math.max(0, velLane.offsetHeight - velLane.clientHeight) + 'px'; };
+  fitPhToScrollbar();
+  new ResizeObserver(fitPhToScrollbar).observe(velLane);
   if (!(playing && playbackMode === 'block')) neShownBeat = nePlayheadBeat;
 
   const syncScroll = (src) => { ruler.scrollLeft = src.scrollLeft; loopRuler.scrollLeft = src.scrollLeft; rowsCol.scrollLeft = src.scrollLeft; velLane.scrollLeft = src.scrollLeft; neUpdatePlayheadEl(); neMaybeShiftNoteWindow(); };
