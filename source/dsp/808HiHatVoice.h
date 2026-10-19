@@ -122,6 +122,10 @@ public:
 
   void Trigger(double velocity01) override { Trigger(velocity01, Articulation::Metal); }
 
+  // Accent of the NEXT Trigger(), 0..1 of the 808 trigger range (0 = the normal note, 4.09 V, the calibrated reference every cached variant is baked at; 1 = 14 V). The velocity is only the loudness.
+  // An accented hit is not in the variant pool: it is synthesised live with the accent voltage on the accent stage of the envelope generator.
+  void SetAccent(double accent01) override { mAccent = std::clamp(accent01, 0.0, 1.0); }
+
   void Trigger(double velocity01, Articulation art)
   {
     mVelocity = velocity01;
@@ -142,14 +146,14 @@ public:
     mCachePlaybackIsPrePitched = false;
     mSynthesising = false; mChoking = false; mChokeGain = 1.0;
     // Variant pool first: each variant is baked at its own real pitch, so no resampling at playback.
-    if (diagUseVariantPool)
+    if (diagUseVariantPool && mAccent <= 0.0)
     {
       const dgg::TR808VariantKey128 variantKey = MakeVariantPoolKey(FamilyKey(circuitFamily), variantPoolArticulationId, decayKnob01, levelKnob01, pitchRatio, mSampleRate);
       mCachePlayback = dgg::TR808HiHatVariantPool::Instance().GetRandom(variantKey);
       if (mCachePlayback) mCachePlaybackIsPrePitched = true;
     }
     // A miss is reported (the plugin bakes the key); this hit is synthesised live with the fast model.
-    if (cacheOnly && !mCachePlayback) dgg::CacheMissSeq().fetch_add(1, std::memory_order_relaxed);
+    if (cacheOnly && mAccent <= 0.0 && !mCachePlayback) dgg::CacheMissSeq().fetch_add(1, std::memory_order_relaxed);
     if (!mCachePlayback) StartSynthesis();
   }
 
@@ -212,13 +216,12 @@ public:
   void Choke()
   {
     if (circuitFamily != CircuitFamily::Open || mArt != Articulation::Metal || !mActive) return;
-    if (mSynthesising) { if (mOpen) mOpen->Choke(kFullAccentVel); return; }
+    if (mSynthesising) { if (mOpen) mOpen->Choke(hhenv::Env::AccentVolt(0.0)); return; }
     if (mChoking) return;
     mChoking = true; mChokeHoldSamples = (long)std::llround(kChokeDelaySec * mSampleRate); mChokeGain = 1.0; mChokeStep = std::exp(-1.0 / (kChokeTauSec * mSampleRate));
   }
 
 private:
-  static constexpr int kFullAccentVel = 127;
   static constexpr double kChokeTauSec = 0.115, kChokeDelaySec = 0.003, kChokeFloor = 0.003;   // fade of a choked cache buffer; below kChokeFloor (-50 dB) the voice ends
   static constexpr double kPrerollSec = 0.4;                       // the BP2 runs this long from rest before the hit
   static constexpr double kDcBlockR = 0.9995;                       // DC blocker (the rectified signal shifts the coupling capacitors), ~4 Hz corner
@@ -243,8 +246,8 @@ private:
     if (extra <= 0.0) { mRng ^= mRng << 13; mRng ^= mRng >> 17; mRng ^= mRng << 5; extra = 2.0 * (double)mRng / 4294967296.0; }
     const double level = std::min(1.0, std::max(0.0, levelKnob01)), decay = std::min(1.0, std::max(0.0, decayKnob01));
     const double offset = kPrerollSec + extra;
-    if (circuitFamily == CircuitFamily::Open) { mOpen->SetLevel(level); mOpen->Trigger(kFullAccentVel, decay, pitchRatio, offset, kPrerollSec); }
-    else { mClosed->SetLevel(level); mClosed->Trigger(kFullAccentVel, 0.5, pitchRatio, offset, kPrerollSec); }
+    if (circuitFamily == CircuitFamily::Open) { mOpen->SetLevel(level); mOpen->Trigger(hhenv::Env::AccentVolt(mAccent), decay, pitchRatio, offset, kPrerollSec); }
+    else { mClosed->SetLevel(level); mClosed->Trigger(hhenv::Env::AccentVolt(mAccent), 0.5, pitchRatio, offset, kPrerollSec); }
     mOutX1 = mOutY1 = 0.0;
   }
 
@@ -285,6 +288,7 @@ private:
   Articulation mArt = Articulation::Metal;
   double mElapsed = 0.0;
   double mVelocity = 0.0;
+  double mAccent = 0.0;
   bool mActive = false;
 };
 

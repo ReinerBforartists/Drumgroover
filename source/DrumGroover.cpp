@@ -2377,6 +2377,8 @@ void DrumGroover::HandleRegenerateFillBlock(const nlohmann::json& payload)
   DGG_Log("HandleRegenerateFillBlock: blockId='" + block.id + "'");
 }
 
+namespace { constexpr int kUiPreviewMidiChannel = 14; }   // MIDI channel 15: UI auditioning of the kit notes; accented only if the payload says so (live MIDI uses velocity >= 100)
+
 void DrumGroover::HandleMidiNoteOn(const nlohmann::json& payload)
 {
   const int note = payload.value("note", -1);
@@ -2386,7 +2388,12 @@ void DrumGroover::HandleMidiNoteOn(const nlohmann::json& payload)
   velocity = std::max(1, std::min(127, velocity));
 
   IMidiMsg msg;
-  msg.MakeNoteOnMsg(note, velocity, 0);
+  if (payload.contains("accent"))   // Drum Engine "Preview with accent" switch
+  {
+    mUiPreviewAccent.store(payload.value("accent", false), std::memory_order_relaxed);
+    msg.MakeNoteOnMsg(note, velocity, 0, kUiPreviewMidiChannel);
+  }
+  else msg.MakeNoteOnMsg(note, velocity, 0);
   SendMidiMsgFromUI(msg);
   DGG_Log("HandleMidiNoteOn: note=" + std::to_string(note) + " velocity=" + std::to_string(velocity));
 }
@@ -3571,6 +3578,7 @@ void DrumGroover::HandleCustomPreview(const nlohmann::json& payload)
   if (k < 0 || k >= dgg::kNumCustomInstruments) return;
   IMidiMsg msg;
   const int vel = std::clamp(payload.value("velocity", 127), 1, 127);   // the volume knob is applied to the output, not to the velocity
+  mUiPreviewAccent.store(payload.value("accent", false), std::memory_order_relaxed);
   msg.MakeNoteOnMsg(k, vel, 0, kCustomPreviewMidiChannel);
   SendMidiMsgFromUI(msg);
   DGG_Log("HandleCustomPreview: instrument=" + std::string(dgg::CustomInstrument(k).name));
@@ -3689,7 +3697,7 @@ void DrumGroover::TriggerInstrument(const dgg::InstrumentDef& inst, double veloc
       // trigger, to every other ride pool.
       const bool isMute = dgg::StrEq(inst.articulation, "Mute");
       if (!isMute) for (auto& p : mRidePools) p.ChokeAll();
-      mRidePools[inst.poolSlot].SetNextGain(gain);
+      mRidePools[inst.poolSlot].SetNextGain(gain); mRidePools[inst.poolSlot].SetNextAccent(accent01);
       mRidePools[inst.poolSlot].Trigger(velocity01, dgg::RideArticulationForPool(inst.poolSlot));
       if (isMute)
       {
@@ -3699,12 +3707,12 @@ void DrumGroover::TriggerInstrument(const dgg::InstrumentDef& inst, double veloc
       break;
     }
     case dgg::EngineKind::Cymbal:   // Crash and Mute play TR808RideVoice's articulations of the same names
-      mCymbalPools[inst.poolSlot].SetNextGain(gain); mCymbalPools[inst.poolSlot].Trigger(velocity01, inst.isMute ? dgg::TR808RideVoice::Articulation::Mute : dgg::TR808RideVoice::Articulation::Crash);
+      mCymbalPools[inst.poolSlot].SetNextGain(gain); mCymbalPools[inst.poolSlot].SetNextAccent(accent01); mCymbalPools[inst.poolSlot].Trigger(velocity01, inst.isMute ? dgg::TR808RideVoice::Articulation::Mute : dgg::TR808RideVoice::Articulation::Crash);
       if (inst.isMute)   // a mute hit chokes the crash of its cymbal
         ForEachCymbalPool([&inst](const dgg::InstrumentDef& d, auto& pool) { if (d.cymbalPos == inst.cymbalPos && !d.isMute) pool.ChokeAll(); });
       break;
     case dgg::EngineKind::HiHat:
-      mHiHatPools[inst.poolSlot].SetNextGain(gain); mHiHatPools[inst.poolSlot].Trigger(velocity01);
+      mHiHatPools[inst.poolSlot].SetNextGain(gain); mHiHatPools[inst.poolSlot].SetNextAccent(accent01); mHiHatPools[inst.poolSlot].Trigger(velocity01);
       if (dgg::StrEq(inst.circuitFamily, "Closed"))   // a closed hit chokes every open hi-hat
         ForEachHiHatPool([](const dgg::InstrumentDef& d, auto& pool) { if (dgg::StrEq(d.circuitFamily, "Open")) pool.ChokeAll(); });
       break;
@@ -3760,7 +3768,12 @@ void DrumGroover::ProcessMidiMsg(const IMidiMsg& msg)
     if (msg.Channel() == kCustomPreviewMidiChannel)   // UI preview of a custom instrument, note = registry index
     {
       if (msg.NoteNumber() >= 0 && msg.NoteNumber() < dgg::kNumCustomInstruments && mActive.load(std::memory_order_relaxed) && !mUserMuted.load(std::memory_order_relaxed))
-        TriggerCustom(msg.NoteNumber(), msg.Velocity() / 127.0, mCustomPreviewGain[msg.NoteNumber()].load(std::memory_order_relaxed));
+        TriggerCustom(msg.NoteNumber(), msg.Velocity() / 127.0, mCustomPreviewGain[msg.NoteNumber()].load(std::memory_order_relaxed), mUiPreviewAccent.load(std::memory_order_relaxed));
+      return;
+    }
+    if (msg.Channel() == kUiPreviewMidiChannel)   // Drum Engine auditioning: accent by the switch, not by velocity
+    {
+      TriggerGmNote(msg.NoteNumber(), msg.Velocity() / 127.0, mUiPreviewAccent.load(std::memory_order_relaxed));
       return;
     }
     TriggerGmNote(msg.NoteNumber(), msg.Velocity() / 127.0, msg.Velocity() >= 100);   // live MIDI has no Accent lane: a loud note is accented (Yocto manual: velocity >= 100)

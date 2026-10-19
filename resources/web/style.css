@@ -1495,3 +1495,6 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 .hotkeys-panel-body > b.hk-title:first-child { margin-top:6px; }
 .hotkeys-panel-close { width:18px; height:18px; line-height:15px; padding:0; border-radius:4px; border:1px solid var(--border2); background:var(--raised); color:var(--muted); font-size:12px; cursor:pointer; }
 .hotkeys-panel-close:hover { color:#fff; border-color:#ef4444; background:rgba(239,68,68,.15); }
+
+#dePreviewAccent { align-self:center; }
+#dePreviewAccent.active { color:var(--green); border-color:var(--green); }

@@ -381,6 +381,7 @@ private:
   std::array<dgg::VoicePool<dgg::TR808Pc2Voice, 6>, dgg::kNumCustomInstruments> mCustomPc2Pools;   // the instrument of kind Pc2 (PC-2 sheet); the pools of the other kinds stay idle
   std::array<dgg::VoicePool<dgg::TR808CbVoice, 6>, dgg::kNumCustomInstruments> mCustomCbPools;     // the instrument of kind Cowbell (CB sheet); the pools of the other kinds stay idle
   std::atomic<int> mCustomNote[dgg::kNumCustomInstruments];   // GM note of the assigned track, -1: none
+  std::atomic<bool> mUiPreviewAccent{false};   // Drum Engine "Preview with accent" switch, set with each UI preview note
   std::atomic<double> mCustomPreviewGain[dgg::kNumCustomInstruments];   // volume knob of a card without a track: scales the preview velocity (unity = 1)
   void HandleSetCustomPreviewGain(const nlohmann::json& payload);
   std::mutex mCustomMutex;

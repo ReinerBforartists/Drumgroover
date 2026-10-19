@@ -123,14 +123,21 @@ function deIsBlackNote(note) {
 }
 
 // Sends a MIDI note event to the native engine via the bridge.
+// Whether auditioning plays accented (switch next to the Accent amount); the host applies the Accent amount to it.
+function dePreviewAccentOn() {
+  const el = document.getElementById('dePreviewAccent');
+  return !!(el && el.classList.contains('active'));
+}
+
 function deSendMidi(type, note) {
   if (typeof hostBridge === 'undefined' || !hostBridge.send) return;
   // A custom instrument is previewed by its registry index (no track needed): the host plays it on its own MIDI preview channel.
   if (note !== null && typeof note === 'object') {
-    if (type === 'midiNoteOn') hostBridge.send('customPreview', { index: note.custom });
+    if (type === 'midiNoteOn') hostBridge.send('customPreview', { index: note.custom, accent: dePreviewAccentOn() });
     return;
   }
-  hostBridge.send(type, { note });
+  if (type === 'midiNoteOn') hostBridge.send(type, { note, accent: dePreviewAccentOn() });
+  else hostBridge.send(type, { note });
 }
 
 // =========================================
@@ -2197,6 +2204,12 @@ window.initDrumEngineTab = initDrumEngineTab;
   const slider = document.getElementById('deAccentAmount');
   const val = document.getElementById('deAccentAmountVal');
   if (!slider) return;
+  const previewBtn = document.getElementById('dePreviewAccent');
+  if (previewBtn) previewBtn.addEventListener('click', () => {
+    const on = !previewBtn.classList.contains('active');
+    previewBtn.classList.toggle('active', on);
+    previewBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
   wireKnob(slider);
   const ctrl = slider.closest('.ctrl');
   if (ctrl) ctrl.dataset.def = '0';

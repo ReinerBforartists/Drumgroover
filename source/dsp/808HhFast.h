@@ -36,10 +36,10 @@ template <bool kOpen> class HhChain
   }
   void SetLevel(double level) { mLevel = level; mOut.Build(mH, level); if (kSubT > 0) mOutT.Build(mHT, level); }
 
-  // vel127 below the threshold of the accent stage gives no sound; bankOffset / preroll: see Bank::Reset
-  void Trigger(int vel127, double vr3, double pitchRatio, double bankOffset, double preroll)
+  // accentVolt: trigger amplitude of the accent stage (4.09 V = the normal note, up to 14 V; hhenv::Env::AccentVolt(accent01)); below the threshold of the stage the hit gives no sound; bankOffset / preroll: see Bank::Reset
+  void Trigger(double accentVolt, double vr3, double pitchRatio, double bankOffset, double preroll)
   {
-    mEnv.Trigger(kOpen ? hhenv::Env::Open : hhenv::Env::Closed, vel127, vr3);
+    mEnv.Trigger(kOpen ? hhenv::Env::Open : hhenv::Env::Closed, accentVolt, vr3);
     mActive = mEnv.Active(); mHost = 0; mQuiet = 0; mTail = false; mPow = 0.0; mPowPeak = 0.0;
     if (!mActive) return;
     mBank.Reset(pitchRatio, bankOffset, preroll);
@@ -48,7 +48,7 @@ template <bool kOpen> class HhChain
     mBp0 = mBank.Eval(0.0); mEnv0 = kOpen ? mEnv.Value(0.0) : mCoreDc[kEnvNode]; mDrv0 = 0.0;
     if (kOpen) { mFolX = mFolDcX; mV13 = Follower(mEnv0, mCoreDc[0]); mV349prev = mCoreDc[0]; }
   }
-  void Choke(int chVel127) { if (kOpen) mEnv.Choke(chVel127); }
+  void Choke(double chAccentVolt) { if (kOpen) mEnv.Choke(chAccentVolt); }
   bool Active() const { return mActive; }
 
   // one host sample

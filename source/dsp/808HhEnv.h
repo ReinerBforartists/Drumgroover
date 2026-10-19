@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Reiner Prokein
 #pragma once
 // HiHat envelope generator (trigger / accent stage, decay storage, choke logic) as a fast model: the trigger rise phase (0 .. kT0, where the circuit is a stiff edge-driven transient) is a table per
-// velocity, from kT0 on the 24-node network is integrated with the dense trapezoid solver and a step that grows with the time since the trigger (the decay is smooth). The state at kT0 is tabulated per
-// velocity and VR3 (OH). A closed-hat trigger chokes a sounding open hat by driving the CH section of the OH network to the state of a CH hit.
+// accent voltage (rows kAcc: the velocity steps up to 4.09 V, then the accent range up to 14 V, linear in between), from kT0 on the 24-node network is integrated with the dense trapezoid solver and a step
+// that grows with the time since the trigger (the decay is smooth). The state at kT0 is tabulated per accent voltage and VR3 (OH). A closed-hat trigger chokes a sounding open hat by driving the CH section of the OH network to the state of a CH hit.
 #include <algorithm>
 #include <cmath>
 #include "808HhNet.h"
@@ -17,21 +17,23 @@ class Env
   enum Side { Open = 0, Closed = 1 };
   using Tab = hhmodel::envtab;
   static constexpr int kN = hhmodel::env::kN, kNodeOh = 18, kNodeCh = 22;   // unknowns n334 (OH envelope) and n350 (CH envelope)
-  static constexpr double kAccentFullScaleVolt = 4.09;
+  static constexpr double kAccentFullScaleVolt = 4.09, kAccentMaxVolt = 14.0;
 
-  static double AccentVolt(int vel127) { return (double)vel127 / 127.0 * kAccentFullScaleVolt; }
-  // hits below this velocity do not move the envelope (the accent stays under the threshold of the trigger stage)
-  static bool Audible(int vel127) { return vel127 >= Tab::kVelMin; }
+  // trigger amplitude of the accent stage: 0 = the normal note (4.09 V), 1 = the full accent of the 808 (14 V)
+  static double AccentVolt(double accent01) { return kAccentFullScaleVolt + std::min(1.0, std::max(0.0, accent01)) * (kAccentMaxVolt - kAccentFullScaleVolt); }
+  // hits below the lowest tabulated voltage do not move the envelope (the accent stays under the threshold of the trigger stage)
+  static bool Audible(double accentVolt) { return accentVolt >= Tab::kAcc[0] - 1e-9; }
 
   // vr3: the decay pot of the open hat (0 .. 1, the rheostat of Rvr3 over 2 MOhm)
-  void Trigger(Side side, int vel127, double vr3)
+  void Trigger(Side side, double accentVolt, double vr3)
   {
-    mSide = side; mActive = Audible(vel127); mVel = std::min(127, std::max(0, vel127)); mNode = side == Open ? kNodeOh : kNodeCh; mStarted = false; mPendingChoke = -1; mChokeVel = 0;
+    mSide = side; mActive = Audible(accentVolt); mNode = side == Open ? kNodeOh : kNodeCh; mStarted = false; mPendingChoke = -1; mChokeAcc = 0.0;
     mRest = hhmodel::env::kRest[mNode]; mT = 0.0;
     if (!mActive) return;
-    const int vi = std::min(mVel, Tab::kVelMin + Tab::kNumVel - 1) - Tab::kVelMin;
-    mEarly = (side == Open ? Tab::kEarlyOh : Tab::kEarlyCh) + (size_t)vi * Tab::kNumT; mEarlyIdx = 0; mDrive = Tab::kDriveCh + (size_t)vi * Tab::kNumT; mDriveIdx = 0;
-    mAccent = AccentVolt(mVel);
+    mAccent = std::min(accentVolt, kAccentMaxVolt);
+    int vi; double wa; AccRow(mAccent, vi, wa);
+    const size_t ro = (size_t)vi * Tab::kNumT; mEarly = (side == Open ? Tab::kEarlyOh : Tab::kEarlyCh) + ro; mDrive = Tab::kDriveCh + ro; mEarlyIdx = mDriveIdx = 0;
+    mEarly2 = wa > 0.0 ? mEarly + Tab::kNumT : nullptr; mDrive2 = wa > 0.0 ? mDrive + Tab::kNumT : nullptr; mEarly2Idx = mDrive2Idx = 0; mAccW = wa;
     // seed at kT0
     if (side == Open)
     {
@@ -39,27 +41,34 @@ class Env
       int j = 0; while (j + 2 < Tab::kNumVr3 && u > us[j + 1]) ++j; const double w = (u - us[j]) / (us[j + 1] - us[j]);
       const double* a = Tab::kSeedOh + ((size_t)vi * Tab::kNumVr3 + j) * kN; const double* b = a + kN;
       for (int k = 0; k < kN; ++k) mSeed[k] = a[k] + w * (b[k] - a[k]);
+      if (wa > 0.0)
+      {
+        const double* a2 = a + (size_t)Tab::kNumVr3 * kN; const double* b2 = a2 + kN;
+        for (int k = 0; k < kN; ++k) mSeed[k] += wa * ((a2[k] + w * (b2[k] - a2[k])) - (a[k] + w * (b[k] - a[k])));
+      }
       mNet.SetFixConductance(kVr3Fix, 1.0 / std::max(2e6 * vr3, 1.0));
     }
     else
     {
-      const double* a = Tab::kSeedCh + (size_t)vi * kN; for (int k = 0; k < kN; ++k) mSeed[k] = a[k];
+      const double* a = Tab::kSeedCh + (size_t)vi * kN; for (int k = 0; k < kN; ++k) mSeed[k] = a[k] + (wa > 0.0 ? wa * (a[kN + k] - a[k]) : 0.0);
       mNet.SetFixConductance(kVr3Fix, 1.0 / (2e6 * 0.5));
     }
   }
 
   // a closed hat is hit (velocity chVel127) while this open-hat envelope sounds: from now (the time of the next Value() call) the CH section of the network is that of a CH hit
-  void Choke(int chVel127)
+  void Choke(double chAccentVolt)
   {
-    if (mSide != Open || !mActive || !Audible(chVel127)) return;
-    mChokeVel = chVel127; mPendingChoke = mT;   // taken over at the next network step boundary (at most one step, 1 ms, late)
+    if (mSide != Open || !mActive || !Audible(chAccentVolt)) return;
+    mChokeAcc = std::min(chAccentVolt, kAccentMaxVolt); mPendingChoke = mT;   // taken over at the next network step boundary (at most one step, 1 ms, late)
   }
 
   // closed hat: the base n578 of the envelope follower QH28 (fed to the signal core, which contains the follower); t must not decrease between calls
   double Drive(double t)
   {
     if (!mActive || t >= Tab::kT0) return 0.0;
-    return std::max(0.0, Interp(mDrive, mDriveIdx, t, 0.0));   // the ringing of the trigger edge below zero keeps the follower off anyway
+    double d = Interp(mDrive, mDriveIdx, t, 0.0);
+    if (mDrive2) d += mAccW * (Interp(mDrive2, mDrive2Idx, t, 0.0) - d);
+    return std::max(0.0, d);   // the ringing of the trigger edge below zero keeps the follower off anyway
   }
 
   bool Active() const { return mActive; }
@@ -80,12 +89,23 @@ class Env
  private:
   static constexpr int kVr3Fix = 4;   // index of the Rvr3 conductance in the fixed-node list of hhmodel::env
   hhfast::DenseNet<hhmodel::env> mNet;
-  Side mSide = Open; bool mActive = false, mStarted = false; int mVel = 0, mNode = kNodeOh, mChokeVel = 0; double mAccent = 0.0, mRest = 0.0, mT = 0.0, mPendingChoke = -1.0;
-  const double* mEarly = nullptr; const double* mDrive = nullptr; int mEarlyIdx = 0, mDriveIdx = 0; double mSeed[kN];
+  Side mSide = Open; bool mActive = false, mStarted = false; int mNode = kNodeOh; double mAccent = 0.0, mRest = 0.0, mT = 0.0, mPendingChoke = -1.0, mChokeAcc = 0.0;
+  const double* mEarly = nullptr; const double* mDrive = nullptr; const double* mEarly2 = nullptr; const double* mDrive2 = nullptr; int mEarlyIdx = 0, mDriveIdx = 0, mEarly2Idx = 0, mDrive2Idx = 0; double mAccW = 0.0; double mSeed[kN];
+
+  // row of the accent table at or below the voltage and the weight of the next row (0 at a tabulated voltage, so the tabulated rows are used as they are)
+  static void AccRow(double accentVolt, int& row, double& w)
+  {
+    int i = 0; while (i + 2 < Tab::kNumAcc && accentVolt >= Tab::kAcc[i + 1]) ++i;
+    row = i; w = accentVolt <= Tab::kAcc[i] ? 0.0 : std::min(1.0, (accentVolt - Tab::kAcc[i]) / (Tab::kAcc[i + 1] - Tab::kAcc[i]));
+  }
   double mTa = 0.0, mTb = 0.0, mVa = 0.0, mVb = 0.0;
 
   // rise phase: cubic Hermite through the table (starting at rest)
-  double Early(double t) { return Interp(mEarly, mEarlyIdx, t, mRest); }
+  double Early(double t)
+  {
+    const double e = Interp(mEarly, mEarlyIdx, t, mRest);
+    return mEarly2 ? e + mAccW * (Interp(mEarly2, mEarly2Idx, t, mRest) - e) : e;
+  }
   static double Interp(const double* tab, int& idx, double t, double rest)
   {
     const double* tg = Tab::kTime; const int n = Tab::kNumT;
@@ -110,8 +130,8 @@ class Env
   }
   void ApplyChoke()
   {
-    const int vi = std::min(mChokeVel, Tab::kVelMin + Tab::kNumVel - 1) - Tab::kVelMin; const double* c = Tab::kSeedCh + (size_t)vi * kN;
-    for (int k : {12, 13, 14, 22}) mNet.SetV(k, c[k]);
+    int vi; double wa; AccRow(mChokeAcc, vi, wa); const double* c = Tab::kSeedCh + (size_t)vi * kN;
+    for (int k : {12, 13, 14, 22}) mNet.SetV(k, c[k] + (wa > 0.0 ? wa * (c[kN + k] - c[k]) : 0.0));
     mPendingChoke = -1.0;
   }
   void StepNet()

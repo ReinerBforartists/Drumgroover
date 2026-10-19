@@ -114,6 +114,10 @@ public:
 
   void Trigger(double velocity01) override { Trigger(velocity01, Articulation::BowTip); }
 
+  // Accent of the NEXT Trigger(), 0..1 of the 808 trigger range (0 = the normal note, 4.09 V, the calibrated reference every cached variant is baked at; 1 = 14 V). The velocity is only
+  // the loudness (linear, applied to the output). An accented hit is not in the variant pool: it is synthesised live with the accent voltage on the accent stage of the circuit model.
+  void SetAccent(double accent01) override { mAccent = std::clamp(accent01, 0.0, 1.0); }
+
   void Trigger(double velocity01, Articulation art)
   {
     mVelocity = velocity01;
@@ -134,20 +138,20 @@ public:
     mCachePlaybackPos = 0;
     mDebugVariantPoolIndex = -1;
     mDebugVariantPoolSize = 0;
-    if (diagUseVariantPool)
+    if (diagUseVariantPool && mAccent <= 0.0)
     {
       const dgg::TR808VariantKey128 variantKey = MakeVariantPoolKey(static_cast<int>(art), decayKnob01, toneKnob, levelKnob, pitchRatio, mSampleRate);
       mCachePlayback = dgg::TR808RideVariantPool::Instance().GetRandomIndexed(variantKey, mDebugVariantPoolIndex, &mDebugVariantPoolSize);
     }
     // A miss on a plugin voice is reported (the plugin bakes the key); this hit is synthesised live with the fast model below.
-    if (cacheOnly && !mCachePlayback) dgg::CacheMissSeq().fetch_add(1, std::memory_order_relaxed);
+    if (cacheOnly && mAccent <= 0.0 && !mCachePlayback) dgg::CacheMissSeq().fetch_add(1, std::memory_order_relaxed);
     mFastActive = false;
     if (!mCachePlayback)
     {
       PrepareLive();
       mFast.p->adaptiveTail = fastAdaptiveTail;
       mFast.p->Prepare(mSampleRate, fastCoreSteps > 0 ? fastCoreSteps : dgg::cyfast::CyChain::CoreStepsFor(mSampleRate), decayKnob01, toneKnob, Vr6Fraction(levelKnob));
-      mFast.p->Trigger(velocity01 * 4.09, pitchRatio, kFastBankOffsetSec + mFastBankWarmupSec, kFastPrerollSec);   // accent = velocity / 127 * 4.09 V
+      mFast.p->Trigger(kAccentRefVolt + mAccent * (kAccentMaxVolt - kAccentRefVolt), pitchRatio, kFastBankOffsetSec + mFastBankWarmupSec, kFastPrerollSec);
       mFastActive = true;
     }
   }
@@ -234,6 +238,7 @@ private:
   static constexpr double kSilenceFloorRel = 1.0e-4;
   static constexpr double kSilenceHoldSec = 0.15;
   static constexpr double kFastOutScale = 0.18;
+  static constexpr double kAccentRefVolt = 4.09, kAccentMaxVolt = 14.0;   // trigger amplitude of a normal note (calibrated reference) and of the full accent
   static constexpr double kFastBankOffsetSec = 0.4, kFastPrerollSec = 0.03;   // bank time at the trigger (+ the bake warm-up), BP1/BP2 run from rest this long before it
 
   // Resistance fraction of VR6 at knob position 0..1: JIS.A "15A" curve, 11 points (0/10/.../100 % rotation), piecewise linear.
@@ -272,6 +277,7 @@ private:
   int mDebugVariantPoolSize = 0;
   double mElapsed = 0.0;
   double mVelocity = 0.0;
+  double mAccent = 0.0;
   bool mActive = false;
   double mChokeStartSec = 0.0;
   // Choke fade in effect for the current hit and its precomputed exponential rate (log(0.001) / duration).
