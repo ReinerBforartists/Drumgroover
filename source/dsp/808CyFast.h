@@ -84,6 +84,7 @@ class CyChain
   double mFineUntil = 3e-3;                          // seconds after the trigger with mFinePasses Gauss-Seidel passes (study hooks: public members)
   int mFinePasses = 3, mPasses = 1;                  // passes during / after the fine phase
   static constexpr double kSwitchE = 6e-3;           // from here on the trigger devices Q2 / Q6 / Q19 are taken out (eg2)
+  static constexpr double kECoarseSec = 10e-3;       // from here on the envelope generators (E net, time constants >= 10 us) are stepped once per host sample (the set of the quiet tail), the cells keep their core steps
   static constexpr int kEdgeParts = 64;              // dense steps per core step around the trigger edges
   static constexpr double kTrigWidth = 2e-3, kTrigEdge = 1e-6, kTrigAmp = 5.0;   // TRIG_CY pulse: 5 V, 1 us edges, 2 ms wide
 
@@ -124,7 +125,7 @@ class CyChain
   // accentVolt: accent stage input (V, velocity / 127 * 4.09); bankOffset / preroll: see Bank::Reset
   void Trigger(double accentVolt, double pitchRatio, double bankOffset, double preroll)
   {
-    mAccent = accentVolt; mHostN = 0; mActive = true; mUseE2 = false; mTail = false; mEnv = 0.0; mEnvPeak = 0.0;
+    mAccent = accentVolt; mHostN = 0; mActive = true; mUseE2 = false; mTail = false; mECoarse = false; mEnv = 0.0; mEnvPeak = 0.0;
     mBank.Reset(pitchRatio, bankOffset, preroll); mBank.Advance(0.0);
     double e[16] = {0}, a[16] = {0}, b[16] = {0}, c[16] = {0};
     e[2] = a[2] = b[2] = c[2] = 15.0; e[3] = a[3] = b[3] = c[3] = -15.0; e[5] = accentVolt; a[8] = mBank.Out(0); b[9] = c[9] = mBank.Out(1);
@@ -149,6 +150,7 @@ class CyChain
   double Process()
   {
     if (!mActive) return 0.0;
+    if (!mECoarse && !mTail && mUseE2 && mSubT > 0 && (double)mHostN / mSr > kECoarseSec) { mTE2.CopyStateFrom(mE2); mECoarse = true; }
     const bool tail = mTail;
     const int sub = tail ? mSubT : mSub;
     for (int k = 0; k < sub; ++k) CoreStep(tail, mHostN, k, sub);
@@ -174,7 +176,8 @@ class CyChain
     {
       if (mUseE2 && (double)mHostN / mSr > kEarliest && mEnv < mEnvPeak * kEnterRel)
       {
-        mTE2.CopyStateFrom(mE2); mTB.CopyStateFrom(mB); mTC.CopyStateFrom(mC); mTAD.CopyStateFrom(mAD); mTail = true;
+        if (!mECoarse) mTE2.CopyStateFrom(mE2);
+        mTB.CopyStateFrom(mB); mTC.CopyStateFrom(mC); mTAD.CopyStateFrom(mAD); mTail = true;
       }
     }
     else if (mEnv > mEnvPeak * kLeaveRel)
@@ -197,7 +200,8 @@ class CyChain
   void CoreStep(bool tail, long hostN, int k, int sub)
   {
     SubNet<cymodel::eg>& nE = mE;   // the trigger stage is only ever used in the normal set (the coarse set starts after kSwitchE)
-    SubNet<cymodel::eg2>& nE2 = tail ? mTE2 : mE2;
+    const bool eCoarse = tail || mECoarse;   // the E net runs on its host-rate set in the tail and, before it, from kECoarseSec on
+    SubNet<cymodel::eg2>& nE2 = eCoarse ? mTE2 : mE2;
     SubNet<cymodel::cellb>& nB = tail ? mTB : mB;
     SubNet<cymodel::cellc>& nC = tail ? mTC : mC;
     SubNet<cymodel::ad>& nAD = tail ? mTAD : mAD;
@@ -231,7 +235,7 @@ class CyChain
       double c45, c40, q20, q19;
       if (mUseE2)
       {
-        if (!tail || k == 0)   // coarse set: the envelope generators are slow, one step per host sample (nE2 is built for that step), the values are held for the other core steps
+        if (!eCoarse || k == 0)   // coarse set: the envelope generators are slow, one step per host sample (nE2 is built for that step), the values are held for the other core steps
         {
           for (int i = 0; i < 16; ++i) nE2.vf1[i] = e1[i];
           nE2.Step(); mEHold[0] = nE2.V(cymodel::eg2::kRow_c45node); mEHold[1] = nE2.V(cymodel::eg2::kRow_c40node); mEHold[2] = nE2.V(cymodel::eg2::kRow_q20emit); mEHold[3] = nE2.V(cymodel::eg2::kRow_q19emit);
@@ -261,6 +265,7 @@ class CyChain
     for (int i = 0; i < 16; ++i) { if (mUseE2) nE2.vf0[i] = nE2.vf1[i]; else nE.vf0[i] = nE.vf1[i]; nAD.vf0[i] = nAD.vf1[i]; nB.vf0[i] = nB.vf1[i]; nC.vf0[i] = nC.vf1[i]; }
   }
 
+  bool mECoarse = false;
   double mSr = 48000.0, mH = 1.0 / 192000.0, mDecay = 0.5, mTone = 0.5, mVr6 = 0.16, mAccent = 3.681, mOutRest = 0.0, mCyRest = 0.0, mN120 = 0.0, mN112 = 0.0;
   double mEHold[4] = {0.0, 0.0, 0.0, 0.0};   // c45 / c40 / q20 / q19 of the last E step
   long mHostN = 0; int mSub = 4, mSubT = 0; bool mActive = false, mBuilt = false, mUseE2 = false, mTail = false; double mHT = 0.0, mEnv = 0.0, mEnvPeak = 0.0;
