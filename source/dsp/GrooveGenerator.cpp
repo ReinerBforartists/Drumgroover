@@ -725,10 +725,9 @@ void applyCustomGroupToBlock(Block& block, const Grid& grid, const std::string& 
   replicateGroupAcrossLength(block, grid, { trackId }, phrase, cache);
 }
 
-// Snare ghost notes. The 808 snare circuit only switches on from about velocity 55 (accent voltage ~1.4 V): at 45 a ghost note is
-// ~55 dB below the full-velocity hit, at 58 about 14 dB, which is where a ghost note belongs. Must stay at or below 60: main hits are
-// told apart from ghosts by velocity > 60 (articulation variation, snare ghost layer).
-constexpr int kSnareGhostVel = 58;
+// Snare ghost notes: velocity 45 is about 9 dB below a full hit (the velocity scales the snare's output linearly). Must stay at or below
+// 60: main hits are told apart from ghosts by velocity > 60 (articulation variation, snare ghost layer).
+constexpr int kSnareGhostVel = 45;
 
 void applySnareGroupToBlock(Block& block, const Grid& grid, double densityPct, double ghostDensityPct,
                              double variationPct, int subdivisionIndex, Feel feel, int phrase,

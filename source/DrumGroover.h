@@ -197,6 +197,7 @@ private:
   // Sets polyphony for given family (tom sets all positions, ride sets all articulations).
   // Hi‑hat and cymbal have no slider.
   void HandleSetPolyphony(const nlohmann::json& payload);
+  void HandleSetAccentAmount(const nlohmann::json& payload);
 
   // Sets voice parameter for a family; index specifies instance for per‑instance parameters
   // (e.g., Tom position, Cymbal tone).
@@ -355,7 +356,7 @@ private:
   // Calls f(instrumentRow, pool) for every snare instance, in table order.
   template <typename F> void ForEachSnarePool(F&& f);
   template <typename F> void ForEachSnarePool(F&& f) const;
-  void TriggerInstrument(const dgg::InstrumentDef& inst, double velocity01, double gain = 1.0);
+  void TriggerInstrument(const dgg::InstrumentDef& inst, double velocity01, double gain = 1.0, bool accent = false);
 
   // One voice pool per Hi‑Hat instance (dsp/808InstrumentTable.h, family "hihat": Closed Edge, Tight Edge, Open Edge 0/4, Closed Tip,
   // Tight Tip); pool index = poolSlot = paramIndex. Choke: a hit of the Closed circuit chokes the pools of the Open circuit.
@@ -387,7 +388,7 @@ private:
   void HandleSetCustomInstruments(const nlohmann::json& payload);
   void HandleCustomPreview(const nlohmann::json& payload);   // UI preview of a custom instrument: MIDI note-on on kCustomPreviewMidiChannel, note = registry index
   int CustomInstrumentForTrack(const std::string& trackId);   // audio thread (try-lock): index or -1
-  void TriggerCustom(int k, double velocity01, double gain = 1.0);
+  void TriggerCustom(int k, double velocity01, double gain = 1.0, bool accent = false);
 
   // One voice pool per Cymbal instance (dsp/808InstrumentTable.h, family "cymbal": Crash and Mute of each of the five cymbals, pool
   // index = poolSlot = paramIndex, even = Crash, odd = Mute); a Mute hit triggers ChokeAll on the Crash pool of its cymbal.
@@ -428,13 +429,14 @@ private:
   // Ride/HiHat/Cymbal by GM note (keys carry no velocity: the pool's current key is loaded or baked).
   std::atomic<uint64_t> mMissNoteBits[2]{{0}, {0}};
   void DrainCacheMisses();
-  void TriggerGmNoteVoices(int note, double velocity01);
+  void TriggerGmNoteVoices(int note, double velocity01, bool accent = false);
 
   // Target variant count (1-20) for the Ride/HiHat/Crash render-cache
   // pools (see 808VariantPoolCache.h) -- part of the persisted project
   // state (SerializeState()), NOT the baked audio itself (that lives in
   // %APPDATA%\DrumGroover\Cache\..., see GetCacheDir()).
   std::atomic<int> mCacheVariantCount{7};
+  std::atomic<double> mAccentAmount{0.0};   // 0..1, Drum Engine setting: the trigger amplitude of an accented note (0 = 4.09 V like a normal note, 1 = 14 V); 0 = accent has no effect
 
   // Offline render (bounce/export): audio thread, called at the start of
   // every block. On the first offline block it loads every pool's set for
@@ -487,7 +489,10 @@ private:
   std::atomic<double> mMixerKitInL{0.0}, mMixerKitInR{0.0};
 
   // Shared dispatch for triggering a GM note; handles internal or LoFi engine routing based on mEngineMode.
-  void TriggerGmNote(int note, double velocity01);
+  void TriggerGmNote(int note, double velocity01, bool accent = false);
+  // Accent of a hit, 0..1 of the 808 trigger range (4.09 V .. 14 V trigger amplitude at the circuit): 0 for a normal note, the Accent amount for an accented one;
+  // at amount 0 every note plays as before. Only the circuit voices with an accent stage use it.
+  double AccentFor(bool accent) const;
 
   // Mixer state as JSON (bridge push + host project save). Locks mMixerMutex.
   nlohmann::json BuildMixerStateJson() const;

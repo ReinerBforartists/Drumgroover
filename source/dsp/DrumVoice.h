@@ -68,6 +68,10 @@ public:
   // used everywhere in JS (see audio-engine.js).
   virtual void Trigger(double velocity01) = 0;
 
+  // Accent of the NEXT Trigger(), 0..1 of the 808 trigger range: 0 = the normal note (4.09 V trigger amplitude, the calibrated reference), 1 = the full accent (14 V).
+  // Only the circuit voices that have an accent stage use it; the others ignore it.
+  virtual void SetAccent(double /*accent01*/) {}
+
   // Renders nFrames mono samples and ADDS them to out (does not overwrite)
   // — caller mixes multiple voices into the same buffer.
   // Must be safely callable every block even when inactive

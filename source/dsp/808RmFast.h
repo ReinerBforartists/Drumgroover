@@ -16,6 +16,7 @@
 // at 48 kHz, rest level removed.
 
 #include "808RmTables.h"
+#include "808RmAccentTables.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -128,10 +129,22 @@ public:
   void SetLevel(double level01) { mR16 = std::fmax(100e3 * detail::Taper(std::clamp(level01, 0.0, 1.0)), 1.0); }
 
   // Starts a hit from the rest state. claves: SW11 position. False (silent): accent below the first table node.
-  bool Start(bool claves, double accentVolt)
+  bool Start(bool claves, double accentVolt) { return StartModel(tab::kModels[claves ? 1 : 0], accentVolt); }
+
+  // Starts a hit at an accent 0..1 of the 808 trigger range: 0 = the full MIDI-velocity accent (4.09 V, exactly Start(claves, 4.09)), 1 = 14 V (accent voltage 4.09 + accent * 9.91 V). Above 4.09 V the
+  // upstream signals come from the nodes of 808RmAccentTables.h (node 0 = the last node of 808RmTables.h), blended linearly in the accent voltage like the velocity nodes.
+  bool StartAccent(bool claves, double accent01)
+  {
+    const tab::ModelData& M0 = tab::kModels[claves ? 1 : 0];
+    if (!(accent01 > 0.0)) return StartModel(M0, M0.acc[M0.nAcc - 1]);
+    return StartModel(tab::kModelsX[claves ? 1 : 0], 4.09 + std::fmin(accent01, 1.0) * (14.0 - 4.09));
+  }
+
+private:
+  bool StartModel(const tab::ModelData& M, double accentVolt)
   {
     using namespace detail;
-    mActive = false; const tab::ModelData& M = tab::kModels[claves ? 1 : 0]; mM = &M;
+    mActive = false; mM = &M;
     mIBias = (M.z0 - M.n348) / kR330;   // the circuit supplies this current at the summing node at rest (its output sits at z0, not at the virtual ground): the rest state is an equilibrium
     if (!(accentVolt >= M.acc[0])) return false;
     int ia = 0; double wa = 0.0;
@@ -148,6 +161,7 @@ public:
     mGPrev = kGateRest; mGPrevD = kGateRest; mQs = GateCharge(kGateRest - M.z0); mZeffPrev = M.z0; mN1 = M.z0 + kRout * (M.z0 - M.n348) / kR330; mSeg = -1; mIdx = 0; mHist = 0; mActive = true; return true;
   }
 
+public:
   // next output sample (volts, rest level removed), 48 kHz
   double Step()
   {

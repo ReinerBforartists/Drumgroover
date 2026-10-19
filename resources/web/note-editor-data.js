@@ -479,6 +479,18 @@ function neShadeGridNote(trackId, note) {
   els.forEach(el => { if (!el.classList.contains('ne-note-locked')) el.style.background = bg; });
 }
 
+// Accent amount of the Drum Engine (0..1, mirrored from the host): 0 = the Accent lane has no audible effect.
+let dggAccentAmount = 0;
+
+// Sets the Accent amount (percent) from the Note Editor: it is the same state as the Drum Engine's Accent slider, which does the rest
+// (host message, readouts).
+function dggSetAccentPercent(pct) {
+  pct = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+  const slider = document.getElementById('deAccentAmount');
+  if (slider) { slider.value = String(pct); slider.dispatchEvent(new Event('input', { bubbles: true })); }
+  else { dggAccentAmount = pct / 100; if (typeof hostBridge !== 'undefined' && hostBridge.send) hostBridge.send('setAccentAmount', { value: pct / 100 }); }
+}
+
 // Velocity preview: while the mouse is held on ONE note of a velocity gesture, that note plays at the Drum Engine's retrigger rate
 // with its current velocity, so the loudness being set is heard (as in Superior Drummer). Only one note ever plays: with several
 // notes selected it is the one under the mouse (the grabbed head, the note a paint stroke has just reached) or, for the VEL/DYN/RND

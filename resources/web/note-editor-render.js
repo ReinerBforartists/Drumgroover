@@ -323,6 +323,8 @@ function renderNoteEditor() {
   attachRightDragErase(rowsCol, block);
   neAttachGridZoomAndPan(rowsCol);
 
+  const { accentWrap, accentLane } = neBuildAccentLane(ctx);
+  container.appendChild(accentWrap);
   const { velWrap, velLane } = neBuildVelocityLane(ctx);
   container.appendChild(velWrap);
 
@@ -340,7 +342,7 @@ function renderNoteEditor() {
   new ResizeObserver(fitPhToScrollbar).observe(velLane);
   if (!(playing && playbackMode === 'block')) neShownBeat = nePlayheadBeat;
 
-  const syncScroll = (src) => { ruler.scrollLeft = src.scrollLeft; loopRuler.scrollLeft = src.scrollLeft; rowsCol.scrollLeft = src.scrollLeft; velLane.scrollLeft = src.scrollLeft; neUpdatePlayheadEl(); neMaybeShiftNoteWindow(); };
+  const syncScroll = (src) => { ruler.scrollLeft = src.scrollLeft; loopRuler.scrollLeft = src.scrollLeft; rowsCol.scrollLeft = src.scrollLeft; accentLane.scrollLeft = src.scrollLeft; velLane.scrollLeft = src.scrollLeft; neUpdatePlayheadEl(); neMaybeShiftNoteWindow(); };
   rowsCol.addEventListener('scroll', () => syncScroll(rowsCol));
   velLane.addEventListener('scroll', () => syncScroll(velLane));
   if (savedScrollLeft > 0) syncScroll({ scrollLeft: savedScrollLeft });
@@ -1301,6 +1303,117 @@ function neBuildVelGrayCanvas(items, pxPerBeat, velLane) {
   });
   canvas.addEventListener('pointermove', (e) => { canvas.style.cursor = hitAt(e) ? 'pointer' : ''; });
   return canvas;
+}
+
+// Updates the lane's amount readout when the Drum Engine's Accent amount changes (no re-render needed).
+function neRefreshAccentReadout() {
+  const wrap = document.querySelector('.ne-accent-wrap');
+  if (!wrap) return;
+  wrap.classList.toggle('ne-accent-off', !(dggAccentAmount > 0));
+  const t = wrap.querySelector('.ne-accent-amount');
+  if (t && document.activeElement !== t) t.value = String(Math.round(dggAccentAmount * 100));
+}
+
+// Accent lane: one row of markers above the velocity lane, like the ACCENT row of the TR-808 sequencer. A marker at a position makes every
+// instrument that plays there play accented. Click toggles a marker at the snapped position, a drag paints (adds, or removes when it starts
+// on a marker), a right-drag erases.
+function neBuildAccentLane(ctx) {
+  const { block, g, totalBeats, pxPerBeat, totalW, blockBeats } = ctx;
+  const wrap = document.createElement('div');
+  wrap.className = 'ne-accent-wrap' + (dggAccentAmount > 0 ? '' : ' ne-accent-off');
+  const labels = document.createElement('div');
+  labels.className = 'ne-accent-labels';
+  const amountPct = Math.round(dggAccentAmount * 100);
+  labels.innerHTML = '<span class="ne-accent-title">Accent</span><span class="ne-accent-amount-wrap"><input type="number" class="ne-accent-amount" min="0" max="100" step="5" value="' + amountPct + '"><span class="ne-accent-pct">%</span></span>';
+  labels.dataset.tooltip = 'Accent\nMarks positions where every instrument plays accented, like the accent row of the TR-808 sequencer. How much an accent differs from a normal hit is set by "Accent" in the Drum Engine tab; the box here sets the same amount (0% = accents have no effect).';
+  const lane = document.createElement('div');
+  lane.className = 'ne-accent-lane';
+  const inner = document.createElement('div');
+  inner.className = 'ne-accent-inner';
+  inner.style.width = totalW + 'px';
+  inner.appendChild(neBuildCssGrid(totalBeats, pxPerBeat, g.snap, ctx.numerator, false));   // the Note Editor's grid (bar lines, beats, snap), not the velocity lane's
+  const markEls = new Map();   // rounded beat -> element
+  const keyOf = (beat) => Math.round(beat * 1e4);
+  const addMarkEl = (beat) => {
+    const el = document.createElement('div');
+    el.className = 'ne-accent-mark';
+    el.style.left = (NE_LEFT_PAD + beat * pxPerBeat) + 'px';
+    inner.appendChild(el);
+    markEls.set(keyOf(beat), el);
+  };
+  const list = () => (block.data.accent = block.data.accent || []);
+  list().forEach(n => addMarkEl(n.beat));
+  lane.appendChild(inner);
+  wrap.appendChild(labels); wrap.appendChild(lane);
+
+  // The amount box: the same setting as Accent -> Amount in the Drum Engine tab.
+  const amountInput = labels.querySelector('.ne-accent-amount');
+  const commitAmount = () => {
+    const before = Math.round(dggAccentAmount * 100);
+    let v = parseInt(amountInput.value, 10);
+    if (isNaN(v)) { amountInput.value = String(before); return; }
+    v = Math.max(0, Math.min(100, v));
+    amountInput.value = String(v);
+    if (v === before) return;
+    dggSetAccentPercent(v);
+    if (typeof deUndoRebase === 'function') deUndoRebase();
+    pushUndo('Accent amount',
+      () => { dggSetAccentPercent(before); if (typeof deUndoRebase === 'function') deUndoRebase(); },
+      () => { dggSetAccentPercent(v); if (typeof deUndoRebase === 'function') deUndoRebase(); });
+  };
+  amountInput.addEventListener('change', () => { commitAmount(); amountInput.blur(); });
+  amountInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); amountInput.blur(); } });
+
+  const beatAt = (clientX) => {
+    const rect = lane.getBoundingClientRect();
+    const x = (clientX - rect.left) / currentUIScale() + lane.scrollLeft;
+    const raw = Math.max(0, Math.min(blockBeats - 0.01, (x - NE_LEFT_PAD) / pxPerBeat));
+    return neQuantize(raw, g.snap);
+  };
+  const has = (beat) => markEls.has(keyOf(beat));
+  const setMark = (beat, on) => {
+    if (beat < 0 || beat >= blockBeats) return;
+    if (on && !has(beat)) { list().push({ beat, vel: 127 }); addMarkEl(beat); }
+    else if (!on && has(beat)) {
+      const arr = list();
+      const i = arr.findIndex(n => keyOf(n.beat) === keyOf(beat));
+      if (i >= 0) arr.splice(i, 1);
+      markEls.get(keyOf(beat)).remove(); markEls.delete(keyOf(beat));
+    }
+  };
+  let gesture = null;
+  const paintTo = (clientX) => {
+    const scale = currentUIScale();
+    const step = Math.max(2, (pxPerBeat / 6) * scale);
+    const dir = clientX >= gesture.lastX ? 1 : -1;
+    for (let x = gesture.lastX; dir > 0 ? x <= clientX : x >= clientX; x += dir * step) setMark(beatAt(x), gesture.add);
+    setMark(beatAt(clientX), gesture.add);
+    gesture.lastX = clientX;
+  };
+  inner.addEventListener('contextmenu', (e) => e.preventDefault());
+  inner.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 && e.button !== 2) return;
+    const beat = beatAt(e.clientX);
+    gesture = { before: JSON.stringify(list()), lastX: e.clientX, add: e.button === 2 ? false : !has(beat), right: e.button === 2 };
+    inner.setPointerCapture(e.pointerId);
+    setMark(beat, gesture.add);
+  });
+  inner.addEventListener('pointermove', (e) => { if (gesture) paintTo(e.clientX); });
+  const finish = () => {
+    if (!gesture) return;
+    const before = gesture.before; gesture = null;
+    list().sort((a, b) => a.beat - b.beat);
+    const after = JSON.stringify(list());
+    if (after === before) return;
+    block.generated = false;
+    rebuildFullFromEditedBlocks();
+    renderNoteEditor();
+    const apply = (json) => { block.data.accent = JSON.parse(json); block.generated = false; rebuildFullFromEditedBlocks(); renderNoteEditor(); };
+    pushUndo('Accent', () => apply(before), () => apply(after));
+  };
+  inner.addEventListener('pointerup', finish);
+  inner.addEventListener('pointercancel', finish);
+  return { accentWrap: wrap, accentLane: lane };
 }
 
 // Velocity lane.

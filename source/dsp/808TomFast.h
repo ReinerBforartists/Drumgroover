@@ -14,6 +14,7 @@
 // Setup(circuit, tuning, level) costs a few 100 us (once per knob change), Start(accent) about 0.4 ms (trigger stage), Step() one 48 kHz sample.
 
 #include "808TomTables.h"
+#include "808TomAccentTables.h"
 #include "EigReal.h"
 #include <algorithm>
 #include <cmath>
@@ -52,10 +53,34 @@ public:
     else { int j = 1; while (accentVolt > tab::kAccent[j]) ++j; ia = j - 1; wa = (accentVolt - tab::kAccent[j - 1]) / (tab::kAccent[j] - tab::kAccent[j - 1]); }
     ExpandTable(M.fineOff, M.fineRow, M.fineVal, M.nAct, M.nFine, mFineT.data(), ia, wa, mFineTab);
     ExpandTable(M.audOff, M.audRow, M.audVal, M.nActA, M.nAud, nullptr, ia, wa, mAudTab);
+    if (tab::kModelsX[mCircuit].nActA != M.nActA)   // the rest-residual set has extra columns (only excited above 4.09 V): zero here
+    {
+      const int nx = tab::kModelsX[mCircuit].nActA; Vec wide((size_t)M.nAud * nx, 0.0);
+      for (int r = 0; r < M.nAud; ++r) for (int c = 0; c < M.nActA; ++c) wide[(size_t)r * nx + c] = mAudTab[(size_t)r * M.nActA + c];
+      mAudTab.swap(wide);
+    }
     RunTriggerStage();
     // ring stage state
     mS = 0; mSA = 0; mSB = 0; FetchAudio(0, mDA); mDB = mDA; mUPrev = mDA.br; mActive = true;
     mPreIdx = 0;                                   // sample 0 is the rest level, samples 1..nPre the trigger stage, then the ring
+    return true;
+  }
+
+  // Starts a hit at an accent 0..1 of the 808 trigger range: 0 = the full MIDI-velocity accent (4.09 V, exactly Start(4.09)), 1 = 14 V (accent voltage 4.09 + accent * 9.91 V). Above 4.09 V the
+  // trigger-stage and rest residuals come from the nodes of 808TomAccentTables.h (node 0 = the last node of 808TomTables.h), blended linearly in the accent voltage like the velocity nodes.
+  bool StartAccent(double accent01)
+  {
+    if (!(accent01 > 0.0)) return Start(tab::kAccent[tab::kNumAccent - 1]);
+    mActive = false;
+    if (!mReady) return false;
+    accent01 = std::fmin(accent01, 1.0);
+    const ModelData& M = *mM; const tab::ModelDataX& X = tab::kModelsX[mCircuit];
+    const double u = accent01 * (tab::kNumAccentX - 1); int ia = (int)u; if (ia >= tab::kNumAccentX - 1) ia = tab::kNumAccentX - 2; const double wa = u - ia;
+    ExpandTable(X.fineOff, X.fineRow, X.fineVal, M.nAct, M.nFine, mFineT.data(), ia, wa, mFineTab, tab::kNumAccentX);
+    ExpandTable(X.audOff, X.audRow, X.audVal, X.nActA, M.nAud, nullptr, ia, wa, mAudTab, tab::kNumAccentX);
+    RunTriggerStage();
+    mS = 0; mSA = 0; mSB = 0; FetchAudio(0, mDA); mDB = mDA; mUPrev = mDA.br; mActive = true;
+    mPreIdx = 0;
     return true;
   }
 
@@ -240,7 +265,7 @@ private:
       }
     };
     makeSet(mFine, 1e30, M.act, M.nAct, true);
-    makeSet(mAud, 2.0 * kPi * 3000.0, M.actA, M.nActA, false);
+    makeSet(mAud, 2.0 * kPi * 3000.0, tab::kModelsX[mCircuit].actA, tab::kModelsX[mCircuit].nActA, false);
     // the slow modes are a subset of all modes: where the state of each goes over from the trigger stage
     mHand.resize(mAud.K); for (int q = 0; q < mAud.K; ++q) { mHand[q] = 0; for (int f = 0; f < mFine.K; ++f) if (mFine.keep[f] == mAud.keep[q]) mHand[q] = f; }
     // time axis of the trigger-stage rows (fine samples at the end of each step)
@@ -251,13 +276,13 @@ private:
   static double CxMulRe(Cx a, Cx b, Cx c) { const double r = a.re * b.re - a.im * b.im, i = a.re * b.im + a.im * b.re; return r * c.re - i * c.im; }
 
   // knots -> blended full table (rows x ncols): (1-wa) * node ia + wa * node ia+1; time[] = time axis of the rows (nullptr: the row index)
-  static void ExpandTable(const uint32_t* off, const uint16_t* krow, const float* kval, int ncols, int nrows, const double* time, int ia, double wa, Vec& tab)
+  static void ExpandTable(const uint32_t* off, const uint16_t* krow, const float* kval, int ncols, int nrows, const double* time, int ia, double wa, Vec& tab, int numNodes = tab::kNumAccent)
   {
     tab.assign((size_t)nrows * ncols, 0.0);
     for (int pass = 0; pass < 2; ++pass)
     {
       const double w = pass == 0 ? 1.0 - wa : wa; if (w == 0.0) continue;
-      const int node = ia + pass; if (node >= tab::kNumAccent) continue;
+      const int node = ia + pass; if (node >= numNodes) continue;
       for (int c = 0; c < ncols; ++c)
       {
         const uint32_t k0 = off[(size_t)node * ncols + c], k1 = off[(size_t)node * ncols + c + 1];

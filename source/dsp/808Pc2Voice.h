@@ -48,18 +48,23 @@ public:
     mMinSamples = (long)(kHitMinSeconds * sr); mMaxSamples = (long)(kHitMaxSeconds * sr);
   }
 
+  void SetAccent(double accent01) override { mAccent = std::clamp(accent01, 0.0, 1.0); }
+  // The velocity is the loudness of this note (it scales the output linearly, as in the Lo-Fi engine). The circuit runs at the trigger amplitude of the accent set by
+  // SetAccent (the Accent lane and the Accent amount): 0 = the normal note, 4.09 V, the reference point every level and the Yocto2 comparison are calibrated at;
+  // 1 = 14 V, the top of the 808's accent range (4.09 V + accent * 9.91 V). Level and tone change with the accent as in the circuit.
   void Trigger(double velocity01) override
   {
     mActive = false;
     const int vel = Velocity127(velocity01);
     if (vel <= 0 || mSampleRate <= 0.0) return;
+    mVelGain = (double)vel / 127.0;
     pc2fast::TR808Pc2Fast::Knobs k;
     k.vr1 = std::clamp(levelKnob, 0.0, 1.0); k.vr2 = std::clamp(lfoRateKnob, 0.0, 1.0); k.vr3 = std::clamp(lfoDepthKnob, 0.0, 1.0); k.vr18 = std::clamp(pitchKnob, 0.0, 1.0);
     k.vr19 = std::clamp(decayKnob, 0.0, 1.0); k.vr20 = std::clamp(sweepKnob, 0.0, 1.0); k.tm5 = kTrimmerTm5; k.sw2 = lfoWaveKnob > 0.5 ? 1 : 0; k.sw3 = vcoWaveKnob > 0.5 ? 1 : 0;
     mModel.SetKnobs(k);
     if (mSeed == 0) mSeed = 0x9E3779B97F4A7C15ULL * (1u + gVoiceCounter.fetch_add(1, std::memory_order_relaxed));
     mSeed += 0x9E3779B97F4A7C15ULL;
-    if (!mModel.Start(AccentVolt(vel), mSeed)) return;
+    if (!mModel.StartAccent(mAccent, mSeed)) return;
     mSamples = 0; mQuiet = 0; mInWin = 0; mWinSq = 0.0; mActive = true;
   }
 
@@ -70,7 +75,7 @@ public:
     {
       const double v = mModel.Step();
       if (!std::isfinite(v)) { mActive = false; return; }
-      out[i] += v * kVoltToSample;   // no clamp, no limiter: the path is floating point, only the gain is set
+      out[i] += v * kVoltToSample * mVelGain;   // no clamp, no limiter: the path is floating point, only the gain is set
       mWinSq += v * v;
       if (++mInWin == mWinSamples)
       {
@@ -85,6 +90,7 @@ public:
 
 private:
   static inline std::atomic<uint32_t> gVoiceCounter{1};
+  double mVelGain = 1.0, mAccent = 0.0;
   pc2fast::TR808Pc2Fast mModel;
   bool mActive = false;
   double mWinSq = 0.0; uint64_t mSeed = 0;

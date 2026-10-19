@@ -12,6 +12,7 @@
 // nodes of the three devices), but with precomputed dense matrices; the output network follows with its own trapezoid step.
 
 #include "808KickModel.h"
+#include "808KickAccentTables.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -126,10 +127,34 @@ public:
     using namespace detail;
     if (vel127 < 1 || vel127 > kickmodel::kNumVel) { mActive = false; return false; }
     if (!mValid) Build();
-    mAccent = (double)vel127 / 127.0 * 4.09;
+    return StartTables(kickmodel::kState + (size_t)(vel127 - 1) * kickmodel::kNumAnchor * detail::N, kickmodel::kN55 + (size_t)(vel127 - 1) * kickmodel::kNumAnchor * kickmodel::kNumKnots, (double)vel127 / 127.0 * 4.09);
+  }
+
+  // Starts a hit at an accent 0..1 of the 808 trigger range: 0 = the full MIDI-velocity accent (4.09 V, exactly Start(127)), 1 = 14 V (accent voltage 4.09 + accent * 9.91 V). Between the
+  // table nodes (kickmodel::kNumAccX of them above 4.09 V) the phase-1 tables are interpolated linearly in the accent voltage.
+  bool StartAccent(double accent01)
+  {
+    using namespace detail;
+    if (!(accent01 > 0.0)) return Start(kickmodel::kNumVel);
+    if (accent01 > 1.0) accent01 = 1.0;
+    if (!mValid) Build();
+    constexpr size_t kSt = (size_t)kickmodel::kNumAnchor * N, kKn = (size_t)kickmodel::kNumAnchor * kickmodel::kNumKnots;
+    const double u = accent01 * kickmodel::kNumAccX; int i0 = (int)u; if (i0 >= kickmodel::kNumAccX) i0 = kickmodel::kNumAccX - 1;
+    const double f = u - i0;                                                  // node i0 (0 = the velocity-127 row) .. i0 + 1
+    const double* s0 = i0 == 0 ? kickmodel::kState + (size_t)(kickmodel::kNumVel - 1) * kSt : kickmodel::kStateX + (size_t)(i0 - 1) * kSt; const double* s1 = kickmodel::kStateX + (size_t)i0 * kSt;
+    const float* k0 = i0 == 0 ? kickmodel::kN55 + (size_t)(kickmodel::kNumVel - 1) * kKn : kickmodel::kN55X + (size_t)(i0 - 1) * kKn; const float* k1 = kickmodel::kN55X + (size_t)i0 * kKn;
+    for (size_t i = 0; i < kSt; ++i) mAccSt[i] = s0[i] + f * (s1[i] - s0[i]);
+    for (size_t i = 0; i < kKn; ++i) mAccKn[i] = (float)((double)k0[i] + f * ((double)k1[i] - (double)k0[i]));
+    return StartTables(mAccSt, mAccKn, kickmodel::kAccentLoVolt + accent01 * (kickmodel::kAccentHiVolt - kickmodel::kAccentLoVolt));
+  }
+
+private:
+  bool StartTables(const double* st, const float* kn, double accentVolt)
+  {
+    using namespace detail;
+    mAccent = accentVolt;
     // tables -> state at t1 and n55 knots for this VR6
     double w[SplineBasis::NA]; Spline().Weights(mP.vr6, w);
-    const double* st = kickmodel::kState + (size_t)(vel127 - 1) * kickmodel::kNumAnchor * N; const float* kn = kickmodel::kN55 + (size_t)(vel127 - 1) * kickmodel::kNumAnchor * kickmodel::kNumKnots;
     for (int i = 0; i < N; ++i) { double s = 0.0; for (int a = 0; a < kickmodel::kNumAnchor; ++a) s += w[a] * st[a * N + i]; mV[i] = s; }
     // output network over the knots (deviations from its rest state; input n55 piecewise linear between the knots)
     double x[NO]; for (int i = 0; i < NO; ++i) x[i] = 0.0;
@@ -152,6 +177,7 @@ public:
     return true;
   }
 
+public:
   bool Active() const { return mActive; }
   static double RestOutput() { return kickmodel::kO_Rest[kickmodel::kO_Out]; }   // output bus voltage before the trigger (DC level of the circuit)
 
@@ -364,6 +390,7 @@ private:
   ResSys mResTail; OutSys mOutTail; double mWTail[detail::N];
   bool mTail = false; int mTailPh = 0; double mPow = 0.0, mPowPeak = 0.0, mHist[8] = {0}, mQ[4] = {0};
   ResSys mRes, mResGap; OutSys mOutHost, mOutGap, mOut1, mOut8; const ResSys* mResUse = nullptr; const OutSys* mOutUse = nullptr;
+  double mAccSt[(size_t)kickmodel::kNumAnchor * detail::N]; float mAccKn[(size_t)kickmodel::kNumAnchor * kickmodel::kNumKnots];   // interpolated accent tables (StartAccent)
   double mAccent = 0.0, mV[detail::N], mForce[detail::N], mWReg[detail::N], mWGap[detail::N], mFold[detail::K], mXo[detail::NO], mU1 = 0.0;
   double mKnotT[kickmodel::kNumKnots + 1], mKnotY[kickmodel::kNumKnots + 1]; mutable int mKnotPos = 0;
 };

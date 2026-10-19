@@ -109,7 +109,7 @@ std::vector<DueEvent> Scheduler::Advance(double hostPpqPos, double bpm, bool tra
       double beatIntoBlock = consumedBeats + (it->beatAbs - windowStart);
       int sampleOffset = static_cast<int>(std::lround(beatIntoBlock * samplesPerBeat));
       sampleOffset = std::clamp(sampleOffset, 0, nFrames - 1);
-      due.push_back({it->trackId, it->vel, sampleOffset});
+      due.push_back({it->trackId, it->vel, sampleOffset, it->accent});
     }
 
     consumedBeats  += segLen;

@@ -646,6 +646,21 @@
             </div>
           </div>
         </div>
+        <div class="knob-cluster de-cluster">
+          <div class="cluster-knobs">
+            <div class="subgroup-unit-wrapper">
+              <div class="subgroup-vertical-stack">
+                <div class="cluster-title">Accent</div>
+                <div style="display:flex; flex-direction:row; gap:6px; align-items:flex-end;">
+                  <div class="ctrl" data-tooltip="Accent&#10;How hard an accented hit (a marker in the Accent lane of the Note Editor) drives the drum circuits. 0%: no difference, every hit plays as before. 100%: the full accent of the TR-808, a trigger of 14 V instead of the normal 4 V. Accented hits get louder and change in tone the way the circuit does (from about +4 dB for clap, maracas and PC-2 to about +14 dB for toms and rim shot); normal hits stay as they are. Applies to Kick, Snare, Toms, Clap/Maracas, Rim Shot/Claves and PC-2 (PC-2 reaches its maximum at about 25%); hi-hats, cymbal, ride and cowbell are not affected yet.">
+                    <div class="ctrl-label">Amount <span class="val" id="deAccentAmountVal">0%</span></div>
+                    <input type="range" id="deAccentAmount" min="0" max="100" step="1" value="0">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
     </div>
 
     <div class="de-lower">

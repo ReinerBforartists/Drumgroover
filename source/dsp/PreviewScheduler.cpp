@@ -140,7 +140,7 @@ std::vector<DueEvent> PreviewScheduler::Advance(double bpm, int nFrames, double 
         const auto found = mVelOverride.find(VelocityKey(it->trackId, it->beatAbs));
         if (found != mVelOverride.end()) vel = found->second;
       }
-      due.push_back({it->trackId, vel, sampleOffset});
+      due.push_back({it->trackId, vel, sampleOffset, it->accent});
     }
 
     consumedBeats  += segLen;

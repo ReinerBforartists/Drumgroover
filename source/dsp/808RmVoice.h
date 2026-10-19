@@ -44,13 +44,18 @@ public:
     mHostRatio = rmfast::TR808RmFast::kFs / sr;
   }
 
+  void SetAccent(double accent01) override { mAccent = std::clamp(accent01, 0.0, 1.0); }
+  // The velocity is the loudness of this note (it scales the output linearly, as in the Lo-Fi engine). The circuit runs at the trigger amplitude of the accent set by
+  // SetAccent (the Accent lane and the Accent amount): 0 = the normal note, 4.09 V, the reference point every level and the Yocto2 comparison are calibrated at;
+  // 1 = 14 V, the top of the 808's accent range (4.09 V + accent * 9.91 V). Level and tone change with the accent as in the circuit.
   void Trigger(double velocity01) override
   {
     mActive = false;
     const int vel = Velocity127(velocity01);
     if (vel <= 0 || mSampleRate <= 0.0) return;
+    mVelGain = (double)vel / 127.0;
     mModel.SetLevel(std::clamp(levelKnob, 0.0, 1.0));
-    if (!mModel.Start(claves, AccentVolt(vel))) return;
+    if (!mModel.StartAccent(claves, mAccent)) return;
     mRate = std::clamp(pitchRatio, 0.25, 4.0) * mHostRatio;
     mDirect = std::fabs(mRate - 1.0) < 1e-12;
     mFrac = 0.0; mSamples = 0; mQuiet = 0; mInWin = 0; mWinSq = 0.0;
@@ -77,7 +82,7 @@ public:
         mFrac += mRate;
       }
       if (!mActive) return;
-      out[i] += v * kVoltToSample;   // no clamp, no limiter: the path is floating point, only the gain is set
+      out[i] += v * kVoltToSample * mVelGain;   // no clamp, no limiter: the path is floating point, only the gain is set
     }
   }
 
@@ -99,6 +104,7 @@ private:
     return v;
   }
 
+  double mVelGain = 1.0, mAccent = 0.0;
   rmfast::TR808RmFast mModel;
   bool mActive = false, mDirect = true;
   double mHostRatio = 1.0, mRate = 1.0, mFrac = 0.0, mWinSq = 0.0, mY[4] = {};

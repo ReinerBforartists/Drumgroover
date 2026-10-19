@@ -61,6 +61,7 @@ howtoSet('howto-ne-edit', `
   <b>Ctrl+drag</b> along one instrument's row is the pencil: starting on empty grid paints a note at every snap point the drag crosses; starting on an existing note erases every note it crosses.<br>
   <b>Right-drag</b> is a dedicated eraser: it erases every note the pointer sweeps over, in all the rows it crosses. <b>Right-click</b> a note deletes it; right-click empty row space just deselects.<br>
   <b>Drag</b> a note to move it (snaps to the grid); drop it on another row to reassign it to that instrument. A note that is part of a multi-selection moves the whole selection.<br>
+  <b>Accent lane</b> (the thin row above the velocity lane): like the accent row of the TR-808 sequencer it marks positions where <i>every</i> instrument that plays there plays accented. <b>Click</b> toggles a marker at the snapped position, <b>drag</b> paints (or removes, when the drag starts on a marker), <b>right-drag</b> erases. How much an accent differs from a normal hit is set by the <b>percent box</b> at the left of the lane, the same setting as <b>Accent → Amount</b> in the Drum Engine tab; at 0% (the default) accents have no effect.<br>
   <b>Velocity lane</b> (under the grid) shows the selected notes, or if nothing is selected the notes of the row you last clicked. With a selection it also offers <b>Vel</b> (shift all selected velocities), <b>Dyn</b> (more or less contrast around their average) and <b>Rnd</b> (random spread). Drag a note's handle to change its velocity (with several notes selected, the whole selection moves together). Drag a rectangle in the lane to select the notes whose velocity head it touches (select by loudness), <b>Shift+drag</b> a rectangle to toggle the notes it catches (selected ones are removed, others added), <b>right-drag</b> a rectangle to deselect, <b>right-click</b> to clear the selection; <b>Ctrl+drag</b> paints velocity freehand across the notes the pointer crosses; <b>Alt+drag</b> draws a straight ramp.<br>
   <b>Triplet / Straight zone.</b> Expand a group and drag on its zone row to mark a range that plays the opposite subdivision; drag the edges of a marked range to resize it, right-click it to remove it.<br>
   <b>Arrow keys</b> nudge the selection (Left/Right in time by one Snap step, Shift = 4×; Up/Down switch each selected note to the previous/next articulation of its group). <b>Ctrl+C / X / V</b> copy, cut and paste at the playhead; <b>Ctrl+A</b> selects all, <b>Ctrl+I</b> inverts the selection.<br>
@@ -109,6 +110,7 @@ howtoSet('howto-mixer', `
 howtoSet('howto-engine', `
   The Drum Engine tab is where the sound is shaped. The instrument tabs in the top row (Kick, Snare, Hi-Hat, Tom, Cymbal, Ride, Custom) switch between instrument families.<br>
   <b>Cards.</b> Every instrument (every articulation, e.g. Kick High Stack or Snare Rimshot) has a card with its <b>knobs</b> — the controls of the real circuit it models, such as Tone, Decay or Level, plus <b>Pitch</b>, which transposes the sound digitally and is not a circuit control — a <b>Reset</b> button and a volume. Some instruments also have a <b>Morph Pad</b>: drag it to blend the sound between four corner presets; it retriggers the sound while you hold the mouse button (a hollow dot means a knob was changed by hand since — drag again to resync). <b>Options → Retrigger</b> sets the repeat rate for pads and for the knob preview.<br>
+  <b>Accent.</b> <b>Amount</b> sets how hard an accented hit (a marker in the Note Editor's accent lane) drives the drum circuits: 0% = no difference, the sound as before; at 100% the trigger of an accented hit is the full accent of the TR-808, 14 V instead of the normal 4 V, while normal hits are unchanged. Accented hits get louder and change in tone as in the circuit (from about +4 dB for clap, maracas and PC-2 to about +14 dB for toms and rim shot). It applies to Kick, Snare, Toms, Clap/Maracas, Rim Shot/Claves and PC-2 (PC-2 reaches its maximum at about 25%); hi-hats, cymbal, ride and cowbell are not affected yet. Velocity only sets a note's loudness.<br>
   <b>Polyphony.</b> The row at the top sets how many hits of a group can sound at the same time before the oldest is cut off (Kick, Snare, all Toms together, Ride).<br>
   <b>Keyboard.</b> The keys at the bottom play the instruments with their current settings; keys are colored by instrument family. <b>Options → Preview sound on knob turn</b> plays the instrument while you turn one of its knobs. The meter on the right shows the peak level of the engine output.<br>
   <b>Engine.</b> The <b>Engine</b> selector (top right) switches the whole kit between <b>808</b> and <b>Lo-Fi</b>. The Lo-Fi engine is simpler: its cards only keep the name, Reset and volume, because it has no adjustable circuit parameters. Each engine starts with its own default mixer, so switching loads that engine's default mixer settings (unsaved mixer changes are lost; the plugin asks first).<br>
@@ -169,6 +171,10 @@ const DGG_HOTKEYS = {
   <b>Click</b> on the ruler — set the playhead (also while playing).<br>
   <b>Drag</b> on the loop ruler — set the loop range; drag its edges to adjust it; <b>right-click</b> clears it.<br>
   <b>Shift+drag</b> a Density knob — scale all six Density knobs together.<br>`,
+  accentLane: `
+  <b>Click</b> — toggle an accent marker at that position.<br>
+  <b>Drag</b> — paint markers (removes when the drag starts on a marker).<br>
+  <b>Right-drag</b> — erase markers.<br>`,
   velocity: `
   <b>Click</b> a bar or head — select that note; <b>Shift+click</b> toggles it within the selection.<br>
   <b>Hold</b> a head, a bar or a velocity slider — the note plays and retriggers while you set its velocity (not while a pattern plays).<br>
@@ -197,18 +203,18 @@ const DGG_HOTKEYS = {
   <b>Double-click</b> a knob's value — type an exact number; <b>Enter</b> commits, <b>Escape</b> cancels.<br>
   <b>Ctrl+click</b> a knob — reset it to its default.<br>`
 };
-const DGG_HOTKEY_TITLES = { global: 'Global', noteEditor: 'Note Editor', velocity: 'Velocity lane', timeline: 'Song Generator', mixer: 'Mixer', drumEngine: 'Drum Engine', knobs: 'Knobs and value fields' };
+const DGG_HOTKEY_TITLES = { global: 'Global', noteEditor: 'Note Editor', accentLane: 'Accent lane', velocity: 'Velocity lane', timeline: 'Song Generator', mixer: 'Mixer', drumEngine: 'Drum Engine', knobs: 'Knobs and value fields' };
 function dggHotkeySection(key) {
   return `<b class="hk-title" style="display:block;margin-top:12px">${DGG_HOTKEY_TITLES[key]}</b>${DGG_HOTKEYS[key]}`;
 }
 // The panel next to Mute: global keys, the keys of the tab you are on, and the knob keys. No tab means How To: everything.
 function dggHotkeysHtml(tab) {
-  const own = tab === 'noteEditor' ? ['noteEditor', 'velocity'] : (DGG_HOTKEYS[tab] ? [tab] : []);
+  const own = tab === 'noteEditor' ? ['noteEditor', 'accentLane', 'velocity'] : (DGG_HOTKEYS[tab] ? [tab] : []);
   return ['global', ...own, 'knobs'].map(dggHotkeySection).join('');
 }
 
 howtoSet('howto-hotkeys', `
-  Shortcuts work on every tab unless noted, and nothing fires while you are typing in a text field or a dropdown. The <b>?</b> button next to Mute opens the shortcuts of the tab you are on.<br>` + ['global', 'noteEditor', 'velocity', 'timeline', 'mixer', 'drumEngine', 'knobs'].map(k => dggHotkeySection(k) + (k === 'noteEditor' ? '  Mouse gestures are described in <i>Note Editor — editing by hand</i>.<br>' : '')).join(''));
+  Shortcuts work on every tab unless noted, and nothing fires while you are typing in a text field or a dropdown. The <b>?</b> button next to Mute opens the shortcuts of the tab you are on.<br>` + ['global', 'noteEditor', 'accentLane', 'velocity', 'timeline', 'mixer', 'drumEngine', 'knobs'].map(k => dggHotkeySection(k) + (k === 'noteEditor' ? '  Mouse gestures are described in <i>Note Editor — editing by hand</i>.<br>' : '')).join(''));
 
 howtoSet('howto-troubleshooting', `
   <b>No sound.</b> (1) Is the <b>Mute</b> button (top right) lit? (2) In the Mixer, check the channel's fader, M/S buttons and Kit Gain, and the effects on the master. (3) In your DAW the plugin must be loaded as an instrument with its output routed to a mixer track. (4) Press the plugin's own <b>▶ Play</b>, or start the DAW transport and check that the Song Generator contains clips. (5) On the very first start wait until the <i>Preparing the sound cache</i> dialog is gone.<br>

@@ -142,6 +142,7 @@ struct PatternEvent {
   std::string trackId;
   double      beatAbs;
   int         vel;
+  bool        accent = false;   // the Accent lane has a marker at this position (it applies to every instrument there)
 };
 
 // A complete pattern (song or block) as a flat list of events and total duration.

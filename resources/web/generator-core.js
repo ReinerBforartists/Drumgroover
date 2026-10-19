@@ -403,6 +403,26 @@ async function generateSequence(regenGenerated = true) {
 }
 
 // =========================================
+// ACCENT LANE
+// =========================================
+// The Accent lane is a marker list stored like a track (block.data.accent, one marker per position, like the ACCENT row of the TR-808
+// sequencer). Every instrument that plays at a marker's position plays accented; the Accent amount of the Drum Engine says how much that
+// differs from a normal hit.
+const ACCENT_MATCH_TOL = 0.02;   // beats: a note counts as being on a marker when it lies this close to it
+
+// A test function for the accent markers of a block (null when it has none): is there a marker at this beat?
+function neAccentMatcher(block) {
+  const list = block && block.data && block.data.accent;
+  if (!list || !list.length) return null;
+  const beats = list.map(n => n.beat).sort((a, b) => a - b);
+  return (beat) => {
+    let lo = 0, hi = beats.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (beats[mid] < beat - ACCENT_MATCH_TOL) lo = mid + 1; else hi = mid; }
+    return lo < beats.length && beats[lo] <= beat + ACCENT_MATCH_TOL;
+  };
+}
+
+// =========================================
 // ASSEMBLE FULL PATTERN
 // =========================================
 function assembleFullPattern(p, g, rng) {
@@ -415,9 +435,12 @@ function assembleFullPattern(p, g, rng) {
     const startBeat = slot.startBar * g.numerator;
     if (!block) return;
     const src = block.data;
+    const isAccent = neAccentMatcher(block);
     trackList.forEach(t => {
       (src[t.id]||[]).forEach(note => {
-        events.push({ trackId: t.id, beatAbs: startBeat + note.beat, vel: note.vel });
+        const ev = { trackId: t.id, beatAbs: startBeat + note.beat, vel: note.vel };
+        if (isAccent && isAccent(note.beat)) ev.accent = true;
+        events.push(ev);
       });
     });
     maxEndBeat = Math.max(maxEndBeat, startBeat + (block.length || 1) * g.numerator);
@@ -975,10 +998,9 @@ function regenerateCustomGroup(opts) {
     (block, g) => buildCustomCommitPayload(block, track.id), applyCustomCommitResponse);
 }
 
-// Snare ghost notes. The 808 snare circuit only switches on from about velocity 55 (accent voltage ~1.4 V): at 45 a ghost note is
-// ~55 dB below the full-velocity hit, at 58 about 14 dB, which is where a ghost note belongs. Must stay at or below 60: main hits are
-// told apart from ghosts by velocity > 60 (articulation variation, snare ghost layer).
-const SNARE_GHOST_VEL = 58;
+// Snare ghost notes: velocity 45 is about 9 dB below a full hit (the velocity scales the snare's output linearly). Must stay at or below
+// 60: main hits are told apart from ghosts by velocity > 60 (articulation variation, snare ghost layer).
+const SNARE_GHOST_VEL = 45;
 
 function applySnareGroupToBlock(block, g, ov) {
   if (!block) return;

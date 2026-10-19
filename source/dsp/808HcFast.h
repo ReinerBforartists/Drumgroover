@@ -15,6 +15,7 @@
 // Below the accent threshold of the sheet the circuit is silent (hand clap 1.85 V, maracas 1.72 V; MIDI velocity 58 / 54).
 
 #include "808HcMaTables.h"
+#include "808HcMaAccentTables.h"
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -253,6 +254,12 @@ public:
     mPre.Reset(); mHp.Reset(); mCtl.Start(kTm3, accentVolt); mQ70.Start(accentVolt, kTm3); mQ70N = 0; mGm = Gm(mQ70.ic); mWn = 0.0; mClap = true; mActive = true; return true;
   }
 
+  // Accent 0..1 of the 808 trigger range: 0 = the full MIDI-velocity accent (4.09 V, exactly StartClap/StartMaracas(4.09, ...)), 1 = 14 V (accent voltage 4.09 + accent * 9.91 V). The clap is analytic in the
+  // accent voltage; the maracas read the nodes of 808HcMaAccentTables.h above 4.09 V.
+  static double AccentToVolt(double accent01) { return accent01 > 0.0 ? 4.09 + std::fmin(accent01, 1.0) * (14.0 - 4.09) : 4.09; }
+  bool StartClapAccent(double accent01, double level01) { return StartClap(AccentToVolt(accent01), level01); }
+  bool StartMaracasAccent(double accent01, double level01) { return StartMaracas(AccentToVolt(accent01), level01); }
+
   // Starts maracas; false (and silent) below the accent threshold.
   bool StartMaracas(double accentVolt, double level01)
   {
@@ -260,10 +267,16 @@ public:
     mActive = false; if (accentVolt < kMaracasThresholdVolt) return false;
     // envelope of this accent on the bin grid: ln-interpolation between the measured accents
     int ia = 0; double wa = 0; const int na = kMaNumAccents;
-    if (accentVolt <= kMaAccents[0]) { ia = 0; wa = 0; }
-    else if (accentVolt >= kMaAccents[na - 1]) { ia = na - 2; wa = 1; }
-    else { ia = 1; while (accentVolt > kMaAccents[ia]) ++ia; --ia; wa = (accentVolt - kMaAccents[ia]) / (kMaAccents[ia + 1] - kMaAccents[ia]); }
-    for (int b = 0; b < kMaNumBins; ++b) mMaLn[b] = (1 - wa) * std::log(std::fmax((double)kMaEnv[ia][b], 1e-9)) + wa * std::log(std::fmax((double)kMaEnv[ia + 1][b], 1e-9));
+    const float* r0 = kMaEnv[0]; const float* r1 = kMaEnv[0];
+    if (accentVolt <= kMaAccents[0]) { ia = 0; wa = 0; r0 = kMaEnv[0]; r1 = kMaEnv[1]; }
+    else if (accentVolt > kMaAccentsX[0])
+    {   // above the full MIDI-velocity accent of 4.09 V: the nodes of 808HcMaAccentTables.h (node 0 = the last node of kMaEnv)
+      const int nx = kMaNumAccentsX; int j = 1; while (j < nx - 1 && accentVolt > kMaAccentsX[j]) ++j; --j;
+      wa = std::fmin((accentVolt - kMaAccentsX[j]) / (kMaAccentsX[j + 1] - kMaAccentsX[j]), 1.0); r0 = kMaEnvX[j]; r1 = kMaEnvX[j + 1];
+    }
+    else if (accentVolt >= kMaAccents[na - 1]) { ia = na - 2; wa = 1; r0 = kMaEnv[ia]; r1 = kMaEnv[ia + 1]; }
+    else { ia = 1; while (accentVolt > kMaAccents[ia]) ++ia; --ia; wa = (accentVolt - kMaAccents[ia]) / (kMaAccents[ia + 1] - kMaAccents[ia]); r0 = kMaEnv[ia]; r1 = kMaEnv[ia + 1]; }
+    for (int b = 0; b < kMaNumBins; ++b) mMaLn[b] = (1 - wa) * std::log(std::fmax((double)r0[b], 1e-9)) + wa * std::log(std::fmax((double)r1[b], 1e-9));
     // the table holds the rms of a whole bin; for the geometric interpolation the value at the bin centre of an exponential slope s (nepers per bin) is rms / sqrt(sinh(s) / s)
     double ln0[kMaNumBins]; for (int b = 0; b < kMaNumBins; ++b) ln0[b] = mMaLn[b];
     for (int b = 0; b < kMaNumBins; ++b)

@@ -837,6 +837,19 @@ select.ne-len-input { appearance:none; -webkit-appearance:none; } /* "Turnaround
 .ne-select-rect { position:fixed; border:1px solid var(--amber); background:rgba(251,191,36,0.12); pointer-events:none; z-index:100; }
 .ne-select-rect.delete-mode { border-color:var(--red); background:rgba(239,68,68,0.15); }
 .ne-vel-wrap { display:flex; border-top:2px solid var(--border); flex-shrink:0; }
+/* Accent lane: a thin row of markers above the velocity lane */
+.ne-accent-wrap { display:flex; border-top:2px solid var(--border); flex-shrink:0; height:26px; }
+.ne-accent-labels { width:170px; flex-shrink:0; display:flex; align-items:center; justify-content:space-between; padding:0 8px 0 0; }
+.ne-accent-title { font-family:'Inter','SF Pro Text',-apple-system,system-ui,sans-serif; font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--cyan); }
+.ne-accent-amount-wrap { display:flex; align-items:center; gap:3px; }
+.ne-accent-amount { width:56px; height:20px; padding:0 4px; -moz-appearance:textfield; appearance:textfield; font-family:'SF Mono','Fira Code',Consolas,Menlo,'DejaVu Sans Mono',monospace; font-size:11px; color:var(--amber); background:var(--bg); border:1px solid var(--border2); border-radius:2px; text-align:center; }
+.ne-accent-amount::-webkit-inner-spin-button, .ne-accent-amount::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+.ne-accent-pct { font-size:10px; color:var(--muted); }
+.ne-accent-off .ne-accent-amount { color:var(--muted); }
+.ne-accent-lane { position:relative; flex:1; overflow:hidden; background:var(--bg); cursor:crosshair; }
+.ne-accent-inner { position:relative; height:100%; }
+.ne-accent-mark { position:absolute; top:50%; width:11px; height:11px; transform:translate(-50%,-50%) rotate(45deg); background:var(--amber); border:1px solid #0f172a; pointer-events:none; }
+.ne-accent-off .ne-accent-mark { opacity:.45; }
 .ne-vel-labels { width:170px; flex-shrink:0; display:flex; flex-direction:column; justify-content:center; gap:6px; padding:10px 8px 4px 0; }
 .ne-vel-lane { position:relative; min-height:80px; flex:1; overflow-x:auto; overflow-y:hidden; background:var(--bg); }
 .ne-vel-handle { position:absolute; width:11px; height:11px; border-radius:50%; border:1px solid #0f172a; cursor:ns-resize; z-index:3; touch-action:none; }

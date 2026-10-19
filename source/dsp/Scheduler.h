@@ -31,6 +31,7 @@ struct DueEvent {
   std::string trackId;
   int         vel;
   int         sampleOffset; // offset within this block (0..nFrames-1)
+  bool        accent = false;
 };
 
 class Scheduler {

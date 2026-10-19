@@ -42,6 +42,9 @@ public:
   // Resets to 1.0 after the trigger.
   void SetNextGain(double g) { mNextGain = g; }
 
+  // Accent of the NEXT Trigger() (see DrumVoice::SetAccent); resets to 0 (the normal note) after the trigger.
+  void SetNextAccent(double accent01) { mNextAccent = accent01; }
+
   // Triggers a voice with variadic arguments forwarded to VoiceT::Trigger().
   // Returns the index of the voice that was triggered (mVoices[idx]), so
   // callers can inspect that specific voice right after (e.g. debug/diag
@@ -65,6 +68,8 @@ public:
         if (mTriggerOrder[i] < mTriggerOrder[idx]) idx = i;
     }
 
+    mVoices[idx].SetAccent(mNextAccent);
+    mNextAccent = 0.0;
     mVoices[idx].Trigger(std::forward<Args>(args)...);
     mGain[idx] = mNextGain;
     mNextGain = 1.0;
@@ -110,6 +115,7 @@ private:
   std::array<VoiceT, N> mVoices;
   std::array<double, N> mGain;                // per-voice linear output gain (see SetNextGain)
   double mNextGain = 1.0;
+  double mNextAccent = 0.0;
   std::array<double, kScratchFrames> mScratch{};
   std::array<uint64_t, N> mTriggerOrder{};   // per‑voice trigger counter
   uint64_t mNextOrder = 0;

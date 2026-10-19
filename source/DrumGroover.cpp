@@ -518,7 +518,7 @@ dgg::FullPattern FullPatternFromJson(const nlohmann::json& j)
   if (j.contains("events"))
   {
     for (auto& e : j["events"])
-      fp.events.push_back({ e.value("trackId", ""), e.value("beatAbs", 0.0), e.value("vel", 100) });
+      fp.events.push_back({ e.value("trackId", ""), e.value("beatAbs", 0.0), e.value("vel", 100), e.value("accent", false) });
   }
   return fp;
 }
@@ -1434,6 +1434,7 @@ void DrumGroover::PushEngineAndProjectStateToUI()
   });
 
   SendBridgeMessage("cacheVariantCount", { {"value", mCacheVariantCount.load(std::memory_order_relaxed)} });
+  SendBridgeMessage("accentAmount", { {"value", mAccentAmount.load(std::memory_order_relaxed)} });
 
   SendBridgeMessage("engineModeState", {
     {"engine", mEngineMode.load(std::memory_order_relaxed) == static_cast<int>(EngineMode::LoFi) ? "lofi" : "internal"},
@@ -1632,6 +1633,7 @@ bool DrumGroover::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* p
     else if (type == "midiNoteOn")       HandleMidiNoteOn(payload);
     else if (type == "midiNoteOff")      HandleMidiNoteOff(payload);
     else if (type == "setPolyphony")     HandleSetPolyphony(payload);
+    else if (type == "setAccentAmount")  HandleSetAccentAmount(payload);
       else if (type == "commitVoiceParam") HandleCommitVoiceParam(payload);
     else if (type == "setCacheVariantCount") HandleSetCacheVariantCount(payload);
     else if (type == "queryCacheBakeEstimate") HandleQueryCacheBakeEstimate(payload);
@@ -2420,6 +2422,13 @@ void DrumGroover::HandleSetUIScale(const nlohmann::json& payload)
     mAwaitingSelfInitiatedResize = true;
 
   EditorResizeFromUI(w, h, true);
+}
+
+void DrumGroover::HandleSetAccentAmount(const nlohmann::json& payload)
+{
+  const double value = std::clamp(payload.value("value", 0.0), 0.0, 1.0);
+  mAccentAmount.store(value, std::memory_order_relaxed);
+  DGG_Log("HandleSetAccentAmount: value=" + std::to_string(value));
 }
 
 void DrumGroover::HandleSetPolyphony(const nlohmann::json& payload)
@@ -3584,11 +3593,20 @@ int DrumGroover::CustomInstrumentForTrack(const std::string& trackId)
   return -1;
 }
 
-void DrumGroover::TriggerCustom(int k, double velocity01, double gain)
+// Accent of one note, 0..1 of the 808 trigger range: a normal note runs at the calibrated 4.09 V trigger amplitude (0), an accented one at the amount set in the Drum Engine
+// (4.09 V + amount * 9.91 V, up to the 14 V of the 808's accent bus). The voices without an accent stage ignore it.
+double DrumGroover::AccentFor(bool accent) const
 {
+  return accent ? std::clamp(mAccentAmount.load(std::memory_order_relaxed), 0.0, 1.0) : 0.0;
+}
+
+void DrumGroover::TriggerCustom(int k, double velocity01, double gain, bool accent)
+{
+  const double accent01 = AccentFor(accent);
   if (IsPc2Kind(dgg::CustomInstrument(k).kind))
   {
     mCustomPc2Pools[k].SetNextGain(gain);
+    mCustomPc2Pools[k].SetNextAccent(accent01);
     mCustomPc2Pools[k].Trigger(velocity01);
     return;
   }
@@ -3601,16 +3619,19 @@ void DrumGroover::TriggerCustom(int k, double velocity01, double gain)
   if (IsHcKind(dgg::CustomInstrument(k).kind))
   {
     mCustomHcPools[k].SetNextGain(gain);
+    mCustomHcPools[k].SetNextAccent(accent01);
     mCustomHcPools[k].Trigger(velocity01);
     return;
   }
   if (dgg::CustomInstrument(k).kind != dgg::EngineKind::Tom)
   {
     mCustomRmPools[k].SetNextGain(gain);
+    mCustomRmPools[k].SetNextAccent(accent01);
     mCustomRmPools[k].Trigger(velocity01);
     return;
   }
   mCustomPools[k].SetNextGain(gain);
+  mCustomPools[k].SetNextAccent(accent01);
   mCustomPools[k].Trigger(velocity01);
 }
 
@@ -3653,13 +3674,14 @@ void DrumGroover::HandleSetArticulationLevel(const nlohmann::json& payload)
 
 #if IPLUG_DSP
 // Triggers the pool of a table instance.
-void DrumGroover::TriggerInstrument(const dgg::InstrumentDef& inst, double velocity01, double gain)
+void DrumGroover::TriggerInstrument(const dgg::InstrumentDef& inst, double velocity01, double gain, bool accent)
 {
+  const double accent01 = AccentFor(accent);
   switch (inst.kind)
   {
-    case dgg::EngineKind::SnareSd: mSnareSdPools[inst.poolSlot].SetNextGain(gain); mSnareSdPools[inst.poolSlot].Trigger(velocity01); break;
-    case dgg::EngineKind::RmRim: mSnareRmPools[inst.poolSlot].SetNextGain(gain); mSnareRmPools[inst.poolSlot].Trigger(velocity01); break;
-    case dgg::EngineKind::Tom: mTomPools[inst.poolSlot].SetNextGain(gain); mTomPools[inst.poolSlot].Trigger(velocity01); break;
+    case dgg::EngineKind::SnareSd: mSnareSdPools[inst.poolSlot].SetNextGain(gain); mSnareSdPools[inst.poolSlot].SetNextAccent(accent01); mSnareSdPools[inst.poolSlot].Trigger(velocity01); break;
+    case dgg::EngineKind::RmRim: mSnareRmPools[inst.poolSlot].SetNextGain(gain); mSnareRmPools[inst.poolSlot].SetNextAccent(accent01); mSnareRmPools[inst.poolSlot].Trigger(velocity01); break;
+    case dgg::EngineKind::Tom: mTomPools[inst.poolSlot].SetNextGain(gain); mTomPools[inst.poolSlot].SetNextAccent(accent01); mTomPools[inst.poolSlot].Trigger(velocity01); break;
     case dgg::EngineKind::Ride:
     {
       // A new Ride hit (any articulation) chokes every other still-ringing Ride voice first, real cymbal or not -- a physical strike
@@ -3687,21 +3709,21 @@ void DrumGroover::TriggerInstrument(const dgg::InstrumentDef& inst, double veloc
         ForEachHiHatPool([](const dgg::InstrumentDef& d, auto& pool) { if (dgg::StrEq(d.circuitFamily, "Open")) pool.ChokeAll(); });
       break;
     case dgg::EngineKind::Kick:
-      mKickPools[inst.poolSlot].SetNextGain(gain); mKickPools[inst.poolSlot].Trigger(velocity01);
+      mKickPools[inst.poolSlot].SetNextGain(gain); mKickPools[inst.poolSlot].SetNextAccent(accent01); mKickPools[inst.poolSlot].Trigger(velocity01);
       break;
     default: break;
   }
 }
 
-void DrumGroover::TriggerGmNote(int note, double velocity01)
+void DrumGroover::TriggerGmNote(int note, double velocity01, bool accent)
 {
   const uint32_t missBefore = dgg::CacheMissSeq().load(std::memory_order_relaxed);
-  TriggerGmNoteVoices(note, velocity01);
+  TriggerGmNoteVoices(note, velocity01, accent);
   if (note >= 0 && note < 128 && dgg::CacheMissSeq().load(std::memory_order_relaxed) != missBefore)
     mMissNoteBits[note >> 6].fetch_or(uint64_t(1) << (note & 63), std::memory_order_relaxed);
 }
 
-void DrumGroover::TriggerGmNoteVoices(int note, double velocity01)
+void DrumGroover::TriggerGmNoteVoices(int note, double velocity01, bool accent)
 {
   if (!mActive.load(std::memory_order_relaxed) || mUserMuted.load(std::memory_order_relaxed)) return;
 
@@ -3727,8 +3749,8 @@ void DrumGroover::TriggerGmNoteVoices(int note, double velocity01)
   int customK = -1;   // a note of a track with a custom instrument plays that instrument (checked before the kit notes)
   for (int k = 0; k < dgg::kNumCustomInstruments && customK < 0; k++)
     if (note >= 0 && note == mCustomNote[k].load(std::memory_order_relaxed)) customK = k;
-  if (customK >= 0) TriggerCustom(customK, std::min(1.0, velocity01), gain);
-  else if (const dgg::InstrumentDef* inst = dgg::FindInstrumentByNote(note)) TriggerInstrument(*inst, std::min(1.0, velocity01), gain);
+  if (customK >= 0) TriggerCustom(customK, std::min(1.0, velocity01), gain, accent);
+  else if (const dgg::InstrumentDef* inst = dgg::FindInstrumentByNote(note)) TriggerInstrument(*inst, std::min(1.0, velocity01), gain, accent);
 }
 
 void DrumGroover::ProcessMidiMsg(const IMidiMsg& msg)
@@ -3741,7 +3763,7 @@ void DrumGroover::ProcessMidiMsg(const IMidiMsg& msg)
         TriggerCustom(msg.NoteNumber(), msg.Velocity() / 127.0, mCustomPreviewGain[msg.NoteNumber()].load(std::memory_order_relaxed));
       return;
     }
-    TriggerGmNote(msg.NoteNumber(), msg.Velocity() / 127.0);
+    TriggerGmNote(msg.NoteNumber(), msg.Velocity() / 127.0, msg.Velocity() >= 100);   // live MIDI has no Accent lane: a loud note is accented (Yocto manual: velocity >= 100)
   }
 }
 
@@ -3802,6 +3824,7 @@ bool DrumGroover::SerializeState(IByteChunk& chunk) const
   // Only the target size (1-20), NOT the baked audio itself -- that lives
   // in %APPDATA%\DrumGroover\Cache\..., see GetCacheDir().
   engine["cacheVariantCount"] = mCacheVariantCount.load(std::memory_order_relaxed);
+  engine["accentAmount"] = mAccentAmount.load(std::memory_order_relaxed);
   engine["voiceParams"] = BuildVoiceParamsJson();
   engine["articulationGain"] = BuildArticulationGainsJson(false);
   engine["articulationGainLoFi"] = BuildArticulationGainsJson(true);
@@ -3889,6 +3912,8 @@ int DrumGroover::UnserializeState(const IByteChunk& chunk, int startPos)
       if (poly.contains("tom"))   HandleSetPolyphony({ {"family", "tom"},   {"value", poly.value("tom", mTomPools[0].GetPolyphony())} });
       if (poly.contains("ride"))  HandleSetPolyphony({ {"family", "ride"},  {"value", poly.value("ride", mRidePools[0].GetPolyphony())} });
     }
+    if (engine.contains("accentAmount"))
+      HandleSetAccentAmount({ {"value", engine.value("accentAmount", 0.0)} });
     if (engine.contains("cacheVariantCount"))
       HandleSetCacheVariantCount({ {"value", engine.value("cacheVariantCount", 7)} });
   }
@@ -3995,7 +4020,7 @@ void DrumGroover::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
         auto trackIt = std::find_if(mTracks.begin(), mTracks.end(),
           [&](const dgg::Track& t) { return t.id == ev.trackId; });
         if (trackIt != mTracks.end())
-          TriggerGmNote(trackIt->gm, ev.vel / 127.0);
+          TriggerGmNote(trackIt->gm, ev.vel / 127.0, ev.accent);
         else
         {
           const int ck = CustomInstrumentForTrack(ev.trackId);
@@ -4003,7 +4028,7 @@ void DrumGroover::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
           {
             const int cn = mCustomNote[ck].load(std::memory_order_relaxed);
             const double g = (cn >= 0 && cn < 128) ? mArticulationGain[cn].load(std::memory_order_relaxed) : 1.0;
-            if (mActive.load(std::memory_order_relaxed) && !mUserMuted.load(std::memory_order_relaxed)) TriggerCustom(ck, ev.vel / 127.0, g);
+            if (mActive.load(std::memory_order_relaxed) && !mUserMuted.load(std::memory_order_relaxed)) TriggerCustom(ck, ev.vel / 127.0, g, ev.accent);
           }
         }
         evIdx++;

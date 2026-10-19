@@ -54,13 +54,18 @@ public:
 
   void SetSampleRate(double sr) override { DrumVoice::SetSampleRate(sr); mModel.SetSampleRate(sr); mHoldSamples = (long)(kSilenceHoldSec * sr); mMinSamples = (long)(kMinSeconds * sr); mMaxSamples = (long)(kMaxSeconds * sr); }
 
+  void SetAccent(double accent01) override { mAccent = std::clamp(accent01, 0.0, 1.0); }
+  // The velocity is the loudness of this note (it scales the output linearly, as in the Lo-Fi engine). The circuit runs at the trigger amplitude of the accent set by
+  // SetAccent (the Accent lane and the Accent amount): 0 = the normal note, 4.09 V, the reference point every level and the Yocto2 comparison are calibrated at;
+  // 1 = 14 V, the top of the 808's accent range (4.09 V + accent * 9.91 V). Level and tone change with the accent as in the circuit.
   void Trigger(double velocity01) override
   {
     mActive = false;
     const int vel = Velocity127(velocity01);
     if (vel <= 0 || mSampleRate <= 0.0) return;
+    mVelGain = (double)vel / 127.0;
     mModel.SetPots(PotsFromKnobs(decayKnob01, toneKnob, levelKnob));
-    if (!mModel.Start(vel)) return;
+    if (!mModel.StartAccent(mAccent)) return;
     mRest = mModel.RestOutput();
     mPitch = std::clamp(pitchRatio, 0.25, 4.0); mPos = 0.0; mHave = 0; mS0 = mS1 = 0.0; mSamples = 0; mQuiet = 0; mActive = true;
   }
@@ -74,7 +79,7 @@ public:
       while (mHave < (long)mPos + 2) { mS0 = mS1; mS1 = mModel.Step() - mRest; ++mHave; }
       const double frac = mPos - std::floor(mPos), v = mS0 + frac * (mS1 - mS0);
       if (!std::isfinite(v)) { mActive = false; return; }
-      out[i] += v * kVoltToSample;
+      out[i] += v * kVoltToSample * mVelGain;
       mPos += mPitch;
       mQuiet = (std::fabs(v) < kSilenceVolt) ? mQuiet + 1 : 0;
       if (++mSamples >= mMaxSamples || (mSamples >= mMinSamples && mQuiet >= mHoldSamples)) { mActive = false; return; }
@@ -85,6 +90,7 @@ public:
 
 private:
   kickfast::TR808KickFast mModel;
+  double mVelGain = 1.0, mAccent = 0.0;
   bool mActive = false; double mRest = 0.0, mPitch = 1.0, mPos = 0.0, mS0 = 0.0, mS1 = 0.0; long mHave = 0, mSamples = 0, mQuiet = 0, mHoldSamples = 12000, mMinSamples = 14400, mMaxSamples = 384000;
 };
 

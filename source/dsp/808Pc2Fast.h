@@ -49,8 +49,10 @@ struct SlopeTab
   void build(const Pt* t, int n) { for (int i = 0; i <= N; ++i) v[i] = interpLog(t, n, std::max(i * step, 1.0)); }
   double operator()(double s) const { const double u = std::min(std::max(s, 0.0) / step, (double)N - 1e-9); const int k = (int)u; const double f = u - k; return v[k] + f * (v[k + 1] - v[k]); }
 };
-inline const Pt kAccent[] = {{1.00, 0.0047}, {1.30, 0.0065}, {1.40, 0.0400}, {1.45, 0.0798}, {1.50, 0.1527}, {1.55, 0.2852}, {1.60, 0.5245}, {1.65, 0.7559}, {1.70, 1.1466}, {1.75, 1.8389}, {1.80, 3.0339}, {1.85, 3.6972}, {1.90, 3.8362}, {1.95, 3.9540}, {2.00, 4.0645}, {2.10, 4.2749}, {2.20, 4.4802}, {2.30, 4.6817}, {2.40, 4.8824}, {2.50, 5.0812}, {3.00, 6.0710}, {4.00, 8.0393}, {4.50, 9.0235}, {5.00, 10.0079}, {6.00, 11.9774}};
-constexpr int kAccentN = 25;
+inline const Pt kAccent[] = {{1.00, 0.0047}, {1.30, 0.0065}, {1.40, 0.0400}, {1.45, 0.0798}, {1.50, 0.1527}, {1.55, 0.2852}, {1.60, 0.5245}, {1.65, 0.7559}, {1.70, 1.1466}, {1.75, 1.8389}, {1.80, 3.0339}, {1.85, 3.6972}, {1.90, 3.8362}, {1.95, 3.9540}, {2.00, 4.0645}, {2.10, 4.2749}, {2.20, 4.4802}, {2.30, 4.6817}, {2.40, 4.8824}, {2.50, 5.0812}, {3.00, 6.0710}, {4.00, 8.0393}, {4.50, 9.0235}, {5.00, 10.0079}, {6.00, 11.9774},
+  // above the velocity range (4.09 V): the envelope target follows 2 * accent up to 6.47 V and saturates at 12.92 V (engine, pc2_diagnose, peak of the envelope node pc2_n372; +0.0031 like the table at 6 V)
+  {6.10, 12.1750}, {6.20, 12.3725}, {6.30, 12.5696}, {6.40, 12.7677}, {6.45, 12.8666}, {6.50, 12.9215}, {7.00, 12.9234}, {14.00, 12.9241}};
+constexpr int kAccentN = 33;
 
 inline double taperA(double p)
 {
@@ -236,9 +238,13 @@ public:
     mX = (Rnd() * 2 - 1) * 7.1; mVdir = Rnd() < 0.5 ? 1 : -1; mL = (Rnd() * 2 - 1) * 6.6; mLdir = Rnd() < 0.5 ? 1 : -1;
     mVcap = mSnapVcap; mVc = mSnapVc; mY = mYPrev = mSnapY; mYo = mSnapY * 0.857; mN385 = 0.0; mQ22 = Q22Transient(); mQ22.eOld = mERest;
     if (st) { mE = st->E; mX = st->x; mVdir = st->vdir; mL = st->l; mLdir = st->ldir; if (st->vcap == st->vcap) mVcap = st->vcap; }   // vcap NaN: the steady state
-    mEt = AccentTarget(accentVolt);
+    mEt = AccentTarget(accentVolt); mOldRise = accentVolt <= 4.09 + 1e-9;
     mTTrig = 0.0; mHpFirst = true; mHpX1 = mHpY1 = 0.0; mActive = true; return true;
   }
+
+  // Starts a hit at an accent 0..1 of the 808 trigger range: 0 = the full MIDI-velocity accent (4.09 V, exactly Start(4.09, ...)), 1 = 14 V (accent voltage 4.09 + accent * 9.91 V). Above 4.09 V the envelope
+  // target of the accent table rises with 2 * accent up to 6.47 V and saturates at 12.92 V (the table kAccent), the attack follows the engine's rise (kRise, tabulated up to 2 ms).
+  bool StartAccent(double accent01, uint64_t seed, const StartState* st = nullptr) { return Start(accent01 > 0.0 ? 4.09 + std::fmin(accent01, 1.0) * (14.0 - 4.09) : 4.09, seed, st); }
 
   // next output sample (volts at the jack after the 10.6 Hz coupling of Block 11)
   double Step();
@@ -265,6 +271,7 @@ private:
   double mSnapVcap = 0, mSnapVc = 0, mSnapY = 0;
   // running state
   unsigned long long mRng = 0; long mI = 0; bool mWasIdle = false, mIdleRunning = true, mAttacking = true, mHpFirst = true;
+  bool mOldRise = true;
   double mE = 0.0, mERest = 0.0, mEt = 0, mTTrig = 0, mX = 0, mL = 0, mHold = 0, mVcap = 0, mVc = 0, mY = 0, mYPrev = 0, mYo = 0, mN385 = 0, mHpX1 = 0, mHpY1 = 0; int mVdir = 1, mLdir = 1;
   detail::Q22Transient mQ22;
 };
@@ -308,9 +315,11 @@ inline double TR808Pc2Fast::Step()
   const bool sw2 = mK.sw2 != 0, sw3 = mK.sw3 != 0;
   if (mAttacking && t - mTTrig < 2e-3 && mE < mEt)
   {   // attack: the engine's rise of E after the trigger (concave, the same for every accent) up to the accent target; engine samples at 48 kHz, linear in time between them and beyond the last one
-    static constexpr double kRise[30] = {0.0194, 0.3883, 0.8000, 1.1989, 1.5852, 1.9594, 2.3219, 2.6730, 3.0131, 3.3426, 3.6617, 3.9708, 4.2702, 4.5603, 4.8412, 5.1134, 5.3770, 5.6324, 5.8798, 6.1194, 6.3516, 6.5765, 6.7943, 7.0053, 7.2098, 7.4078, 7.5997, 7.7855, 7.9656, 8.1391};
+    static constexpr int kRiseN = 100;
+    static constexpr double kRise[kRiseN] = {0.0194, 0.3883, 0.8000, 1.1989, 1.5852, 1.9594, 2.3219, 2.6730, 3.0131, 3.3426, 3.6617, 3.9708, 4.2702, 4.5603, 4.8412, 5.1134, 5.3770, 5.6324, 5.8798, 6.1194, 6.3516, 6.5765, 6.7943, 7.0053, 7.2098, 7.4078, 7.5997, 7.7855, 7.9656, 8.1399, 8.3089, 8.4726, 8.6312, 8.7848, 8.9337, 9.0779, 9.2176, 9.3530, 9.4841, 9.6112, 9.7343, 9.8536, 9.9692, 10.0812, 10.1897, 10.2948, 10.3967, 10.4954, 10.5911, 10.6837, 10.7736, 10.8606, 10.9449, 11.0267, 11.1059, 11.1826, 11.2570, 11.3291, 11.3990, 11.4667, 11.5323, 11.5960, 11.6576, 11.7174, 11.7753, 11.8314, 11.8859, 11.9386, 11.9898, 12.0394, 12.0874, 12.1340, 12.1792, 12.2230, 12.2655, 12.3066, 12.3466, 12.3853, 12.4228, 12.4592, 12.4945, 12.5288, 12.5620, 12.5942, 12.6254, 12.6557, 12.6851, 12.7136, 12.7412, 12.7681, 12.7941, 12.8193, 12.8438, 12.8676, 12.8907, 12.9131, 12.9152, 12.9139, 12.9125, 12.9111};
     constexpr double kRiseDt = 1.0 / 48000.0; const double pos = (t + dt - mTTrig) / kRiseDt;   // the first sample is at one sample period after the trigger
-    const int i0 = std::min((int)pos, 28); const double rise = pos < 1.0 ? kRise[0] * pos : kRise[i0 - 1] + (kRise[i0] - kRise[i0 - 1]) * (pos - i0);
+    // the velocity range (accent <= 4.09 V) keeps the linear continuation of the first 29 samples it was calibrated with, the accents above use the tabulated rise up to 2 ms
+    const int i0 = std::min((int)pos, mOldRise ? 28 : kRiseN - 2); const double rise = pos < 1.0 ? kRise[0] * pos : kRise[i0 - 1] + (kRise[i0] - kRise[i0 - 1]) * (pos - i0);
     mE = std::min(mERest + rise, mEt); mAttacking = mE < mEt;
   }
   else { mAttacking = false; mE = mERest + (mE - mERest) * mDecay; }

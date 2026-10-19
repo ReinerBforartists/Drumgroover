@@ -17,6 +17,7 @@
 #include "808SnareTone.h"
 #include "808SnareEarly.h"
 #include "808SnareSub.h"
+#include "808SnareAccentTables.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -225,6 +226,56 @@ public:
         for (int c = 0; c < 2; ++c)
         {
           dev[m][c] = fade * ((1 - sw) * kSubTone[c][sa][m] + sw * kSubTone[c][sa + 1][m]); devEnd[m][c] = fade * ((1 - sw) * kSubEnd[c][sa][m] + sw * kSubEnd[c][sa + 1][m]);
+          dev[m][2] = devEnd[m][2] = 0.0;
+        }
+      mStage.SubSampleState(dev, mSubState); mStage.SubSampleState(devEnd, mSubEndState);
+    }
+    for (double& r : mRing) r = 0.0; mPos = 0;
+    mActive = true; return true;
+  }
+
+  // Starts a hit at an accent 0..1 of the 808 trigger range: 0 = the full MIDI-velocity accent (4.09 V, exactly Start(127, ...)), 1 = 14 V (accent voltage 4.09 + accent * 9.91 V).
+  // Above 4.09 V the tone coefficients, the noise envelope, the early coupling and the first-sample correction come from the rows of 808SnareAccentTables.h (node 0 = the last
+  // velocity row, nodes 1..kSnareNumAccX above it), interpolated like the velocity tables, linearly in the accent voltage between the nodes.
+  bool StartAccent(double accent01, double tone01, double snappy01, double level01)
+  {
+    using namespace detail;
+    if (!(accent01 > 0.0)) return Start(127, tone01, snappy01, level01);
+    accent01 = std::fmin(accent01, 1.0);
+    tone01 = std::clamp(tone01, 0.0, 1.0); snappy01 = std::clamp(snappy01, 0.0, 1.0); level01 = std::clamp(level01, 0.0, 1.0);
+    if (!mStageValid || tone01 != mTone || level01 != mLevel) { mStage.Setup(tone01, level01, kToneRest); mTone = tone01; mLevel = level01; mStageValid = true; }
+    else mStage.Reset(kToneRest);
+    mK = 0;
+    const double u = accent01 * kSnareNumAccX; int j = (int)u; if (j >= kSnareNumAccX) j = kSnareNumAccX - 1; const double f = u - j;   // between node j and j + 1 (0 = last velocity row)
+    {   // tone: cubic Hermite in the plateau between the nodes (the last velocity node, then the rows of the extension)
+      const int L = kToneNodes - 1;
+      const double P0 = j == 0 ? kTonePlateau[L] : kSnarePlateauX[j - 1], P1 = kSnarePlateauX[j], h = P1 - P0, x = f, x2 = x * x, x3 = x2 * x;
+      const double h00 = 2 * x3 - 3 * x2 + 1, h10 = x3 - 2 * x2 + x, h01 = -2 * x3 + 3 * x2, h11 = x3 - x2;
+      for (int m = 0; m < kToneModes; ++m)
+      {
+        const double c0 = j == 0 ? kToneCoef[L][m] : kToneXCoef[j - 1][m], d0 = j == 0 ? kToneDCoef[L][m] : kToneXDCoef[j - 1][m];
+        mCoef[m] = h00 * c0 + h10 * h * d0 + h01 * kToneXCoef[j][m] + h11 * h * kToneXDCoef[j][m];
+      }
+    }
+    {   // noise envelope: ln-interpolation in VR9 and accent
+      int iv; double wv; Locate(kNoiseVr9, kNoiseNumVr9, snappy01, iv, wv);
+      auto env = [&](int vi, int node, int b) { return std::log(std::fmax((double)(node == 0 ? kNoiseEnv[vi][kNoiseNumAccents - 1][b] : kNoiseEnvX[vi][node - 1][b]), 1e-9)); };
+      for (int b = 0; b < kNoiseNumBins; ++b)
+        mEnv[b] = std::exp((1 - wv) * ((1 - f) * env(iv, j, b) + f * env(iv, j + 1, b)) + wv * ((1 - f) * env(iv + 1, j, b) + f * env(iv + 1, j + 1, b)));
+    }
+    {   // deterministic coupling of the trigger into n73: bilinear in VR9 and accent
+      int ev; double wv2; Locate(kEarlyVr9, kEarlyNumVr9, snappy01, ev, wv2);
+      auto ea = [&](int vi, int node, int k) { return (double)(node == 0 ? kEarlyN73[vi][kEarlyNumAccents - 1][k] : kEarlyN73X[vi][node - 1][k]); };
+      for (int k = 0; k < kEarlySamples; ++k)
+        mEarly[k] = (1 - wv2) * ((1 - f) * ea(ev, j, k) + f * ea(ev, j + 1, k)) + wv2 * ((1 - f) * ea(ev + 1, j, k) + f * ea(ev + 1, j + 1, k));
+    }
+    {   // what the first sample's trigger spike does inside the sample
+      double dev[kSubSteps][3], devEnd[kSubSteps][3];
+      for (int m = 0; m < kSubSteps; ++m)
+        for (int c = 0; c < 2; ++c)
+        {
+          const double t0 = j == 0 ? kSubTone[c][kSubNumAccents - 1][m] : kSubToneX[c][j - 1][m], e0 = j == 0 ? kSubEnd[c][kSubNumAccents - 1][m] : kSubEndX[c][j - 1][m];
+          dev[m][c] = (1 - f) * t0 + f * kSubToneX[c][j][m]; devEnd[m][c] = (1 - f) * e0 + f * kSubEndX[c][j][m];
           dev[m][2] = devEnd[m][2] = 0.0;
         }
       mStage.SubSampleState(dev, mSubState); mStage.SubSampleState(devEnd, mSubEndState);

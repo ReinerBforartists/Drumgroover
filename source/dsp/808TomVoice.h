@@ -57,14 +57,19 @@ public:
     mHostRatio = tomfast::TR808TomFast::kFs / sr;
   }
 
+  void SetAccent(double accent01) override { mAccent = std::clamp(accent01, 0.0, 1.0); }
+  // The velocity is the loudness of this note (it scales the output linearly, as in the Lo-Fi engine). The circuit runs at the trigger amplitude of the accent set by
+  // SetAccent (the Accent lane and the Accent amount): 0 = the normal note, 4.09 V, the reference point every level and the Yocto2 comparison are calibrated at;
+  // 1 = 14 V, the top of the 808's accent range (4.09 V + accent * 9.91 V). Level and tone change with the accent as in the circuit.
   void Trigger(double velocity01) override
   {
     mActive = false;
     const int vel = Velocity127(velocity01);
     if (vel <= 0) return;
+    mVelGain = (double)vel / 127.0;
     if (mSampleRate <= 0.0) return;
     if (!mModel.Setup(std::clamp(sheet, 0, 2) * 2 + (conga ? 1 : 0), std::clamp(tuningKnob, 0.0, 1.0), std::clamp(levelKnob, 0.0, 1.0))) return;
-    if (!mModel.Start(AccentVolt(vel))) return;
+    if (!mModel.StartAccent(mAccent)) return;
     mRate = std::clamp(pitchRatio, 0.25, 4.0) * mHostRatio;
     mDirect = std::fabs(mRate - 1.0) < 1e-12;
     mFrac = 0.0; mSamples = 0; mQuiet = 0; mInWin = 0; mWinSq = 0.0; mEnv = 1.0;
@@ -92,7 +97,7 @@ public:
         mFrac += mRate;
       }
       if (!mActive) return;
-      out[i] += v * kVoltToSample * SheetMix(sheet) * mEnv;   // no clamp, no limiter: the path is floating point
+      out[i] += v * kVoltToSample * SheetMix(sheet) * mEnv * mVelGain;   // no clamp, no limiter: the path is floating point
       mEnv *= mEnvStep;
       if (mEnv < 1e-4) { mActive = false; return; }
     }
@@ -116,6 +121,7 @@ private:
     return v;
   }
 
+  double mVelGain = 1.0, mAccent = 0.0;
   tomfast::TR808TomFast mModel;
   bool mActive = false, mDirect = true;
   double mHostRatio = 1.0, mRate = 1.0, mFrac = 0.0, mWinSq = 0.0, mY[4] = {};

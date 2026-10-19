@@ -1406,6 +1406,7 @@ function deUndoCapture() {
     customGains: { ...deCustomEngineGainCache },
     pads: JSON.parse(JSON.stringify(dePadPositionsCache || {})),
     poly,
+    accent: (document.getElementById('deAccentAmount') || {}).value,
   };
 }
 
@@ -1481,6 +1482,11 @@ function deUndoApply(target, current) {
     if (!slider || target.poly[family] === undefined || slider.value === target.poly[family]) continue;
     slider.value = target.poly[family];
     slider.dispatchEvent(new Event('input'));
+  }
+  const accentSlider = document.getElementById('deAccentAmount');
+  if (accentSlider && target.accent !== undefined && accentSlider.value !== target.accent) {
+    accentSlider.value = target.accent;
+    accentSlider.dispatchEvent(new Event('input'));
   }
 }
 
@@ -2184,3 +2190,32 @@ function initDrumEngineTab() {
 }
 
 window.initDrumEngineTab = initDrumEngineTab;
+// Accent amount (Drum Engine slider, mirrored in the Note Editor's Accent lane): how far an unaccented hit sits below an accented one,
+// 0 = no difference. Wired at load and not with the tab, because the Note Editor's box and the host's state push need it before the Drum
+// Engine tab was ever opened.
+(function initAccentAmount() {
+  const slider = document.getElementById('deAccentAmount');
+  const val = document.getElementById('deAccentAmountVal');
+  if (!slider) return;
+  wireKnob(slider);
+  const ctrl = slider.closest('.ctrl');
+  if (ctrl) ctrl.dataset.def = '0';
+  slider.addEventListener('input', () => {
+    const pct = Number(slider.value);
+    if (val) val.textContent = pct + '%';
+    dggAccentAmount = pct / 100;
+    neRefreshAccentReadout();
+    if (typeof hostBridge !== 'undefined' && hostBridge.send) hostBridge.send('setAccentAmount', { value: pct / 100 });
+  });
+  if (typeof hostBridge !== 'undefined' && hostBridge.on) {
+    hostBridge.on('accentAmount', (payload) => {
+      if (!payload || typeof payload.value !== 'number') return;
+      const pct = Math.round(payload.value * 100);
+      slider.value = String(pct);
+      if (val) val.textContent = pct + '%';
+      dggAccentAmount = payload.value;
+      neRefreshAccentReadout();
+      if (typeof deUndoRebase === 'function') deUndoRebase();
+    });
+  }
+})();

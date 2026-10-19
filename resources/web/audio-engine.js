@@ -199,7 +199,7 @@ function buildFullPatternPayload(getEvents, totalBeats) {
   const events = getEvents();
   return {
     totalBeats,
-    events: events.map(e => ({ trackId: e.trackId, beatAbs: e.beatAbs, vel: e.vel }))
+    events: events.map(e => (e.accent ? { trackId: e.trackId, beatAbs: e.beatAbs, vel: e.vel, accent: true } : { trackId: e.trackId, beatAbs: e.beatAbs, vel: e.vel }))
   };
 }
 
@@ -408,9 +408,14 @@ function playActiveBlock() {
   const getEvents = () => {
     const b = findBlock(activeBlockId) || block;
     const evts = [];
+    const isAccent = neAccentMatcher(b);
     trackList.forEach(t => {
       if (!isTrackAudible(t.id)) return;   // the Note Editor's Mute/Solo
-      (b.data[t.id]||[]).forEach(note => evts.push({ trackId:t.id, beatAbs:note.beat, vel:note.vel }));
+      (b.data[t.id]||[]).forEach(note => {
+        const ev = { trackId:t.id, beatAbs:note.beat, vel:note.vel };
+        if (isAccent && isAccent(note.beat)) ev.accent = true;
+        evts.push(ev);
+      });
     });
     evts.sort((a,b2)=>a.beatAbs-b2.beatAbs);
     return evts;
