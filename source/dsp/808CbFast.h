@@ -247,6 +247,7 @@ private:
     d[4] = x6d;
     d[5] = (s[4] / R24 + (s[2] - v2) / R26 + (s[3] - v3) / R27 + (C29 + C28) * x6d) / C29;
   }
+  static constexpr double kU2bSat = 14.11;   // output limit of U2B (peak of n456 in the engine at the full accent)
   static bool High(const Osc& o, double t) { if (t < o.t1) return true; return std::fmod(t - o.t1, o.per) >= o.low; }
   // next level change of a gate, in time from the trigger (engine time off is the gate time at the trigger)
   static void NextEdge(const Osc& o, double off, bool& hi, double& next)
@@ -317,6 +318,7 @@ private:
     }
     for (int k = 0; k < 3; ++k) mU[k] = un[k];
     for (int i = 0; i < 6; ++i) mS[i] = p[i] + B[i][0] * ue[0] + B[i][1] * ue[1] + B[i][2] * ue[2];
+    mS[5] = std::fmax(-kU2bSat, std::fmin(kU2bSat, mS[5]));   // U2B saturates at its output limit (engine: +-14.11 V at accent 14 V); the ideal op-amp of the T network would overshoot in the first 10 ms of a full accent
   }
   inline void AdvanceFull(int m)
   {

@@ -3621,6 +3621,7 @@ void DrumGroover::TriggerCustom(int k, double velocity01, double gain, bool acce
   if (IsCbKind(dgg::CustomInstrument(k).kind))
   {
     mCustomCbPools[k].SetNextGain(gain);
+    mCustomCbPools[k].SetNextAccent(accent01);
     mCustomCbPools[k].Trigger(velocity01);
     return;
   }

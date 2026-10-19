@@ -6,8 +6,8 @@
 //
 // Nothing here is a synthesizer parameter: the level is the pot VR5. The circuit has no tuning or decay control; "pitch" is a digital transpose (the model output is read at
 // pitchRatio samples per output sample, linear interpolation). The velocity does not go to the accent stage: its transistor gate switches at about 3.3 V (MIDI velocity ~102),
-// so below that the circuit is silent and above it the level saturates within 1.4 dB. Every hit therefore runs with the full accent voltage and the velocity scales the amplitude
-// linearly (v/127).
+// so below that the circuit is silent. The velocity scales the amplitude linearly (v/127). The accent stage runs at the trigger amplitude of the accent set by SetAccent: 0 = the normal note, 4.09 V
+// (the calibrated reference), 1 = the full accent, 14 V (4.09 V + accent * 9.91 V).
 //
 // The cowbell gates the two free-running oscillators TP7 (gate E) and TP6 (gate F) of the CY oscillator bank, so the sound depends on the phase of both oscillators at the trigger:
 // every hit draws a random phase (both periods are below 6 ms: all relative phases occur).
@@ -32,7 +32,7 @@ public:
   // Jack voltage -> sample: the common jack factor (peak up to kPeakVoltWorstCase at level 1).
   static constexpr double kPeakVoltWorstCase = 1.47;
   static constexpr double kVoltToSample = dgg::kJackVoltToSample;
-  static constexpr double kAccentFullScaleVolt = cbfast::TR808CbFast::kAccentFullScaleVolt;
+  static constexpr double kAccentFullScaleVolt = cbfast::TR808CbFast::kAccentFullScaleVolt, kAccentMaxVolt = 14.0;
   // The gate phase at the trigger is drawn within kPhaseSpanSec.
   static constexpr double kPhaseSpanSec = 1.0;
   // A hit ends when the 10 ms RMS of the output has stayed below kHitSilenceVolt for kHitSilenceHoldSec (not before kHitMinSeconds, not after kHitMaxSeconds).
@@ -49,13 +49,15 @@ public:
     mMinSamples = (long)(kHitMinSeconds * sr); mMaxSamples = (long)(kHitMaxSeconds * sr);
   }
 
+  void SetAccent(double accent01) override { mAccent = std::clamp(accent01, 0.0, 1.0); }
+
   void Trigger(double velocity01) override
   {
     mActive = false;
     const int vel = Velocity127(velocity01);
     if (vel <= 0) return;
     if (levelKnob != mLevelApplied) { mModel.SetLevel(levelKnob); mLevelApplied = levelKnob; }
-    mModel.Start(kAccentFullScaleVolt, NextPhaseOffsetSec());
+    mModel.Start(kAccentFullScaleVolt + mAccent * (kAccentMaxVolt - kAccentFullScaleVolt), NextPhaseOffsetSec());
     mGain = kVoltToSample * (double)vel / 127.0;
     mRate = std::clamp(pitchRatio, 0.25, 4.0);
     mFrac = 0.0; mY0 = 0.0; mY1 = mModel.Step(); mSamples = 0; mQuiet = 0; mInWin = 0; mWinSq = 0.0;
@@ -105,6 +107,7 @@ private:
 
   cbfast::TR808CbFast mModel;
   bool mActive = false;
+  double mAccent = 0.0;
   double mGain = 0.0, mRate = 1.0, mFrac = 0.0, mY0 = 0.0, mY1 = 0.0, mLevelApplied = -1.0, mWinSq = 0.0;
   long mSamples = 0, mQuiet = 0, mInWin = 0;
   long mWinSamples = 480, mHoldSamples = 1440, mMinSamples = 2880, mMaxSamples = 72000;
