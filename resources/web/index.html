@@ -55,7 +55,7 @@
           <div class="add-block-menu-sep edit-menu-ne-only"></div>
           <button class="add-block-menu-item edit-menu-ne-only" id="snapToGridBtn" data-tooltip="Snap to Grid&#10;Snaps the selected note(s) back onto the current grid. A post-processing tool on your Note Editor selection — does nothing without a selection.">🧲 Snap to Grid</button>
           <div class="add-block-menu-sep edit-menu-ne-only"></div>
-          <button class="add-block-menu-item edit-menu-ne-only" id="rerollAllBlocksMenuBtn" data-tooltip="Reroll All Blocks&#10;Rerolls every unlocked instrument group across all regular blocks. Break and Intro/Outro Fill blocks are skipped — reroll those individually.">🎲 Reroll All Blocks</button>
+          <button class="add-block-menu-item edit-menu-ne-only" id="rerollAllBlocksMenuBtn" data-tooltip="Reroll All Blocks&#10;Rerolls every unlocked instrument group across all regular blocks, using the pattern mode shown at Main (when all its groups share one). Break and Intro/Outro Fill blocks are skipped — reroll those individually.">🎲 Reroll All Blocks</button>
           <div class="add-block-menu-item has-submenu edit-menu-ne-only">
             <span>🔓 Discard</span><span class="menu-hotkey">▸</span>
             <div class="add-block-menu submenu-flyout" id="discardSubmenu">
@@ -423,7 +423,7 @@
             <div class="ne-editing-toolbar">
           <div class="controls">
             <div class="knob-cluster">
-              <div class="cluster-title">Main <span id="rerollAllBtn" class="group-lock-icon" style="cursor:pointer" data-tooltip="Reroll All&#10;Rerolls everything unlocked in this block — regular blocks: all six instrument groups. Break/Intro/Outro: Fill + Kick. Locked parts are skipped.">🎲</span></div>
+              <div class="cluster-title">Main <span id="rerollAllBtn" class="group-lock-icon" style="cursor:pointer" data-tooltip="Reroll All&#10;Rerolls everything unlocked in this block — regular blocks: all six instrument groups, using the pattern mode chosen next to it. Break/Intro/Outro: Fill + Kick. Locked parts are skipped.">🎲</span><span id="mainPatternMode" class="group-lock-icon pattern-mode-icon" style="cursor:pointer">C</span></div>
               <div class="cluster-knobs">
                 <div class="ctrl" data-tooltip="Randomize&#10;Randomizes the selected note(s)' timing and velocity by this amount. A post-processing tool on your Note Editor selection, applied on release — does nothing without a selection."><div class="ctrl-label">Rnd <span class="val" id="randomizeAmtVal">0%</span></div><input type="range" id="randomizeAmt" min="0" max="100" value="0"></div>
                 <div class="ctrl" id="nudgeCtrl" data-tooltip="Nudge&#10;Nudges the selected note(s) by 1/8 of the current Snap step per turn — fine timing feel, independent of the Snap grid (not quantized). Select a note first."><div class="ctrl-label">Nudge</div><div class="knob-visual" id="nudgeKnob"><div class="knob-marker" id="nudgeKnobMarker"><div class="marker-dot"></div></div></div><span class="val" id="nudgeVal">0</span></div>

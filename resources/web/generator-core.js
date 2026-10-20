@@ -727,6 +727,13 @@ const PATTERN_MODE_INFO = {
   bit:      { letter: 'B', label: 'Bit',      tip: 'Driving, self-similar bit patterns.' },
   logistic: { letter: 'L', label: 'Logistic', tip: 'Chaotic but repeatable.' },
 };
+// The method chosen at Main (patternModes.main, default classic). The Main dice and Reroll All Blocks reroll with it.
+function getMainPatternMethod(block) {
+  if (!block || isFillGeneratedBlock(block)) return null;
+  const mode = block.patternModes && block.patternModes.main;
+  return PATTERN_MODES.includes(mode) ? mode : 'classic';
+}
+
 function setPatternMode(block, key, mode) {
   block.patternModes = { ...(block.patternModes || {}), [key]: mode };
 }
@@ -1720,10 +1727,12 @@ function rerollActiveBlock() {
   if (block.isFillBlock) { rerollFillBlock(block, g); return; }
   const unlockedGroups = ALL_ENGINE_GROUPS.filter(gid => !(block.lockedGroups && block.lockedGroups[gid]));
   if (!unlockedGroups.length) { neMsg('Everything in this block is locked — discard an edit first.'); return; }
+  const method = getMainPatternMethod(block);
   withBlockDataUndo(`Reroll All (${blockDisplayName(block)})`, block, () => {
     unlockedGroups.forEach(gid => {
       block.seeds = block.seeds || {};
       block.seeds[gid] = Math.floor(Math.random()*1e9);
+      setPatternMode(block, gid, method);
       REROLL_FNS[gid]({ suppressUndo: true, deferAudioSync: true, skipRender: true });
     });
   });
@@ -1735,10 +1744,12 @@ async function rerollAllBlocksGlobal() {
     neMsg('No regular blocks to reroll (Break/Fill blocks are skipped — reroll those individually)');
     return;
   }
+  // The mode picked at Main in the open block is the method for every block.
+  const method = getMainPatternMethod(findBlock(activeBlockId));
   if (shouldShowConfirmDialogs()) {
     const res = await showModal({
       title: 'Reroll every block?',
-      message: `This rerolls all unlocked instrument groups across ${targets.length} block${targets.length>1?'s':''} project-wide (${targets.map(blockDisplayName).join(', ')}). Locked groups, and any Break/Fill blocks, are left untouched.`,
+      message: `This rerolls all unlocked instrument groups across ${targets.length} block${targets.length>1?'s':''} project-wide (${targets.map(blockDisplayName).join(', ')})${method ? ` with the ${PATTERN_MODE_INFO[method].label} pattern mode` : ''}. Locked groups, and any Break/Fill blocks, are left untouched.`,
       confirmLabel: 'Reroll all',
       danger: true,
       checkbox: { label: "Don't ask again (re-enable in Note Editor Options → Show confirmation dialogs)" }
@@ -1755,6 +1766,7 @@ async function rerollAllBlocksGlobal() {
     ALL_ENGINE_GROUPS.filter(gid => !(block.lockedGroups && block.lockedGroups[gid])).forEach(gid => {
       block.seeds = block.seeds || {};
       block.seeds[gid] = Math.floor(Math.random()*1e9);
+      if (method) setPatternMode(block, gid, method);
       REROLL_FNS[gid]({ suppressUndo: true, deferAudioSync: true, skipRender: true });
     });
   });

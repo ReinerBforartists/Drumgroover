@@ -1072,6 +1072,7 @@ function syncKnobsToBlock(block) {
     const modeEl = document.getElementById(g + 'PatternMode');
     if (modeEl) paintPatternModeIcon(modeEl, getPatternMode(block, g));
   });
+  refreshMainPatternModeIcon();
 
   // Custom cluster: only while a custom track is focused (cluster visible).
   const customTrack = activeCustomTrack();
@@ -1926,8 +1927,28 @@ document.querySelectorAll('.pattern-mode-icon[data-group]').forEach(icon => icon
       setPatternMode(block, groupId, m);
       if (!locked) await REROLL_FNS[groupId]({ suppressUndo: true });
     });
+    refreshMainPatternModeIcon();
   });
 }));
+// Main letter: one mode for all six groups of the open block; Reroll All Blocks uses it as the method for every block.
+function refreshMainPatternModeIcon() {
+  const el = document.getElementById('mainPatternMode');
+  if (!el) return;
+  const block = findBlock(activeBlockId);
+  el.style.display = (!block || isFillGeneratedBlock(block)) ? 'none' : '';
+  if (block) paintPatternModeIcon(el, getMainPatternMethod(block) || 'classic');
+}
+document.getElementById('mainPatternMode').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const block = findBlock(activeBlockId);
+  if (!block || isFillGeneratedBlock(block)) return;
+  openPatternModeMenu(e.currentTarget, getMainPatternMethod(block) || 'classic', (m) => {
+    withBlockDataUndo(`Reroll method ${PATTERN_MODE_INFO[m].label} (${blockDisplayName(block)})`, block, () => {
+      setPatternMode(block, 'main', m);
+    });
+    refreshMainPatternModeIcon();
+  });
+});
 // Custom cluster: same gesture-undo wiring as the engine groups, plus its own reroll dice.
 wireKnobGestureUndo(['customSubdivision','customDensity','customPhrase'], regenerateCustomGroup, 'Adjust Custom');
 document.getElementById('customTrackSelect').addEventListener('change', () => {
