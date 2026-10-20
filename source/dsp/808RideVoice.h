@@ -111,6 +111,7 @@ public:
     // Pole of the recording-chain DC-blocker: tau = 15 ms (C 15u, R 1k).
     static constexpr double kDcBlockTauSec = 15.0e-3;
     mDcBlockAlpha = std::exp(-(1.0 / mSampleRate) / kDcBlockTauSec);
+    mEnvAlpha = 1.0 - std::exp(-(1.0 / mSampleRate) / kEnvTauSec);
   }
 
   void Trigger(double velocity01) override { Trigger(velocity01, Articulation::BowTip); }
@@ -127,6 +128,7 @@ public:
     mChokeStartSec = 0.0;
     mQuietStreakSamples = 0;
     mPeakSinceTrigger = 0.0;
+    mEnvPow = 0.0; mEnvPeak = 0.0; mFadeStartSec = -1.0;
     // No automatic fade: the note length comes from the circuit's own decay plus the relative silence cut-off. The choke fade is only used by Choke().
     mEnvelopeChokeSec = kNoAutoChokeSec;
     mChokeExpRate = 0.0;
@@ -206,7 +208,16 @@ public:
         mixedNew *= std::exp(mChokeExpRate * tt);
       }
 
-      const double fadeStart = kPlateauFadeStartTauMult * tau1_1;
+      double fadeStart = kPlateauFadeStartTauMult * tau1_1;
+      {
+        // A hit can ring longer than the time the fade is derived from (an accented one is still at -30 .. -40 dB when the fade would start):
+        // the fade starts at the later of that time and the moment the level (25 ms time constant) has fallen kFadeLevelRel below its own peak.
+        mEnvPow += mEnvAlpha * (mixedNew * mixedNew - mEnvPow);
+        const double env = std::sqrt(mEnvPow);
+        mEnvPeak = std::max(mEnvPeak, env);
+        if (mFadeStartSec < 0.0 && mElapsed >= fadeStart && (env < mEnvPeak * kFadeLevelRel || mElapsed >= kMaxFadeStartSec)) mFadeStartSec = mElapsed;
+        fadeStart = mFadeStartSec < 0.0 ? 1.0e30 : mFadeStartSec;
+      }
       if (mElapsed >= fadeStart)
       {
         const double x = std::min(1.0, (mElapsed - fadeStart) / kPlateauFadeDurSec);
@@ -235,6 +246,8 @@ private:
   // Plateau fade: starts at kPlateauFadeStartTauMult * tau1_1 (EG#1.1 discharge path R93 + VR2(k), C41) and runs for kPlateauFadeDurSec.
   static constexpr double kPlateauFadeStartTauMult = 1.3;
   static constexpr double kPlateauFadeDurSec = 0.4;
+  // Every hit: the fade starts no earlier than above, and waits until the level is 60 dB below its peak, at the latest until kMaxFadeStartSec.
+  static constexpr double kFadeLevelRel = 1.0e-3, kMaxFadeStartSec = 8.0, kEnvTauSec = 0.025;
   static constexpr double kR93Ohm = 470000.0, kVr2MaxOhm = 2000000.0;
   static constexpr double kC41Farad = 1.2e-6;   // calibrated to the Yocto2 recordings (schematic 1u)
   // Once the output has stayed 80 dB below this hit's own peak for kSilenceHoldSec, nothing audible can still happen.
@@ -288,6 +301,8 @@ private:
   double mChokeExpRate = 0.0;
   int mQuietStreakSamples = 0;
   double mPeakSinceTrigger = 0.0;
+  // Level-dependent fade start.
+  double mEnvPow = 0.0, mEnvPeak = 0.0, mFadeStartSec = -1.0, mEnvAlpha = 0.0;
   // DC-blocker state.
   double mDcBlockAlpha = 0.0;
   double mDcBlockXPrev = 0.0;

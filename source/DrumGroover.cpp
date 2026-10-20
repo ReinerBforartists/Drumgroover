@@ -3347,7 +3347,7 @@ void DrumGroover::HandleQueryCacheBakeEstimate(const nlohmann::json& payload)
   }
 
   // Projected cache size after baking: current size plus the missing files. With files already in the cache their average size is the basis.
-  // An empty cache has none: a recording is at most about 5 s long (the longest measured cymbal decay is 3.9 s), 4 bytes per sample.
+  // An empty cache has none: a recording is at most about 7 s long (a normal hit up to 4 s, an accented cymbal hit up to about 6.6 s), 4 bytes per sample.
   const CacheUsage usage = MeasureCache();
   const double bytesPerFile = usage.files > 0 ? (double)usage.bytes / usage.files : 5.0 * GetSampleRate() * sizeof(float);
   const double newBytes = missing * bytesPerFile;
