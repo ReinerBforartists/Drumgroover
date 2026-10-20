@@ -373,6 +373,13 @@ function neAddRerollIcon(row, dials, title, onClick) {
   iconHost.appendChild(icon);
 }
 
+// Adds the pattern-mode letter after the dice. onPick(mode) runs the caller's undo step (set the mode, regenerate).
+function neAddModeIcon(row, dials, block, key, onPick) {
+  const iconHost = row.titleLabel || (dials[0] && dials[0].querySelector('.ctrl-label'));
+  if (!iconHost) return;
+  iconHost.appendChild(makePatternModeIcon(() => getPatternMode(block, key), onPick));
+}
+
 // Applies lock state to a whole dial row (one icon per locked group, disables all dials if fully locked).
 function neApplyDialRowLock(row, dials, groups, block, opts) {
   const iconHost = row.titleLabel || (dials[0] && dials[0].querySelector('.ctrl-label'));
@@ -515,6 +522,9 @@ function neBuildTurnaroundPanel(panel, ctx) {
   neAddRerollIcon(fillDialRow, [tsDial, tdDial], 'Reroll\nGenerates a new fill with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
     turnaroundUndoable('Reroll fill', () => { block.turnaroundSeed = Math.floor(Math.random()*1e9); });
   });
+  neAddModeIcon(fillDialRow, [tsDial, tdDial], block, 'turnaround', m => {
+    turnaroundUndoable('Fill pattern mode', () => { setPatternMode(block, 'turnaround', m); });
+  });
 
   // Instrument picker
   const tiGroup = document.createElement('div');
@@ -551,6 +561,9 @@ function neBuildTurnaroundPanel(panel, ctx) {
   neApplyDialRowLock(kickDialRow, [tksDial, tkdDial], ['kick'], block, { turnaround: true });
   neAddRerollIcon(kickDialRow, [tksDial, tkdDial], 'Reroll\nGenerates a new Fill Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
     turnaroundUndoable('Reroll fill kick', () => { block.turnaroundKickSeed = Math.floor(Math.random()*1e9); });
+  });
+  neAddModeIcon(kickDialRow, [tksDial, tkdDial], block, 'turnaroundKick', m => {
+    turnaroundUndoable('Fill kick pattern mode', () => { setPatternMode(block, 'turnaroundKick', m); });
   });
 
   // C Crash (Closing Crash): an Off/On knob in the toolbar next to Fill and Fill Kick. On adds a crash hit on the downbeat of the bar
@@ -728,6 +741,10 @@ function neBuildBreakPanel(panel, ctx) {
     if (mainIsLocked()) { neMsg('Manually edited — click the 🔒 above to discard first.'); return; }
     neUndoable('Reroll ' + neFillKind(block).toLowerCase(), () => { block.breakSeed = Math.floor(Math.random()*1e9); return regenerateMain(); });
   });
+  neAddModeIcon(breakFillDialRow, [bsDial, bdDial], block, 'break', m => {
+    if (mainIsLocked()) { neMsg('Manually edited — click the 🔒 above to discard first.'); return; }
+    neUndoable(neFillKind(block) + ' pattern mode', () => { neEnsureSeed(block, 'breakSeed'); setPatternMode(block, 'break', m); return regenerateMain(); });
+  });
 
   // Instrument picker
   const biGroup = document.createElement('div');
@@ -765,6 +782,10 @@ function neBuildBreakPanel(panel, ctx) {
   neAddRerollIcon(breakKickDialRow, [bksDial, bkdDial], 'Reroll\nGenerates a new ' + neFillKind(block) + ' Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
     if (kickIsLocked()) { neMsg('Manually edited — click the 🔒 above to discard first.'); return; }
     neUndoable('Reroll ' + neFillKind(block).toLowerCase() + ' kick', () => { block.breakKickSeed = Math.floor(Math.random()*1e9); return regenerateKickOnly(); });
+  });
+  neAddModeIcon(breakKickDialRow, [bksDial, bkdDial], block, 'breakKick', m => {
+    if (kickIsLocked()) { neMsg('Manually edited — click the 🔒 above to discard first.'); return; }
+    neUndoable(neFillKind(block) + ' kick pattern mode', () => { setPatternMode(block, 'breakKick', m); return regenerateKickOnly(); });
   });
 }
 
@@ -828,6 +849,9 @@ function neBuildFillPanel(panel, ctx) {
   neAddRerollIcon(fillMainDialRow, [fsDial, fdDial], 'Reroll\nGenerates a new ' + neFillKind(block).toLowerCase() + ' with a fresh random seed — Length, Amount and instruments stay unchanged.', () => {
     neUndoable('Reroll ' + neFillKind(block).toLowerCase(), () => { block.fillSeed = Math.floor(Math.random()*1e9); return regenerate(); });
   });
+  neAddModeIcon(fillMainDialRow, [fsDial, fdDial], block, 'fill', m => {
+    neUndoable(neFillKind(block) + ' pattern mode', () => { neEnsureSeed(block, 'fillSeed'); setPatternMode(block, 'fill', m); return regenerate(); });
+  });
 
   // Instrument picker
   const fiGroup = document.createElement('div');
@@ -863,5 +887,8 @@ function neBuildFillPanel(panel, ctx) {
   const fillKickDialRow = neToolbarCluster(neFillKind(block) + ' Kick', [fksDial, fkdDial]);
   neAddRerollIcon(fillKickDialRow, [fksDial, fkdDial], 'Reroll\nGenerates a new ' + neFillKind(block) + ' Kick pulse with a fresh random seed. Only audible below 100% Amount.', () => {
     neUndoable('Reroll ' + neFillKind(block).toLowerCase() + ' kick', () => { block.fillKickSeed = Math.floor(Math.random()*1e9); return regenerate(); });
+  });
+  neAddModeIcon(fillKickDialRow, [fksDial, fkdDial], block, 'fillKick', m => {
+    neUndoable(neFillKind(block) + ' kick pattern mode', () => { setPatternMode(block, 'fillKick', m); return regenerate(); });
   });
 }

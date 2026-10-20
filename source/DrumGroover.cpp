@@ -406,6 +406,12 @@ dgg::Block BlockFromJson(const nlohmann::json& j)
       b.seeds[groupId] = val.get<uint32_t>();
   }
 
+  if (j.contains("patternModes") && j["patternModes"].is_object())
+  {
+    for (auto& [groupId, val] : j["patternModes"].items())
+      if (val.is_string()) b.patternModes[groupId] = dgg::patternModeFromString(val.get<std::string>());
+  }
+
   if (j.contains("enabledArticulations") && j["enabledArticulations"].is_object())
   {
     for (auto& [subGroup, ids] : j["enabledArticulations"].items())

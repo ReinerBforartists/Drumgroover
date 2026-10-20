@@ -53,6 +53,9 @@ struct Block {
   // fallback seed is used; once set, the stored value overrides it.
   std::unordered_map<std::string, uint32_t> seeds;
 
+  // Pattern mode per engine group; absent means Classic.
+  std::unordered_map<std::string, PatternMode> patternModes;
+
   // Per‑sub‑group whitelist of enabled articulations. Sub‑groups are the
   // individual drum instruments (e.g. rackTom1, cymbal3). If missing or
   // empty for a sub‑group, the default set of enabled articulations is used.

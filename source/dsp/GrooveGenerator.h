@@ -145,7 +145,7 @@ BeatDistribution generateFixedBreakHandPattern(double breakBeats, double stepsPe
 // window‑relative.
 BeatDistribution generateBreakFill(double breakBeats, const std::vector<std::string>& instruments,
                                     double densityPct, uint32_t seed, double stepsPerBeat, Feel feel,
-                                    double beatOffset);
+                                    double beatOffset, PatternMode mode = PatternMode::Classic);
 
 // =========================================
 // Break block generation
@@ -170,6 +170,8 @@ struct BreakBlockOptions {
   double   breakKickDensity     = 100.0;
   double   breakKickSubdivision = 1.0;
   uint32_t breakKickSeed        = 0;
+  PatternMode breakMode     = PatternMode::Classic;
+  PatternMode breakKickMode = PatternMode::Classic;
 };
 
 // Generates a Break block: full parent section with trailing `breakBeats`
@@ -196,6 +198,8 @@ struct FillBlockOptions {
   double   fillKickDensity     = 100.0;
   double   fillKickSubdivision = 1.0;
   uint32_t fillKickSeed        = 0;
+  PatternMode fillMode     = PatternMode::Classic;
+  PatternMode fillKickMode = PatternMode::Classic;
 };
 
 // Generates a standalone Fill block (Intro/Outro). anchorStart=false

@@ -720,6 +720,23 @@ function getGroupSeed(block, groupId) {
   return block.seeds[groupId];
 }
 
+const PATTERN_MODE_INFO = {
+  classic:  { letter: 'C', label: 'Classic',  tip: 'Even (Euclidean) spacing, the default.' },
+  metric:   { letter: 'M', label: 'Metric',   tip: 'Strong beats first, weaker steps filled in.' },
+  sine:     { letter: 'S', label: 'Sine',     tip: 'Cross-rhythms from three sine waves.' },
+  bit:      { letter: 'B', label: 'Bit',      tip: 'Driving, self-similar bit patterns.' },
+  logistic: { letter: 'L', label: 'Logistic', tip: 'Chaotic but repeatable.' },
+};
+function setPatternMode(block, key, mode) {
+  block.patternModes = { ...(block.patternModes || {}), [key]: mode };
+}
+
+// Per-block, per-group pattern mode (see PATTERN_MODES in rhythm-logic.js). Absent means classic.
+function getPatternMode(block, groupId) {
+  const mode = block.patternModes && block.patternModes[groupId];
+  return PATTERN_MODES.includes(mode) ? mode : 'classic';
+}
+
 // =========================================
 // PHRASE LENGTH
 // =========================================
@@ -845,7 +862,7 @@ function applyKickGroupToBlock(block, g, ov) {
   const notes = [];
   for (let barIdx = 0; barIdx < phrase; barIdx++) {
     const barSeed = phrase > 1 ? groupSeed + barIdx * 9973 : groupSeed;
-    const beats = generateAnchoredPattern(g.numerator, subdivision, Math.round((densityPct/100)*g.numerator*subdivision), feel, barSeed, anchorBeats).map(x => x.beat);
+    const beats = generateAnchoredPattern(g.numerator, subdivision, Math.round((densityPct/100)*g.numerator*subdivision), feel, barSeed, anchorBeats, getPatternMode(block, 'kick')).map(x => x.beat);
     beats.concat(tripletBeats).forEach(b => notes.push({ beat: b + barIdx * g.numerator, vel: 110 }));
   }
   block.data['kick'] = notes;
@@ -968,7 +985,7 @@ function applyCustomGroupToBlock(block, g, trackId, ov) {
   const notes = [];
   for (let barIdx = 0; barIdx < phrase; barIdx++) {
     const barSeed = phrase > 1 ? groupSeed + barIdx * 9973 : groupSeed;
-    generateAnchoredPattern(g.numerator, subdivision, hits, feel, barSeed, [])
+    generateAnchoredPattern(g.numerator, subdivision, hits, feel, barSeed, [], getPatternMode(block, groupId))
       .forEach(x => notes.push({ beat: x.beat + barIdx * g.numerator, vel: 110 }));
   }
   block.data[trackId] = notes.sort((a,b) => a.beat - b.beat);
@@ -1017,10 +1034,11 @@ function applySnareGroupToBlock(block, g, ov) {
   if (!ov) document.getElementById('snareGhostDensityVal').textContent = ghostDensityPct + '%';
   const phrase = resolvePhraseLength(block, 'snare', ov, 'snarePhrase');
 
+  const mode = getPatternMode(block, 'snare');
   const notes = [];
   for (let barIdx = 0; barIdx < phrase; barIdx++) {
     const barSeed = phrase > 1 ? seed + barIdx * 9973 : seed;
-    const anchoredResult = generateAnchoredPattern(g.numerator, subdivision, mainHits, feel, barSeed, anchorBeats);
+    const anchoredResult = generateAnchoredPattern(g.numerator, subdivision, mainHits, feel, barSeed, anchorBeats, mode);
     const beats = anchoredResult.map(x => x.beat);
 
     let ghostBeats;
@@ -1029,7 +1047,7 @@ function applySnareGroupToBlock(block, g, ov) {
       const emptySteps = [];
       for (let i = 0; i < totalSteps; i++) if (!occupiedSteps.has(i)) emptySteps.push(i);
       const ghostHits = Math.round((ghostDensityPct/100) * emptySteps.length);
-      const ghostMask = euclideanRhythm(ghostHits, emptySteps.length, barSeed+1);
+      const ghostMask = patternMask(mode, ghostHits, emptySteps, barSeed+1, subdivision, totalSteps);
       ghostBeats = [];
       ghostMask.forEach((on, i) => {
         if (!on) return;
@@ -1039,7 +1057,7 @@ function applySnareGroupToBlock(block, g, ov) {
         ghostBeats.push(beatIdx + applyFeelWarp(fracWithinBeat, feel));
       });
     } else {
-      ghostBeats = generateSnareGhostBeats(g.numerator, subdivision, mainHits, ghostDensityPct, feel, barSeed);
+      ghostBeats = generateSnareGhostBeats(g.numerator, subdivision, mainHits, ghostDensityPct, feel, barSeed, mode);
     }
 
     beats.forEach(b => notes.push({ beat: b + barIdx * g.numerator, vel: 110 }));
@@ -1065,6 +1083,7 @@ function applySnareGhostLayer(block, g, ov) {
   const seed = getGroupSeed(block, 'snare');
   const num = g.numerator;
   const phrase = getPhraseLength(block, 'snare');
+  const mode = getPatternMode(block, 'snare');
 
   const ghostDensityPct = ov ? ov.ghostDensityPct : getParamNum('snareGhostDensity');
   if (!ov) document.getElementById('snareGhostDensityVal').textContent = ghostDensityPct + '%';
@@ -1086,13 +1105,13 @@ function applySnareGhostLayer(block, g, ov) {
     const emptySteps = [];
     for (let i = 0; i < totalSteps; i++) if (!occupiedSteps.has(i)) emptySteps.push(i);
     const ghostHits = Math.round((ghostDensityPct/100) * emptySteps.length);
-    const ghostMask = euclideanRhythm(ghostHits, emptySteps.length, barSeed+1);
+    const ghostMask = patternMask(mode, ghostHits, emptySteps, barSeed+1, subdivision, totalSteps);
     ghostMask.forEach((on, i) => {
       if (!on) return;
       const step = emptySteps[i];
       const beatIdx = Math.floor(step/subdivision);
       const fracWithinBeat = (step%subdivision)/subdivision;
-      const beat = beatIdx + applyFeelWarp(fracWithinBeat, feel);
+      const beat =beatIdx + applyFeelWarp(fracWithinBeat, feel);
       notes.push({ beat: beat + lo, vel: SNARE_GHOST_VEL });
     });
 
@@ -1115,7 +1134,7 @@ function applyPulseGroupToBlock(block, g, groupId, primaryTrack, tiers, mainVel,
   const notes = [];
   for (let barIdx = 0; barIdx < phrase; barIdx++) {
     const barSeed = phrase > 1 ? seed + barIdx * 9973 : seed;
-    const beats = generateGroupPattern(g.numerator, subdivision, Math.round((densityPct/100)*g.numerator*subdivision), feel, barSeed);
+    const beats = generateGroupPattern(g.numerator, subdivision, Math.round((densityPct/100)*g.numerator*subdivision), feel, barSeed, getPatternMode(block, groupId));
     beats.forEach(b => notes.push({ beat: b + barIdx * g.numerator, vel: mainVel }));
   }
   block.data[primaryTrack] = notes;
@@ -1378,7 +1397,7 @@ function generateFillBlock(g, id, name, totalLength, fillBeats, anchor, opts) {
   const fillSeed = opts.fillSeed;
   const fillDist = (fillSeed === undefined)
     ? filterHandPatternByInstruments(generateFixedBreakHandPattern(fillBeats, fillSubdivision, fillInstruments.includes('snare') ? BREAK_HAND_PATTERNS.snareToms : BREAK_HAND_PATTERNS.toms, anchor, feel, fillOffset), fillInstruments)
-    : generateBreakFill(fillBeats, fillInstruments, fillDensity, fillSeed, fillSubdivision, feel, fillOffset);
+    : generateBreakFill(fillBeats, fillInstruments, fillDensity, fillSeed, fillSubdivision, feel, fillOffset, opts.fillMode);
   Object.keys(fillDist).forEach(tid => {
     if (!data[tid]) data[tid] = [];
     fillDist[tid].forEach(beat => data[tid].push({ beat: beat + fillOffset, vel: fillVel }));
@@ -1390,7 +1409,7 @@ function generateFillBlock(g, id, name, totalLength, fillBeats, anchor, opts) {
   const kickSteps = Math.max(1, Math.round(fillBeats * fillKickSubdivision));
   const rawFillKickHits = Math.max(1, Math.round((fillKickDensity/100) * kickSteps));
   const fillKickHits = feel === 'halftime' ? Math.max(1, Math.round(rawFillKickHits/2)) : rawFillKickHits;
-  const kickMask = buildEndAnchoredEuclidean(fillKickHits, kickSteps, fillKickSeed);
+  const kickMask = endAnchoredMask(opts.fillKickMode, fillKickHits, kickSteps, fillKickSeed, fillKickSubdivision);
   if (!data.kick) data.kick = [];
   kickMask.forEach((on, i) => { if (on) data.kick.push({ beat: warpAbsoluteBeat(fillOffset + i/fillKickSubdivision, feel), vel: 115 }); });
   data.kick.sort((a,b) => a.beat-b.beat);
@@ -1398,7 +1417,7 @@ function generateFillBlock(g, id, name, totalLength, fillBeats, anchor, opts) {
   return { id, name, generated:true, numerator:num, length: totalLength, fillBeats, fillAnchor: anchor, fillInstruments, fillDensity, fillVel, fillSubdivision, fillKickDensity, fillKickSubdivision, fillKickSeed: opts.fillKickSeed, fillSeed, feel, isFillBlock: true, turnaroundInterval:0, velocityBuild:0, data };
 }
 
-function generateBreakFill(breakBeats, instruments, densityPct, seed, stepsPerBeat, feel, beatOffset) {
+function generateBreakFill(breakBeats, instruments, densityPct, seed, stepsPerBeat, feel, beatOffset, mode = 'classic') {
   feel = feel || 'straight';
   beatOffset = beatOffset || 0;
   stepsPerBeat = stepsPerBeat ?? 4;
@@ -1407,7 +1426,7 @@ function generateBreakFill(breakBeats, instruments, densityPct, seed, stepsPerBe
   (instruments || []).forEach(instKey => (TURNAROUND_INSTRUMENT_TRACKS[instKey] || []).forEach(t => voicePool.push(t)));
   const rawHits = Math.max(1, Math.round((densityPct/100) * totalSteps));
   const hits = feel === 'halftime' ? Math.max(1, Math.round(rawHits/2)) : rawHits;
-  const mask = euclideanRhythm(hits, totalSteps, seed);
+  const mask = patternMask(mode, hits, stepRange(totalSteps), seed, stepsPerBeat, totalSteps);
   const dist = {};
   if (voicePool.length) {
     const rng = new RNG(seed+1);
@@ -1456,7 +1475,7 @@ function generateBreakBlock(parentType, g, id, totalLength, breakBeats, opts) {
   const breakSeed = opts.breakSeed; // stays undefined until Reroll is clicked — see getBreakSeed
   const fillDist = (breakSeed === undefined)
     ? filterHandPatternByInstruments(generateFixedBreakHandPattern(breakBeats, breakSubdivision, breakInstruments.includes('snare') ? BREAK_HAND_PATTERNS.snareToms : BREAK_HAND_PATTERNS.toms, undefined, feel, grooveBeats), breakInstruments)
-    : generateBreakFill(breakBeats, breakInstruments, breakDensity, breakSeed, breakSubdivision, feel, grooveBeats);
+    : generateBreakFill(breakBeats, breakInstruments, breakDensity, breakSeed, breakSubdivision, feel, grooveBeats, opts.breakMode);
   Object.keys(fillDist).forEach(tid => {
     if (!data[tid]) data[tid] = [];
     fillDist[tid].forEach(beat => data[tid].push({ beat: beat + grooveBeats, vel: breakFillVel }));
@@ -1467,7 +1486,7 @@ function generateBreakBlock(parentType, g, id, totalLength, breakBeats, opts) {
   const kickSteps = Math.max(1, Math.round(breakBeats * breakKickSubdivision));
   const rawKickHits = Math.max(1, Math.round((breakKickDensity/100) * kickSteps));
   const kickHits = feel === 'halftime' ? Math.max(1, Math.round(rawKickHits/2)) : rawKickHits;
-  const kickMask = buildEndAnchoredEuclidean(kickHits, kickSteps, breakKickSeed);
+  const kickMask = endAnchoredMask(opts.breakKickMode, kickHits, kickSteps, breakKickSeed, breakKickSubdivision);
   if (!data.kick) data.kick = [];
   kickMask.forEach((on, i) => { if (on) data.kick.push({ beat: warpAbsoluteBeat(grooveBeats + i/breakKickSubdivision, feel), vel: 115 }); });
   data.kick.sort((a,b) => a.beat-b.beat);
@@ -1497,6 +1516,8 @@ function computeFreshBreak(block, g) {
     breakKickSubdivision: block.breakKickSubdivision,
     breakKickSeed: getBreakKickSeed(block),
     breakSeed: getBreakSeed(block),
+    breakMode: getPatternMode(block, 'break'),
+    breakKickMode: getPatternMode(block, 'breakKick'),
   });
 }
 
@@ -1837,7 +1858,7 @@ function getTurnaroundBarDistribution(block, barIdx, num, seed) {
     const zoneSteps = Math.max(2, Math.round(lengthBeats * stepsPerBeat));
     const rawHits = Math.max(1, Math.round((densityPct/100) * zoneSteps));
     const hits = feel === 'halftime' ? Math.max(1, Math.round(rawHits/2)) : rawHits;
-    const mask = buildEndAnchoredEuclidean(hits, zoneSteps, seed);
+    const mask = endAnchoredMask(getPatternMode(block, 'turnaround'), hits, zoneSteps, seed, stepsPerBeat);
     const slotBeats = [];
     mask.forEach((on, i) => {
       if (!on) return;
@@ -1892,7 +1913,7 @@ function neTurnaroundNotesForBar(block, tid, barIdx, len, num, sourceBar) {
     const kickTotalSteps = num * kickSubdivision;
     const kickZoneSteps = Math.max(2, Math.round(lengthBeats * kickSubdivision));
     const kickHits = Math.max(1, Math.round((kickDensity/100) * kickZoneSteps));
-    const kickMask = buildEndAnchoredEuclidean(kickHits, kickZoneSteps, kickSeed);
+    const kickMask = endAnchoredMask(getPatternMode(block, 'turnaroundKick'), kickHits, kickZoneSteps, kickSeed, kickSubdivision);
     kickMask.forEach((on, i) => {
       if (!on) return;
       const beat = (kickTotalSteps - kickZoneSteps + i) / kickSubdivision;

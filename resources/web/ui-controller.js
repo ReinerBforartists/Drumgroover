@@ -392,21 +392,24 @@ function withBlockDataUndo(label, block, mutateFn) {
   const beforeLocked = JSON.stringify(block.lockedGroups || {});
   const beforeKnobs = JSON.stringify(block.knobs || {});
   const beforeFeel = block.feel || 'straight';
+  const beforeModes = JSON.stringify(block.patternModes || {});
   const beforeShape = { length: block.length, breakBeats: block.breakBeats, fillBeats: block.fillBeats, breakUnlocked: !!block.breakUnlocked };
   mutateFn();
   const afterData = JSON.stringify(block.data);
   const afterLocked = JSON.stringify(block.lockedGroups || {});
   const afterKnobs = JSON.stringify(block.knobs || {});
   const afterFeel = block.feel || 'straight';
+  const afterModes = JSON.stringify(block.patternModes || {});
   const afterShape = { length: block.length, breakBeats: block.breakBeats, fillBeats: block.fillBeats, breakUnlocked: !!block.breakUnlocked };
   rebuildFullFromEditedBlocks();
   renderNoteEditor();
   updateGroupLockUI();
-  const restore = (dataStr, lockedStr, knobsStr, feelVal, shape) => {
+  const restore = (dataStr, lockedStr, knobsStr, feelVal, shape, modesStr) => {
     block.data = JSON.parse(dataStr);
     block.lockedGroups = JSON.parse(lockedStr);
     block.knobs = JSON.parse(knobsStr);
     block.feel = feelVal;
+    block.patternModes = JSON.parse(modesStr);
     block.length = shape.length; block.breakBeats = shape.breakBeats; block.fillBeats = shape.fillBeats; block.breakUnlocked = shape.breakUnlocked;
     block.generated = false;
     rebuildFullFromEditedBlocks();
@@ -414,7 +417,7 @@ function withBlockDataUndo(label, block, mutateFn) {
     updateGroupLockUI();
     if (activeBlockId === block.id) syncKnobsToBlock(block);
   };
-  pushUndo(label, () => restore(beforeData, beforeLocked, beforeKnobs, beforeFeel, beforeShape), () => restore(afterData, afterLocked, afterKnobs, afterFeel, afterShape));
+  pushUndo(label, () => restore(beforeData, beforeLocked, beforeKnobs, beforeFeel, beforeShape, beforeModes), () => restore(afterData, afterLocked, afterKnobs, afterFeel, afterShape, afterModes));
 }
 
 // Undo step over the whole block list, for changes that also touch other blocks (e.g. a length change resizing its Breaks).
@@ -441,21 +444,24 @@ async function withBlockDataUndoAsync(label, block, asyncMutateFn) {
   const beforeLocked = JSON.stringify(block.lockedGroups || {});
   const beforeKnobs = JSON.stringify(block.knobs || {});
   const beforeFeel = block.feel || 'straight';
+  const beforeModes = JSON.stringify(block.patternModes || {});
   const beforeShape = { length: block.length, breakBeats: block.breakBeats, fillBeats: block.fillBeats, breakUnlocked: !!block.breakUnlocked };
   await asyncMutateFn();
   const afterData = JSON.stringify(block.data);
   const afterLocked = JSON.stringify(block.lockedGroups || {});
   const afterKnobs = JSON.stringify(block.knobs || {});
   const afterFeel = block.feel || 'straight';
+  const afterModes = JSON.stringify(block.patternModes || {});
   const afterShape = { length: block.length, breakBeats: block.breakBeats, fillBeats: block.fillBeats, breakUnlocked: !!block.breakUnlocked };
   rebuildFullFromEditedBlocks();
   renderNoteEditor();
   updateGroupLockUI();
-  const restore = (dataStr, lockedStr, knobsStr, feelVal, shape) => {
+  const restore = (dataStr, lockedStr, knobsStr, feelVal, shape, modesStr) => {
     block.data = JSON.parse(dataStr);
     block.lockedGroups = JSON.parse(lockedStr);
     block.knobs = JSON.parse(knobsStr);
     block.feel = feelVal;
+    block.patternModes = JSON.parse(modesStr);
     block.length = shape.length; block.breakBeats = shape.breakBeats; block.fillBeats = shape.fillBeats; block.breakUnlocked = shape.breakUnlocked;
     block.generated = false;
     rebuildFullFromEditedBlocks();
@@ -463,7 +469,7 @@ async function withBlockDataUndoAsync(label, block, asyncMutateFn) {
     updateGroupLockUI();
     if (activeBlockId === block.id) syncKnobsToBlock(block);
   };
-  pushUndo(label, () => restore(beforeData, beforeLocked, beforeKnobs, beforeFeel, beforeShape), () => restore(afterData, afterLocked, afterKnobs, afterFeel, afterShape));
+  pushUndo(label, () => restore(beforeData, beforeLocked, beforeKnobs, beforeFeel, beforeShape, beforeModes), () => restore(afterData, afterLocked, afterKnobs, afterFeel, afterShape, afterModes));
 }
 
 function withSongSequenceUndo(label, mutateFn) {
@@ -1061,6 +1067,11 @@ function syncKnobsToBlock(block) {
   set('cymbalsDensity', cymbals.density, 'cymbalsDensityVal', cymbals.density+'%');
   set('cymbalsVariation', cymbals.variation||0, 'cymbalsVariationVal', (cymbals.variation||0)+'%');
   syncPhrase('cymbals', 'cymbals', cymbals.phrase);
+
+  ['kick', 'snare', 'hihat', 'ride', 'toms', 'cymbals'].forEach(g => {
+    const modeEl = document.getElementById(g + 'PatternMode');
+    if (modeEl) paintPatternModeIcon(modeEl, getPatternMode(block, g));
+  });
 
   // Custom cluster: only while a custom track is focused (cluster visible).
   const customTrack = activeCustomTrack();
@@ -1854,6 +1865,69 @@ async function rerollGroup(groupId) {
   await REROLL_FNS[groupId]();
 }
 Object.keys(REROLL_FNS).forEach(g => document.getElementById(g+'RerollBtn').addEventListener('click', () => rerollGroup(g)));
+// Pattern mode letter next to the dice: a popup picks the mode, the letter shows the current one.
+function paintPatternModeIcon(el, mode) {
+  const info = PATTERN_MODE_INFO[mode] || PATTERN_MODE_INFO.classic;
+  el.textContent = info.letter;
+  el.classList.toggle('mode-on', mode !== 'classic' && !!PATTERN_MODE_INFO[mode]);
+  el.dataset.tooltip = `Pattern mode: ${info.label}\n${info.tip} Click to change. Density stays exact in every mode.`;
+}
+let patternModeMenuEl = null;
+function closePatternModeMenu() {
+  if (patternModeMenuEl) { patternModeMenuEl.remove(); patternModeMenuEl = null; }
+}
+function openPatternModeMenu(anchor, current, onPick) {
+  closePatternModeMenu();
+  const menu = document.createElement('div');
+  menu.className = 'add-block-menu pattern-mode-menu';
+  PATTERN_MODES.forEach(m => {
+    const info = PATTERN_MODE_INFO[m];
+    const item = document.createElement('button');
+    item.className = 'add-block-menu-item';
+    item.textContent = `${m === current ? '✓' : ' '} ${info.letter}  ${info.label}`;
+    item.dataset.tooltip = `${info.label}\n${info.tip}`;
+    item.addEventListener('click', (e) => { e.stopPropagation(); closePatternModeMenu(); if (m !== current) onPick(m); });
+    menu.appendChild(item);
+  });
+  const rect = anchor.getBoundingClientRect();
+  menu.style.left = rect.left + 'px';
+  menu.style.top = (rect.bottom + 2) + 'px';
+  document.body.appendChild(menu);
+  patternModeMenuEl = menu;
+  const dismiss = (e) => {
+    if (menu.contains(e.target)) return;
+    closePatternModeMenu();
+    document.removeEventListener('mousedown', dismiss, true);
+  };
+  document.addEventListener('mousedown', dismiss, true);
+}
+// A letter button that opens the mode popup. The caller applies the mode in onPick (inside its own undo step).
+function makePatternModeIcon(getMode, onPick) {
+  const el = document.createElement('span');
+  el.className = 'group-lock-icon pattern-mode-icon';
+  el.style.cursor = 'pointer';
+  paintPatternModeIcon(el, getMode());
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openPatternModeMenu(el, getMode(), (m) => { paintPatternModeIcon(el, m); onPick(m); });
+  });
+  return el;
+}
+// Static groups: keeps seed and knobs, regenerates with the new distribution (a locked group only stores the mode).
+document.querySelectorAll('.pattern-mode-icon[data-group]').forEach(icon => icon.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const groupId = icon.dataset.group;
+  const block = findBlock(activeBlockId);
+  if (!block) return;
+  openPatternModeMenu(icon, getPatternMode(block, groupId), async (m) => {
+    paintPatternModeIcon(icon, m);
+    const locked = block.lockedGroups && block.lockedGroups[groupId];
+    await withBlockDataUndoAsync(`Pattern mode ${PATTERN_MODE_INFO[m].label} (${blockDisplayName(block)})`, block, async () => {
+      setPatternMode(block, groupId, m);
+      if (!locked) await REROLL_FNS[groupId]({ suppressUndo: true });
+    });
+  });
+}));
 // Custom cluster: same gesture-undo wiring as the engine groups, plus its own reroll dice.
 wireKnobGestureUndo(['customSubdivision','customDensity','customPhrase'], regenerateCustomGroup, 'Adjust Custom');
 document.getElementById('customTrackSelect').addEventListener('change', () => {

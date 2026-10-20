@@ -36,6 +36,20 @@ std::vector<int> backbeatPositions(int numerator);
 std::vector<bool> euclideanRhythm(int hits, int steps, uint32_t seed = 0);
 std::vector<bool> seededShuffleMask(std::vector<bool> mask, uint32_t seed);
 
+// ---- Pattern modes ----
+// A mode scores every step; the `hits` best-scoring steps get a hit. Mirrors patternMask in rhythm-logic.js
+// (integer or quantized scores, equal scores ordered by a seed hash).
+enum class PatternMode { Classic, Metric, Sine, Bit, Logistic };
+
+PatternMode patternModeFromString(const std::string& s); // unknown -> Classic
+const char* patternModeToString(PatternMode mode);
+
+// positions: absolute step indices within the bar grid; total: steps per bar grid.
+// anchorEnd forces the last step to be a hit (Break/Fill zones end on a hit).
+std::vector<bool> patternMask(PatternMode mode, int hits, const std::vector<int>& positions,
+                              uint32_t seed, double stepsPerBeat, int total, bool anchorEnd = false);
+std::vector<int> stepRange(int n);
+
 // ---- Feel warp ----
 // Only "straight" and "swing" exist in the JS map; "halftime" is handled separately.
 enum class Feel { Straight, Swing, Halftime };
@@ -44,7 +58,8 @@ double applyFeelWarp(double frac, Feel feel);
 double warpAbsoluteBeat(double absBeat, Feel feel);
 
 // Returns absolute beat positions (0‑based, within one bar/window).
-std::vector<double> generateGroupPattern(int numerator, double stepsPerBeat, int hits, Feel feel, uint32_t seed = 0);
+std::vector<double> generateGroupPattern(int numerator, double stepsPerBeat, int hits, Feel feel, uint32_t seed = 0,
+                                         PatternMode mode = PatternMode::Classic);
 
 // ---- Anchored pattern ----
 struct AnchoredBeat {
@@ -55,7 +70,7 @@ struct AnchoredBeat {
 // anchorBeats: optional; empty vector falls back to generateGroupPattern with isAnchor=false.
 std::vector<AnchoredBeat> generateAnchoredPattern(
     int numerator, double stepsPerBeat, int hits, Feel feel, uint32_t seed,
-    const std::vector<double>& anchorBeats);
+    const std::vector<double>& anchorBeats, PatternMode mode = PatternMode::Classic);
 
 // ---- Triplet / independent‑layer beats ----
 struct BeatRange { double from; double to; };
@@ -67,7 +82,7 @@ std::vector<double> generateTripletLayerBeats(
 // ---- Snare ghost notes ----
 std::vector<double> generateSnareGhostBeats(
     int numerator, double stepsPerBeat, int mainHits, double ghostDensityPct,
-    Feel feel, uint32_t seed);
+    Feel feel, uint32_t seed, PatternMode mode = PatternMode::Classic);
 
 // ---- Misc ----
 // FNV‑1a, matches the JS bit‑for‑bit.
@@ -90,5 +105,8 @@ std::string pickWeightedArticulation(RNG& rng, double bias, const std::vector<Ar
 // Bucket‑fill rotated so the LAST hit lands on the LAST step.
 // seed == 0 skips shuffle.
 std::vector<bool> buildEndAnchoredEuclidean(int hits, int steps, uint32_t seed = 0);
+
+// End-anchored mask over steps 0..steps-1; Classic is buildEndAnchoredEuclidean.
+std::vector<bool> endAnchoredMask(PatternMode mode, int hits, int steps, uint32_t seed, double stepsPerBeat);
 
 } // namespace dgg

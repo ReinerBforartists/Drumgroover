@@ -91,6 +91,153 @@ std::vector<bool> seededShuffleMask(std::vector<bool> mask, uint32_t seed) {
   return out;
 }
 
+// ---- Pattern modes ----
+namespace {
+
+uint32_t mix32(uint32_t x) {
+  x = (x ^ (x >> 16)) * 0x7feb352du;
+  x = (x ^ (x >> 15)) * 0x846ca68bu;
+  return x ^ (x >> 16);
+}
+uint32_t seedStream(uint32_t seed, uint32_t k) { return mix32(seed + (k + 1u) * 0x9e3779b9u); }
+
+double fastSin(double x) {
+  const double y = 1.2732395447351628 * x - 0.4052847345693511 * x * std::fabs(x);
+  return 0.225 * (y * std::fabs(y) - y) + y;
+}
+
+std::vector<int64_t> scoreMetric(const std::vector<int>& positions, uint32_t seed, int spb) {
+  std::vector<int64_t> out;
+  out.reserve(positions.size());
+  for (int p : positions) {
+    const int inBeat = p % spb;
+    int w;
+    if (p == 0) w = 1000;
+    else if (inBeat == 0) w = ((p / spb) % 2 == 0) ? 48 : 40;
+    else if (spb % 2 == 0 && inBeat == spb / 2) w = 24;
+    else if (spb % 4 == 0 && inBeat % (spb / 4) == 0) w = 12;
+    else w = 8;
+    out.push_back(w + seedStream(seed, 100u + static_cast<uint32_t>(p)) % 40u);
+  }
+  return out;
+}
+
+std::vector<int64_t> scoreSine(const std::vector<int>& positions, uint32_t seed, int total) {
+  const int ratioSet[5] = {2, 3, 4, 5, 7};
+  const int a = static_cast<int>(seedStream(seed, 0) % 5u);
+  const int b = (a + 1 + static_cast<int>(seedStream(seed, 1) % 4u)) % 5;
+  int rest[3], r = 0;
+  for (int i = 0; i < 5; i++) if (i != a && i != b) rest[r++] = i;
+  const int ratios[3] = {ratioSet[a], ratioSet[b], ratioSet[rest[seedStream(seed, 2) % 3u]]};
+  double phases[3];
+  for (int k = 0; k < 3; k++) phases[k] = (seedStream(seed, 3u + static_cast<uint32_t>(k)) % 4096u) / 4096.0;
+  std::vector<int64_t> out;
+  out.reserve(positions.size());
+  for (int p : positions) {
+    double sum = 0;
+    for (int k = 0; k < 3; k++) {
+      double u = static_cast<double>((ratios[k] * p) % total) / total + phases[k];
+      u -= std::floor(u);
+      sum += fastSin((u - 0.5) * 6.283185307179586);
+    }
+    out.push_back(static_cast<int64_t>(std::floor(sum * 100000 + 0.5)));
+  }
+  return out;
+}
+
+int popcount16(uint32_t v) {
+  int c = 0;
+  for (; v; v >>= 1) c += static_cast<int>(v & 1u);
+  return c;
+}
+std::vector<int64_t> scoreBit(const std::vector<int>& positions, uint32_t seed) {
+  const uint32_t a = (seedStream(seed, 0) & 0xFFFFu) | 1u;
+  const int b = 1 + static_cast<int>(seedStream(seed, 1) % 3u);
+  std::vector<int64_t> out;
+  out.reserve(positions.size());
+  for (int p : positions) {
+    const uint32_t up = static_cast<uint32_t>(p) + 1u;
+    out.push_back(popcount16(((up * a) ^ (up >> b)) & 0xFFFFu));
+  }
+  return out;
+}
+
+std::vector<int64_t> scoreLogistic(const std::vector<int>& positions, uint32_t seed) {
+  const int64_t r = 242483 + seedStream(seed, 1) % 19006u;
+  int64_t x = 1 + seedStream(seed, 0) % 65534u;
+  auto step = [&](int64_t v, uint32_t k) {
+    const int64_t next = (r * v * (65536 - v)) >> 32;
+    return next > 0 ? next : static_cast<int64_t>(1 + seedStream(seed, 2000u + k) % 65534u);
+  };
+  for (uint32_t k = 0; k < 8; k++) x = step(x, k);
+  int maxPos = 0;
+  for (int p : positions) maxPos = std::max(maxPos, p);
+  std::vector<int64_t> xs;
+  xs.reserve(maxPos + 1);
+  for (int p = 0; p <= maxPos; p++) { xs.push_back(x); x = step(x, 8u + static_cast<uint32_t>(p)); }
+  std::vector<int64_t> out;
+  out.reserve(positions.size());
+  for (int p : positions) out.push_back(xs[p]);
+  return out;
+}
+
+}  // namespace
+
+PatternMode patternModeFromString(const std::string& s) {
+  if (s == "metric")   return PatternMode::Metric;
+  if (s == "sine")     return PatternMode::Sine;
+  if (s == "bit")      return PatternMode::Bit;
+  if (s == "logistic") return PatternMode::Logistic;
+  return PatternMode::Classic;
+}
+
+const char* patternModeToString(PatternMode mode) {
+  switch (mode) {
+    case PatternMode::Metric:   return "metric";
+    case PatternMode::Sine:     return "sine";
+    case PatternMode::Bit:      return "bit";
+    case PatternMode::Logistic: return "logistic";
+    default:                    return "classic";
+  }
+}
+
+std::vector<int> stepRange(int n) {
+  std::vector<int> out(n > 0 ? n : 0);
+  for (int i = 0; i < static_cast<int>(out.size()); i++) out[i] = i;
+  return out;
+}
+
+std::vector<bool> patternMask(PatternMode mode, int hits, const std::vector<int>& positions,
+                              uint32_t seed, double stepsPerBeat, int total, bool anchorEnd) {
+  const int n = static_cast<int>(positions.size());
+  if (mode == PatternMode::Classic) return euclideanRhythm(hits, n, seed);
+  if (n <= 0) return {};
+  if (hits <= 0) return std::vector<bool>(n, false);
+  if (hits >= n) return std::vector<bool>(n, true);
+
+  const int spb = std::max(1, static_cast<int>(std::round(stepsPerBeat)));
+  const int cycle = std::max(1, total);
+  std::vector<int64_t> scores;
+  switch (mode) {
+    case PatternMode::Metric:   scores = scoreMetric(positions, seed, spb); break;
+    case PatternMode::Sine:     scores = scoreSine(positions, seed, cycle); break;
+    case PatternMode::Bit:      scores = scoreBit(positions, seed); break;
+    default:                    scores = scoreLogistic(positions, seed); break;
+  }
+  if (anchorEnd) scores[n - 1] += 1000000000;
+  std::vector<uint32_t> keys(n);
+  for (int i = 0; i < n; i++) keys[i] = seedStream(seed, 1000u + static_cast<uint32_t>(positions[i]));
+  std::vector<int> order = stepRange(n);
+  std::sort(order.begin(), order.end(), [&](int i, int j) {
+    if (scores[i] != scores[j]) return scores[i] > scores[j];
+    if (keys[i] != keys[j]) return keys[i] > keys[j];
+    return i < j;
+  });
+  std::vector<bool> mask(n, false);
+  for (int k = 0; k < hits; k++) mask[order[k]] = true;
+  return mask;
+}
+
 double applyFeelWarp(double frac, Feel feel) {
   double f = std::fmod(std::fmod(frac, 1.0) + 1.0, 1.0);
   if (feel == Feel::Swing) {
@@ -110,11 +257,12 @@ double warpAbsoluteBeat(double absBeat, Feel feel) {
   return beatIdx + applyFeelWarp(absBeat - beatIdx, feel);
 }
 
-std::vector<double> generateGroupPattern(int numerator, double stepsPerBeat, int hits, Feel feel, uint32_t seed) {
+std::vector<double> generateGroupPattern(int numerator, double stepsPerBeat, int hits, Feel feel, uint32_t seed,
+                                         PatternMode mode) {
   if (feel == Feel::Halftime) {
     int halfSteps = static_cast<int>(std::round((numerator / 2.0) * stepsPerBeat));
     int halfHits = std::max(1, static_cast<int>(std::round(hits / 2.0)));
-    auto mask = euclideanRhythm(halfHits, halfSteps, seed);
+    auto mask = patternMask(mode, halfHits, stepRange(halfSteps), seed, stepsPerBeat, halfSteps);
     std::vector<double> beats;
     for (int i = 0; i < static_cast<int>(mask.size()); i++) {
       if (!mask[i]) continue;
@@ -126,7 +274,7 @@ std::vector<double> generateGroupPattern(int numerator, double stepsPerBeat, int
   }
 
   int totalSteps = static_cast<int>(std::round(numerator * stepsPerBeat));
-  auto mask = euclideanRhythm(hits, totalSteps, seed);
+  auto mask = patternMask(mode, hits, stepRange(totalSteps), seed, stepsPerBeat, totalSteps);
   std::vector<double> beats;
   for (int i = 0; i < static_cast<int>(mask.size()); i++) {
     if (!mask[i]) continue;
@@ -139,12 +287,12 @@ std::vector<double> generateGroupPattern(int numerator, double stepsPerBeat, int
 
 std::vector<AnchoredBeat> generateAnchoredPattern(
     int numerator, double stepsPerBeat, int hits, Feel feel, uint32_t seed,
-    const std::vector<double>& anchorBeats) {
+    const std::vector<double>& anchorBeats, PatternMode mode) {
 
   int totalSteps = static_cast<int>(std::round(numerator * stepsPerBeat));
 
   if (anchorBeats.empty() || hits <= 0) {
-    auto beats = generateGroupPattern(numerator, stepsPerBeat, hits, feel, seed);
+    auto beats = generateGroupPattern(numerator, stepsPerBeat, hits, feel, seed, mode);
     std::vector<AnchoredBeat> out;
     out.reserve(beats.size());
     for (double b : beats) out.push_back({b, false});
@@ -168,7 +316,7 @@ std::vector<AnchoredBeat> generateAnchoredPattern(
   std::vector<int> freeSteps;
   for (int i = 0; i < totalSteps; i++) if (!isAnchorStep[i]) freeSteps.push_back(i);
 
-  auto embellishMask = euclideanRhythm(embellishHits, static_cast<int>(freeSteps.size()), seed);
+  auto embellishMask = patternMask(mode, embellishHits, freeSteps, seed, stepsPerBeat, totalSteps);
 
   // chosen: anchors first, then embellish hits — freeSteps/anchorSteps are
   // disjoint by construction so no overwrite ordering to worry about
@@ -218,9 +366,9 @@ std::vector<double> generateTripletLayerBeats(
 
 std::vector<double> generateSnareGhostBeats(
     int numerator, double stepsPerBeat, int mainHits, double ghostDensityPct,
-    Feel feel, uint32_t seed) {
+    Feel feel, uint32_t seed, PatternMode mode) {
   int totalSteps = static_cast<int>(std::round(numerator * stepsPerBeat));
-  auto mainMask = euclideanRhythm(mainHits, totalSteps, seed);
+  auto mainMask = patternMask(mode, mainHits, stepRange(totalSteps), seed, stepsPerBeat, totalSteps);
 
   std::vector<int> emptyIdx;
   for (int i = 0; i < static_cast<int>(mainMask.size()); i++)
@@ -228,7 +376,7 @@ std::vector<double> generateSnareGhostBeats(
   if (emptyIdx.empty()) return {};
 
   int ghostHits = static_cast<int>(std::round((ghostDensityPct / 100.0) * emptyIdx.size()));
-  auto ghostMask = euclideanRhythm(ghostHits, static_cast<int>(emptyIdx.size()), seed ? seed + 1 : 0);
+  auto ghostMask = patternMask(mode, ghostHits, emptyIdx, seed ? seed + 1 : 0, stepsPerBeat, totalSteps);
 
   std::vector<double> beats;
   for (int i = 0; i < static_cast<int>(ghostMask.size()); i++) {
@@ -307,6 +455,11 @@ std::vector<bool> buildEndAnchoredEuclidean(int hits, int steps, uint32_t seed) 
   for (int i = 0; i < steps; i++) mask[((i + shift) % steps + steps) % steps] = raw[i];
 
   return seed ? seededShuffleMask(mask, seed) : mask;
+}
+
+std::vector<bool> endAnchoredMask(PatternMode mode, int hits, int steps, uint32_t seed, double stepsPerBeat) {
+  if (mode == PatternMode::Classic) return buildEndAnchoredEuclidean(hits, steps, seed);
+  return patternMask(mode, hits, stepRange(steps), seed, stepsPerBeat, steps, true);
 }
 
 } // namespace dgg

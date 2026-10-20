@@ -55,6 +55,113 @@ function seededShuffleMask(mask, seed) {
   return out;
 }
 
+// =========================================
+// PATTERN MODES
+// A mode scores every step; the `hits` best-scoring steps get a hit, so density stays exact. Equal scores are
+// ordered by a seed hash. Scores are integers or quantized, so RhythmEngine.cpp produces the same masks.
+// =========================================
+const PATTERN_MODES = ['classic', 'metric', 'sine', 'bit', 'logistic'];
+
+function mix32(x) {
+  x = Math.imul(x ^ (x >>> 16), 0x7feb352d);
+  x = Math.imul(x ^ (x >>> 15), 0x846ca68b);
+  return (x ^ (x >>> 16)) >>> 0;
+}
+function seedStream(seed, k) { return mix32(((seed >>> 0) + Math.imul(k + 1, 0x9e3779b9)) >>> 0); }
+
+// Parabolic sine approximation on [-PI, PI]; basic arithmetic only.
+function fastSin(x) {
+  const y = 1.2732395447351628 * x - 0.4052847345693511 * x * Math.abs(x);
+  return 0.225 * (y * Math.abs(y) - y) + y;
+}
+
+function scoreMetric(positions, seed, spb) {
+  return positions.map(p => {
+    const inBeat = p % spb;
+    let w;
+    if (p === 0) w = 1000;
+    else if (inBeat === 0) w = (Math.floor(p / spb) % 2 === 0) ? 48 : 40;
+    else if (spb % 2 === 0 && inBeat === spb / 2) w = 24;
+    else if (spb % 4 === 0 && inBeat % (spb / 4) === 0) w = 12;
+    else w = 8;
+    return w + seedStream(seed, 100 + p) % 40;
+  });
+}
+
+// Three sine waves with distinct integer ratios from {2,3,4,5,7} cycles per bar; the seed picks ratios and phases.
+function scoreSine(positions, seed, total) {
+  const ratioSet = [2, 3, 4, 5, 7];
+  const a = seedStream(seed, 0) % 5;
+  const b = (a + 1 + seedStream(seed, 1) % 4) % 5;
+  const rest = [0, 1, 2, 3, 4].filter(i => i !== a && i !== b);
+  const ratios = [ratioSet[a], ratioSet[b], ratioSet[rest[seedStream(seed, 2) % 3]]];
+  const phases = [3, 4, 5].map(k => (seedStream(seed, k) % 4096) / 4096);
+  return positions.map(p => {
+    let sum = 0;
+    for (let k = 0; k < 3; k++) {
+      let u = ((ratios[k] * p) % total) / total + phases[k];
+      u -= Math.floor(u);
+      sum += fastSin((u - 0.5) * 6.283185307179586);
+    }
+    return Math.floor(sum * 100000 + 0.5);
+  });
+}
+
+function popcount16(v) {
+  let c = 0;
+  for (; v; v >>>= 1) c += v & 1;
+  return c;
+}
+function scoreBit(positions, seed) {
+  const a = (seedStream(seed, 0) & 0xFFFF) | 1;
+  const b = 1 + seedStream(seed, 1) % 3;
+  return positions.map(p => popcount16((Math.imul(p + 1, a) ^ ((p + 1) >> b)) & 0xFFFF));
+}
+
+// Logistic map x <- r*x*(1-x) in 16-bit fixed point (r between 3.7 and 3.99), so every step is exact integer math.
+function scoreLogistic(positions, seed) {
+  const r = 242483 + seedStream(seed, 1) % 19006;
+  let x = 1 + seedStream(seed, 0) % 65534;
+  const step = (v, k) => {
+    const next = Math.floor(r * v * (65536 - v) / 4294967296);
+    return next > 0 ? next : 1 + seedStream(seed, 2000 + k) % 65534;
+  };
+  for (let k = 0; k < 8; k++) x = step(x, k);
+  let maxPos = 0;
+  positions.forEach(p => { if (p > maxPos) maxPos = p; });
+  const xs = [];
+  for (let p = 0; p <= maxPos; p++) { xs.push(x); x = step(x, 8 + p); }
+  return positions.map(p => xs[p]);
+}
+
+// Mask over `positions` (absolute step indices within the bar grid). Classic keeps the Euclidean distribution.
+// anchorEnd forces the last step to be a hit (Break/Fill zones end on a hit).
+function patternMask(mode, hits, positions, seed, spb, total, anchorEnd = false) {
+  const n = positions.length;
+  if (!PATTERN_MODES.includes(mode) || mode === 'classic') return euclideanRhythm(hits, n, seed);
+  if (n <= 0) return [];
+  if (hits <= 0) return new Array(n).fill(false);
+  if (hits >= n) return new Array(n).fill(true);
+  const stepsPerBeat = Math.max(1, Math.round(spb));
+  const cycle = Math.max(1, total);
+  const scores = mode === 'metric' ? scoreMetric(positions, seed, stepsPerBeat)
+    : mode === 'sine' ? scoreSine(positions, seed, cycle)
+    : mode === 'bit' ? scoreBit(positions, seed)
+    : scoreLogistic(positions, seed);
+  if (anchorEnd) scores[n - 1] += 1000000000;
+  const keys = positions.map(p => seedStream(seed, 1000 + p));
+  const order = positions.map((_, i) => i).sort((i, j) => (scores[j] - scores[i]) || (keys[j] - keys[i]) || (i - j));
+  const mask = new Array(n).fill(false);
+  for (let k = 0; k < hits; k++) mask[order[k]] = true;
+  return mask;
+}
+// End-anchored mask over steps 0..steps-1. Classic keeps buildEndAnchoredEuclidean (defined in generator-core.js).
+function endAnchoredMask(mode, hits, steps, seed, spb) {
+  if (!PATTERN_MODES.includes(mode) || mode === 'classic') return buildEndAnchoredEuclidean(hits, steps, seed);
+  return patternMask(mode, hits, stepRange(steps), seed, spb, steps, true);
+}
+function stepRange(n) { return Array.from({ length: Math.max(0, n) }, (_, i) => i); }
+
 // Builds one bar's beat positions via Euclidean distribution, then applies the current Feel's grid warp.
 // Feel defines the frame every group's pattern is placed into, not a post-hoc shift.
 const FEEL_WARPS = {
@@ -82,11 +189,11 @@ function warpAbsoluteBeat(absBeat, feel) {
   const beatIdx = Math.floor(absBeat);
   return beatIdx + applyFeelWarp(absBeat - beatIdx, feel);
 }
-function generateGroupPattern(numerator, stepsPerBeat, hits, feel, seed) {
+function generateGroupPattern(numerator, stepsPerBeat, hits, feel, seed, mode = 'classic') {
   if (feel === 'halftime') {
     const halfSteps = Math.round((numerator/2) * stepsPerBeat);
     const halfHits = Math.max(1, Math.round(hits/2));
-    const mask = euclideanRhythm(halfHits, halfSteps, seed);
+    const mask = patternMask(mode, halfHits, stepRange(halfSteps), seed, stepsPerBeat, halfSteps);
     const beats = [];
     mask.forEach((on, i) => {
       if (!on) return;
@@ -97,7 +204,7 @@ function generateGroupPattern(numerator, stepsPerBeat, hits, feel, seed) {
     return beats;
   }
   const totalSteps = Math.round(numerator * stepsPerBeat);
-  const mask = euclideanRhythm(hits, totalSteps, seed);
+  const mask = patternMask(mode, hits, stepRange(totalSteps), seed, stepsPerBeat, totalSteps);
   const beats = [];
   mask.forEach((on, i) => {
     if (!on) return;
@@ -111,16 +218,16 @@ function generateGroupPattern(numerator, stepsPerBeat, hits, feel, seed) {
 // Strong beats (Kick 1&3, Snare 2&4) are structural, not probabilistic.
 // Anchors are included if density > 0; density knob only controls additional Euclidean-distributed hits.
 // Returns {beat, isAnchor} so callers can apply different velocities.
-function generateAnchoredPattern(numerator, stepsPerBeat, hits, feel, seed, anchorBeats) {
+function generateAnchoredPattern(numerator, stepsPerBeat, hits, feel, seed, anchorBeats, mode = 'classic') {
   const totalSteps = Math.round(numerator * stepsPerBeat);
   if (!anchorBeats || !anchorBeats.length || hits <= 0) {
-    return generateGroupPattern(numerator, stepsPerBeat, hits, feel, seed).map(b => ({ beat: b, isAnchor: false }));
+    return generateGroupPattern(numerator, stepsPerBeat, hits, feel, seed, mode).map(b => ({ beat: b, isAnchor: false }));
   }
   const anchorSteps = new Set(anchorBeats.map(b => Math.round(b*stepsPerBeat)).filter(s => s >= 0 && s < totalSteps));
   const embellishHits = Math.max(0, hits - anchorSteps.size);
   const freeSteps = [];
   for (let i = 0; i < totalSteps; i++) if (!anchorSteps.has(i)) freeSteps.push(i);
-  const embellishMask = euclideanRhythm(embellishHits, freeSteps.length, seed);
+  const embellishMask = patternMask(mode, embellishHits, freeSteps, seed, stepsPerBeat, totalSteps);
   const chosen = new Map();
   anchorSteps.forEach(s => chosen.set(s, true));
   embellishMask.forEach((on, i) => { if (on) chosen.set(freeSteps[i], false); });
@@ -158,14 +265,14 @@ function neQuantize(beat, snap) { return snap ? Math.round(beat/snap)*snap : Mat
 
 // Generates ghost notes in empty slots of the main pattern.
 // Must use a related seed to avoid collision with the main pattern.
-function generateSnareGhostBeats(numerator, stepsPerBeat, mainHits, ghostDensityPct, feel, seed) {
+function generateSnareGhostBeats(numerator, stepsPerBeat, mainHits, ghostDensityPct, feel, seed, mode = 'classic') {
   const totalSteps = Math.round(numerator * stepsPerBeat);
-  const mainMask = euclideanRhythm(mainHits, totalSteps, seed);
+  const mainMask = patternMask(mode, mainHits, stepRange(totalSteps), seed, stepsPerBeat, totalSteps);
   const emptyIdx = [];
   mainMask.forEach((on, i) => { if (!on) emptyIdx.push(i); });
   if (!emptyIdx.length) return [];
   const ghostHits = Math.round((ghostDensityPct/100) * emptyIdx.length);
-  const ghostMask = euclideanRhythm(ghostHits, emptyIdx.length, seed ? seed+1 : 0);
+  const ghostMask = patternMask(mode, ghostHits, emptyIdx, seed ? seed+1 : 0, stepsPerBeat, totalSteps);
   const beats = [];
   ghostMask.forEach((on, i) => {
     if (!on) return;

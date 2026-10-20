@@ -197,6 +197,11 @@ body.a11y-hover-zoom .fx-pop .lim-knobs-inner:hover .ctrl {
 .cluster-title { font-size:9px; font-weight:600; color:var(--amber); text-transform:uppercase; letter-spacing:.03em; }
 .group-lock-icon { cursor:pointer; font-size:10px; margin-left:3px; }
 .group-lock-icon:hover { filter:brightness(1.4); }
+.pattern-mode-icon { display:inline-block; font-weight:700; font-size:9px; line-height:12px; color:var(--text); background:var(--bg); border:1px solid var(--border2); border-radius:3px; padding:0 3px; vertical-align:middle; }
+.pattern-mode-icon::after { content:'▾'; font-size:7px; margin-left:2px; opacity:.7; }
+.pattern-mode-icon:hover { border-color:var(--amber); }
+.pattern-mode-icon.mode-on { color:var(--cyan); border-color:var(--cyan); }
+.add-block-menu.pattern-mode-menu { position:fixed; right:auto; bottom:auto; min-width:130px; z-index:10000; }
 .knob-cluster input:disabled { opacity:.35; cursor:not-allowed; }
 /* Fill and Fill Kick: a different kind of group than the instrument groups, so their titles carry another colour. */
 .ne-fill-cluster .cluster-title, .ne-sidebar-heading { color:var(--cyan); }
