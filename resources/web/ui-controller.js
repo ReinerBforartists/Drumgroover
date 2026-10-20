@@ -2067,6 +2067,17 @@ document.getElementById('mainPatternMode').addEventListener('click', (e) => {
     },
   });
 });
+// Click feedback for every dice (static, Main, Custom and the Break/Fill/Turnaround rows) and pattern mode letter.
+document.addEventListener('click', (e) => {
+  const icon = e.target.closest && e.target.closest('.group-lock-icon');
+  if (!icon) return;
+  const cls = icon.classList.contains('pattern-mode-icon') ? 'mode-flash' : (icon.textContent.trim() === '🎲' ? 'dice-roll' : '');
+  if (!cls) return;
+  icon.classList.remove(cls);
+  void icon.offsetWidth;   // restart the animation on rapid clicks
+  icon.classList.add(cls);
+  icon.addEventListener('animationend', () => icon.classList.remove(cls), { once: true });
+}, true);
 // Custom cluster: same gesture-undo wiring as the engine groups, plus its own reroll dice.
 wireKnobGestureUndo(['customSubdivision','customDensity','customPhrase'], regenerateCustomGroup, 'Adjust Custom');
 document.getElementById('customTrackSelect').addEventListener('change', () => {

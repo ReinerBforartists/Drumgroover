@@ -195,8 +195,22 @@ body.a11y-hover-zoom .fx-pop .lim-knobs-inner:hover .ctrl {
 .de-param-cluster-placeholder { flex-shrink:0; visibility:hidden; pointer-events:none; }
 
 .cluster-title { font-size:9px; font-weight:600; color:var(--amber); text-transform:uppercase; letter-spacing:.03em; }
-.group-lock-icon { cursor:pointer; font-size:10px; margin-left:3px; }
-.group-lock-icon:hover { filter:brightness(1.4); }
+.group-lock-icon { display:inline-block; cursor:pointer; font-size:10px; margin-left:3px; transition:transform .08s; }
+.group-lock-icon:hover { filter:brightness(1.4); transform:scale(1.1); }
+.group-lock-icon:active { transform:translateY(1px) scale(.85); }
+/* Click feedback: the dice spins and glows, the pattern mode letter flashes. */
+@keyframes dice-roll {
+  0%   { transform:rotate(0deg);   filter:brightness(1)   drop-shadow(0 0 0 transparent); }
+  40%  { filter:brightness(1.9) drop-shadow(0 0 4px var(--amber)); }
+  100% { transform:rotate(360deg); filter:brightness(1)   drop-shadow(0 0 0 transparent); }
+}
+@keyframes mode-flash {
+  0%   { box-shadow:0 0 0 transparent; }
+  35%  { box-shadow:0 0 6px var(--cyan); border-color:var(--cyan); }
+  100% { box-shadow:0 0 0 transparent; }
+}
+.group-lock-icon.dice-roll { animation:dice-roll .25s ease-out; }
+.pattern-mode-icon.mode-flash { animation:mode-flash .3s ease-out; }
 .pattern-mode-icon { display:inline-block; font-weight:700; font-size:9px; line-height:12px; color:var(--text); background:var(--bg); border:1px solid var(--border2); border-radius:3px; padding:0 3px; vertical-align:middle; }
 .pattern-mode-icon::after { content:'▾'; font-size:7px; margin-left:2px; opacity:.7; }
 .pattern-mode-icon:hover { border-color:var(--amber); }
