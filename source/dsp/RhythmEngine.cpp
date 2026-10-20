@@ -308,7 +308,7 @@ struct CompiledFormula {
 
 // "score" or "score ; count" (see compileFormula in rhythm-logic.js). Returns false if it does not parse or is too long.
 bool compileFormula(const std::string& src, CompiledFormula& out) {
-  if (src.size() > 200) return false;
+  if (src.size() > 500) return false;
   const size_t semi = src.find(';');
   if (!compileExpr(semi == std::string::npos ? src : src.substr(0, semi), out.ops)) return false;
   out.hasCount = false;

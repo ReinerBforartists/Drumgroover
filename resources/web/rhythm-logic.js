@@ -143,7 +143,7 @@ function scoreLogistic(positions, seed) {
 // ^ takes the exponent rounded to an integer between -8 and 8. A formula that does not parse scores every step 0.
 const FORMULA_VARS = ['i', 'n', 'hits', 's1', 's2', 's3', 'r', 'pi', 'bar', 'bars'];
 const FORMULA_FUNCS = { sin: 1, cos: 1, abs: 1, floor: 1, frac: 1, sqrt: 1, min: 2, max: 2, mod: 2, mandel: 2, julia: 4, logi: 3 };
-const FORMULA_MAX_LENGTH = 200;
+const FORMULA_MAX_LENGTH = 500;
 
 function compileExpr(src) {
   const ops = [];
