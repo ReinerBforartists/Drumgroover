@@ -236,6 +236,8 @@ private:
   // (every hit is synthesised live, nothing is baked).
   void HandleSetCacheDisabled(const nlohmann::json& payload);
   void ApplyCacheMode(bool hiHatOff, bool rideOff);
+  void SetVoiceCacheFlags(bool hiHatOff, bool rideOff);   // flags only, no state or log (also called from the audio thread)
+  void HandleSetRenderCachedSamples(const nlohmann::json& payload);   // Options > Render cached samples
   std::vector<dgg::VariantBakeTarget> CurrentBakeTargets();
   void PollApplyJob();
 
@@ -453,6 +455,7 @@ private:
   // an offline render is not real time.
   void WaitForCacheBeforeOfflineRender();
   bool mOfflineCachePrepared = false;
+  std::atomic<bool> mOfflineLiveActive{false};   // audio thread: voices are switched to live synthesis for an offline render
 
   // Voice pools for Lo‑Fi engine, one per family.
   std::array<dgg::VoicePool<dgg::LoFiVoice, 4>, 6> mLoFiPools;

@@ -2633,6 +2633,24 @@ devToolsToggles.forEach(t => {
 });
 applyDevTools(devToolsEnabled());
 
+// Render cached samples (offline render / song export): on = cached samples like in the DAW, off = live physics synthesis (default).
+// Same storage as the developer tools flag: plain localStorage, machine-wide; the host gets the value at every start.
+const RENDER_CACHED_KEY = 'dggRenderCachedSamples.v2';
+const renderCachedToggles = ['renderCachedToggle', 'renderCachedToggleSG', 'renderCachedToggleDE', 'renderCachedToggleMixer']
+  .map(id => document.getElementById(id)).filter(Boolean);
+function renderCachedEnabled() {
+  try { return localStorage.getItem(RENDER_CACHED_KEY) === '1'; } catch (e) { return false; }
+}
+function applyRenderCached(enabled) {
+  try { localStorage.setItem(RENDER_CACHED_KEY, enabled ? '1' : '0'); } catch (e) {}
+  renderCachedToggles.forEach(t => { t.checked = enabled; });
+  hostBridge.send('setRenderCachedSamples', { enabled });
+}
+renderCachedToggles.forEach(t => {
+  t.addEventListener('change', (e) => applyRenderCached(e.target.checked));
+});
+applyRenderCached(renderCachedEnabled());
+
 window.dggShowValueTip = function(text, x, y) {
   let tip = document.getElementById('dggValueTip');
   if (!tip) {

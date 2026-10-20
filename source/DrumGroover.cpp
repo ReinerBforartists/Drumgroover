@@ -254,6 +254,9 @@ void WriteRebakeOnChange(bool on) { WriteSettingsField("rebakeOnValueChange", on
 // Per-instrument cache switches (Cache panel): an instrument with its cache off neither plays nor bakes cached sounds, every hit is synthesised live.
 // Ride and Cymbal share one engine and one pool, so they share one switch.
 std::atomic<bool> gCacheOffHiHat{false}, gCacheOffRide{false};
+// Options > "Render cached samples": on = an offline render (song export) plays the cached samples like the DAW does; off = the
+// offline render synthesises Hi-Hat, Ride and Cymbal live from the physics model. The UI pushes the stored value at startup.
+std::atomic<bool> gRenderCachedSamples{false};
 bool ReadBoolSetting(const char* name)
 {
   std::ifstream f(GetSettingsPath());
@@ -1657,6 +1660,7 @@ bool DrumGroover::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* p
     else if (type == "mixerPresetDefault") HandleMixerPresetDefault(payload);
     else if (type == "setMuted")         HandleSetMuted(payload);
     else if (type == "setDevTools")      HandleSetDevTools(payload);
+    else if (type == "setRenderCachedSamples") HandleSetRenderCachedSamples(payload);
     else if (type == "mixerState")       HandleMixerState(payload);
     else if (type == "setVoiceParam")    HandleSetVoiceParam(payload);
     else if (type == "setPadPos")         HandleSetPadPos(payload);
@@ -3372,10 +3376,8 @@ void DrumGroover::HandleSetRebakeOnChange(const nlohmann::json& payload)
 
 // Per instrument: cache on = play the variant pool, report a miss and synthesise it live; cache off = no pool lookup,
 // no miss reports, no baking (the Enqueue*Set functions return), every hit is synthesised live.
-void DrumGroover::ApplyCacheMode(bool hiHatOff, bool rideOff)
+void DrumGroover::SetVoiceCacheFlags(bool hiHatOff, bool rideOff)
 {
-  gCacheOffHiHat.store(hiHatOff, std::memory_order_relaxed);
-  gCacheOffRide.store(rideOff, std::memory_order_relaxed);
   ForEachHiHatPool([hiHatOff](const dgg::InstrumentDef&, auto& pool) {
     for (auto& v : pool.Voices()) { v.diagUseVariantPool = !hiHatOff; v.cacheOnly = !hiHatOff; }
   });
@@ -3383,6 +3385,19 @@ void DrumGroover::ApplyCacheMode(bool hiHatOff, bool rideOff)
     for (auto& v : p.Voices()) { v.diagUseVariantPool = !rideOff; v.cacheOnly = !rideOff; }
   for (auto& p : mCymbalPools)
     for (auto& v : p.Voices()) { v.diagUseVariantPool = !rideOff; v.cacheOnly = !rideOff; }
+}
+
+void DrumGroover::HandleSetRenderCachedSamples(const nlohmann::json& payload)
+{
+  gRenderCachedSamples.store(payload.value("enabled", false), std::memory_order_relaxed);
+}
+
+void DrumGroover::ApplyCacheMode(bool hiHatOff, bool rideOff)
+{
+  gCacheOffHiHat.store(hiHatOff, std::memory_order_relaxed);
+  gCacheOffRide.store(rideOff, std::memory_order_relaxed);
+  SetVoiceCacheFlags(hiHatOff, rideOff);
+  mOfflineLiveActive.store(false);
   DGG_Log(std::string("ApplyCacheMode: hihat ") + (hiHatOff ? "live" : "cache") + ", ride/cymbal " + (rideOff ? "live" : "cache"));
 }
 
@@ -3991,7 +4006,28 @@ void DrumGroover::WaitForCacheBeforeOfflineRender()
   if (!GetRenderingOffline())
   {
     mOfflineCachePrepared = false;
+    if (mOfflineLiveActive.load())   // the render ended: back to the cache switches of the Cache panel
+    {
+      SetVoiceCacheFlags(gCacheOffHiHat.load(std::memory_order_relaxed), gCacheOffRide.load(std::memory_order_relaxed));
+      mOfflineLiveActive.store(false);
+    }
     return;
+  }
+
+  // Render cached samples off: no waiting for the bake, every hit comes straight from the physics model.
+  if (!gRenderCachedSamples.load(std::memory_order_relaxed))
+  {
+    if (!mOfflineLiveActive.load())
+    {
+      SetVoiceCacheFlags(true, true);
+      mOfflineLiveActive.store(true);
+    }
+    return;
+  }
+  if (mOfflineLiveActive.load())   // switched back on during the same render
+  {
+    SetVoiceCacheFlags(gCacheOffHiHat.load(std::memory_order_relaxed), gCacheOffRide.load(std::memory_order_relaxed));
+    mOfflineLiveActive.store(false);
   }
 
 #if IPLUG_EDITOR
