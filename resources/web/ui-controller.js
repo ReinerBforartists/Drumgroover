@@ -862,8 +862,6 @@ registerToolbarMenu('editMenuBtn', 'editMenu', () => {
   document.getElementById('discardAllEditsBlockBtn').disabled = !blockLocked;
   const anyBlockLocked = blocksList.some(blockHasDiscardableEdits);
   document.getElementById('discardAllEditsGlobalBtn').disabled = !anyBlockLocked;
-  const blockFullyLocked = block && !isFillGeneratedBlock(block) && ALL_ENGINE_GROUPS.every(gid => block.lockedGroups && block.lockedGroups[gid]);
-  document.getElementById('rerollActiveBlockMenuBtn').disabled = !block || blockFullyLocked;
   document.getElementById('rerollAllBlocksMenuBtn').disabled = !blocksList.some(b => !isFillGeneratedBlock(b));
 });
 document.getElementById('editSelectAllBtn').addEventListener('click', () => { editMenu.style.display = 'none'; if (isTimelineTabActive()) tlSelectAll(); else selectAllNotes(); });
@@ -874,7 +872,6 @@ document.getElementById('editCutBtn').addEventListener('click', () => { editMenu
 document.getElementById('editPasteBtn').addEventListener('click', () => { editMenu.style.display = 'none'; doPasteClipboard(); });
 document.getElementById('discardAllEditsBlockBtn').addEventListener('click', () => { editMenu.style.display = 'none'; unlockAllGroups(); });
 document.getElementById('discardAllEditsGlobalBtn').addEventListener('click', () => { editMenu.style.display = 'none'; unlockAllGroupsGlobal(); });
-document.getElementById('rerollActiveBlockMenuBtn').addEventListener('click', () => { editMenu.style.display = 'none'; rerollActiveBlock(); });
 document.getElementById('rerollAllBlocksMenuBtn').addEventListener('click', () => { editMenu.style.display = 'none'; rerollAllBlocksGlobal(); });
 
 const neSettingsPanel = document.getElementById('neSettingsPanel');
