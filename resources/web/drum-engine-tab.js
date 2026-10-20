@@ -1950,8 +1950,16 @@ function deApplyCacheMenuVisibility() {
   }
 }
 
+// Lo-Fi has no accent: the Drum Engine's Accent cluster is hidden, the Note Editor's accent lane is greyed out (neRefreshAccentReadout).
+function deApplyAccentAvailability() {
+  const cluster = document.getElementById('deAccentCluster');
+  if (cluster) cluster.style.display = deEngineMode === 'lofi' ? 'none' : '';
+  if (typeof neRefreshAccentReadout === 'function') neRefreshAccentReadout();
+}
+
 function deRefreshParamPanelForFamily(family) {
   deApplyCacheMenuVisibility();
+  deApplyAccentAvailability();
   if (family === 'custom') return; // engine-agnostic roster for now
   const panel = document.querySelector(`.de-param-panel[data-family="${family}"]`);
   if (!panel) return;

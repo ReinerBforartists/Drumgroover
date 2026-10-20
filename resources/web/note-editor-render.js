@@ -1310,7 +1310,10 @@ function neRefreshAccentReadout() {
   const wrap = document.querySelector('.ne-accent-wrap');
   if (!wrap) return;
   wrap.classList.toggle('ne-accent-off', !(dggAccentAmount > 0));
+  const noAccent = deEngineMode === 'lofi';   // the Lo-Fi engine has no accent: lane greyed out and inert
+  wrap.classList.toggle('ne-accent-disabled', noAccent);
   const t = wrap.querySelector('.ne-accent-amount');
+  if (t) t.disabled = noAccent;
   if (t && document.activeElement !== t) t.value = String(Math.round(dggAccentAmount * 100));
 }
 
@@ -1320,7 +1323,7 @@ function neRefreshAccentReadout() {
 function neBuildAccentLane(ctx) {
   const { block, g, totalBeats, pxPerBeat, totalW, blockBeats } = ctx;
   const wrap = document.createElement('div');
-  wrap.className = 'ne-accent-wrap' + (dggAccentAmount > 0 ? '' : ' ne-accent-off');
+  wrap.className = 'ne-accent-wrap' + (dggAccentAmount > 0 ? '' : ' ne-accent-off') + (deEngineMode === 'lofi' ? ' ne-accent-disabled' : '');
   const labels = document.createElement('div');
   labels.className = 'ne-accent-labels';
   const amountPct = Math.round(dggAccentAmount * 100);
