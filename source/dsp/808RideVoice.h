@@ -91,18 +91,17 @@ public:
     return p;
   }
 
-  // Cache file base name for a key, e.g. "Ride_BowTip_decay65_tone15_level60_pitch100_sr44100_m9" (knobs in hundredths).
+  // Cache file base name for a key, e.g. "Ride_BowTip_decay65_tone15_level60_pitch100_sr44100" (knobs in hundredths).
   // Crash is the cymbal; every other articulation is Ride.
-  static constexpr int kModelVersion = 9;   // 9: the live synthesis is the fast model (808CyFast.h)
   static std::string VariantPoolBaseName(const dgg::TR808VariantKey128& key)
   {
     static const char* kArtNames[7] = { "Ride_BowTip", "Ride_BowShank", "Ride_BellTip", "Ride_BellShank", "Ride_Edge", "Ride_Mute", "Cymbal_Crash" };
     const VariantPoolParams p = DecodeVariantPoolKey(key);
     char buf[160], acc[16] = "";
     if (p.accentStep > 0) std::snprintf(acc, sizeof(acc), "_acc%d", p.accentStep * 100 / dgg::kAccentStepsPerUnit);   // accented set: the Accent amount in percent; no suffix = the normal set
-    std::snprintf(buf, sizeof(buf), "%s_decay%d_tone%d_level%d_pitch%d_sr%d%s_m%d",
+    std::snprintf(buf, sizeof(buf), "%s_decay%d_tone%d_level%d_pitch%d_sr%d%s",
       kArtNames[std::clamp(p.art, 0, 6)], (int)std::llround(p.decay * 100.0), (int)std::llround(p.tone * 100.0),
-      (int)std::llround(p.level * 100.0), (int)std::llround(p.pitch * 100.0), (int)std::llround(p.sampleRateHz), acc, kModelVersion);
+      (int)std::llround(p.level * 100.0), (int)std::llround(p.pitch * 100.0), (int)std::llround(p.sampleRateHz), acc);
     return buf;
   }
 

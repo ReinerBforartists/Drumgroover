@@ -93,18 +93,16 @@ public:
     return p;
   }
 
-  // Cache file base name for a key, e.g. "HiHat_OpenEdge0_decay85_level100_pitch100_sr44100_m5" (knobs in hundredths).
-  // kModelVersion is part of the file name: changing the model invalidates existing cache files.
-  static constexpr int kModelVersion = 5;
+  // Cache file base name for a key, e.g. "HiHat_OpenEdge0_decay85_level100_pitch100_sr44100" (knobs in hundredths).
   static std::string VariantPoolBaseName(const dgg::TR808VariantKey128& key)
   {
     static const char* kPoolNames[6] = { "ClosedEdge", "TightEdge", "OpenEdge0", "OpenEdge4", "ClosedTip", "TightTip" };
     const VariantPoolParams p = DecodeVariantPoolKey(key);
     char buf[160], acc[16] = "";
     if (p.accentStep > 0) std::snprintf(acc, sizeof(acc), "_acc%d", p.accentStep * 100 / dgg::kAccentStepsPerUnit);   // accented set: the Accent amount in percent; no suffix = the normal set
-    std::snprintf(buf, sizeof(buf), "HiHat_%s_decay%d_level%d_pitch%d_sr%d%s_m%d",
+    std::snprintf(buf, sizeof(buf), "HiHat_%s_decay%d_level%d_pitch%d_sr%d%s",
       kPoolNames[std::clamp(p.poolIndex, 0, 5)], (int)std::llround(p.decay * 100.0),
-      (int)std::llround(p.level * 100.0), (int)std::llround(p.pitch * 100.0), (int)std::llround(p.sampleRateHz), acc, kModelVersion);
+      (int)std::llround(p.level * 100.0), (int)std::llround(p.pitch * 100.0), (int)std::llround(p.sampleRateHz), acc);
     return buf;
   }
 
