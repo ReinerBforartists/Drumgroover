@@ -13,6 +13,7 @@
 #include "808HhBank.h"
 #include "808HhNet.h"
 #include "808CyModel.h"
+#include "808CyAdSplit.h"
 
 namespace dgg { namespace cyfast {
 
@@ -109,7 +110,7 @@ class CyChain
     mE2.Setup(mH, kTheta, [&](auto& n) { n.StampG(cymodel::eg2::kRow_vr2wiper, -1, dgDecay); });
     mB.Setup(mH, kTheta, [](auto&) {});
     mC.Setup(mH, kTheta, [](auto&) {});
-    mAD.Setup(mH, kTheta, [&](auto& n) { n.StampG(cymodel::ad::kRow_vr4e, -1, dgT1); n.StampG(cymodel::ad::kRow_meshx2, -1, dgT2); n.StampG(cymodel::ad::kRow_u6bout, cymodel::ad::kRow_u6bm, dgL); });
+    mAD.Setup(mH, kTheta, dgT1, dgT2, dgL);
     // the coarse set for the quiet tail: half the core steps per host sample (about 96 kHz), only with the normal 4 or more
     mSubT = mSub >= 4 ? mSub / 2 : 0; mHT = mSubT > 0 ? 1.0 / (sampleRate * mSubT) : 0.0;
     if (mSubT > 0)
@@ -117,7 +118,7 @@ class CyChain
       mTE2.Setup(mHT * mSubT, kTheta, [&](auto& n) { n.StampG(cymodel::eg2::kRow_vr2wiper, -1, dgDecay); });
       mTB.Setup(mHT, kTheta, [](auto&) {});
       mTC.Setup(mHT, kTheta, [](auto&) {});
-      mTAD.Setup(mHT, kTheta, [&](auto& n) { n.StampG(cymodel::ad::kRow_vr4e, -1, dgT1); n.StampG(cymodel::ad::kRow_meshx2, -1, dgT2); n.StampG(cymodel::ad::kRow_u6bout, cymodel::ad::kRow_u6bm, dgL); });
+      mTAD.Setup(mHT, kTheta, dgT1, dgT2, dgL);
     }
     mBuilt = true;
   }
@@ -143,8 +144,8 @@ class CyChain
   bool Active() const { return mActive; }
   // cy_out of the circuit (behind R166 and the bus load) relative to its rest value, valid after Process(); diagnostics (the voice uses the U6-B output u6bout)
   double OutCy() const { return (mTail ? mTAD : mAD).V(cymodel::ad::kRow_cy_out) - mCyRest; }
-  long StatFail() const { return mE.statFail + mE2.statFail + mAD.statFail + mB.statFail + mC.statFail; }
-  long StatDense() const { return mE.statDense + mE2.statDense + mAD.statDense + mB.statDense + mC.statDense; }
+  long StatFail() const { return mE.statFail + mE2.statFail + mAD.StatFail() + mB.statFail + mC.statFail; }
+  long StatDense() const { return mE.statDense + mE2.statDense + mAD.StatDense() + mB.statDense + mC.statDense; }
 
   // one host sample: the U6-B output u6bout relative to its rest value (V); cy_out behind R166 and the bus load is 2.5 dB lower
   double Process()
@@ -204,7 +205,7 @@ class CyChain
     SubNet<cymodel::eg2>& nE2 = eCoarse ? mTE2 : mE2;
     SubNet<cymodel::cellb>& nB = tail ? mTB : mB;
     SubNet<cymodel::cellc>& nC = tail ? mTC : mC;
-    SubNet<cymodel::ad>& nAD = tail ? mTAD : mAD;
+    AdBlock<SubNet<cymodel::ad1>>& nAD = tail ? mTAD : mAD;
     const double hh = tail ? mHT : mH;
     const double tStart = (double)(hostN * sub + k) * hh, tEnd = (double)(hostN * sub + k + 1) * hh;
     mBank.Advance(tEnd); const double bp1 = mBank.Out(0), bp2 = mBank.Out(1);
@@ -269,8 +270,8 @@ class CyChain
   double mSr = 48000.0, mH = 1.0 / 192000.0, mDecay = 0.5, mTone = 0.5, mVr6 = 0.16, mAccent = 3.681, mOutRest = 0.0, mCyRest = 0.0, mN120 = 0.0, mN112 = 0.0;
   double mEHold[4] = {0.0, 0.0, 0.0, 0.0};   // c45 / c40 / q20 / q19 of the last E step
   long mHostN = 0; int mSub = 4, mSubT = 0; bool mActive = false, mBuilt = false, mUseE2 = false, mTail = false; double mHT = 0.0, mEnv = 0.0, mEnvPeak = 0.0;
-  Bank mBank; SubNet<cymodel::eg> mE; SubNet<cymodel::eg2> mE2; SubNet<cymodel::cellb> mB; SubNet<cymodel::cellc> mC; SubNet<cymodel::ad> mAD;
-  SubNet<cymodel::eg2> mTE2; SubNet<cymodel::cellb> mTB; SubNet<cymodel::cellc> mTC; SubNet<cymodel::ad> mTAD;   // the coarse set of the quiet tail
+  Bank mBank; SubNet<cymodel::eg> mE; SubNet<cymodel::eg2> mE2; SubNet<cymodel::cellb> mB; SubNet<cymodel::cellc> mC; AdBlock<SubNet<cymodel::ad1>> mAD;
+  SubNet<cymodel::eg2> mTE2; SubNet<cymodel::cellb> mTB; SubNet<cymodel::cellc> mTC; AdBlock<SubNet<cymodel::ad1>> mTAD;   // the coarse set of the quiet tail
 };
 
 } }  // namespace dgg::cyfast

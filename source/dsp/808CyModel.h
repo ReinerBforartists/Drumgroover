@@ -1445,6 +1445,171 @@ static inline bool NewtonSolve(double (*A)[6], double* b) {
   return true;
 }
 };  // ad
+// nonlinear core of the AD net: cell 1 (Q18, D12) and the Band1 buffer Q25; fixed nodes bp1out (8), c45node (10), r123node of the tail (14)
+// unknowns: 0:d12a 1:d12k 2:vca1bias 3:q18base 4:q18emit 5:nodex 6:q25base 7:q25emit
+struct ad1 {
+static constexpr int kRow_d12a = 0;
+static constexpr int kRow_d12k = 1;
+static constexpr int kRow_vca1bias = 2;
+static constexpr int kRow_q18base = 3;
+static constexpr int kRow_q18emit = 4;
+static constexpr int kRow_nodex = 5;
+static constexpr int kRow_q25base = 6;
+static constexpr int kRow_q25emit = 7;
+static constexpr int kN = 8, kNumFix = 3, kNumCapFix = 2, kNumDev = 3;
+static constexpr double kG[64] = {
+  4.5454546454545455e-05, 0, 0, 0,
+  0, 0, 0, 0,
+  0, 9.9999999999999998e-13, 0, 0,
+  0, 0, 0, 0,
+  0, 0, 2.0000009999999997e-06, -9.9999999999999995e-07,
+  0, 0, 0, 0,
+  0, 0, -9.9999999999999995e-07, 1.000001e-06,
+  0, 0, 0, 0,
+  0, 0, 0, 0,
+  0.010000000001000001, 0, 0, 0,
+  0, 0, 0, 0,
+  0, 4.5454546454545455e-05, 0, -4.5454545454545452e-05,
+  0, 0, 0, 0,
+  0, 0, 1.2195122951219512e-05, 0,
+  0, 0, 0, 0,
+  0, -4.5454545454545452e-05, 0, 9.09090919090909e-05,
+};
+static constexpr double kC[64] = {
+  1.5000000000000002e-09, 0, 0, 0,
+  0, -1.5000000000000002e-09, 0, 0,
+  0, 2e-12, 0, 0,
+  0, 0, 0, 0,
+  0, 0, 0, 0,
+  0, 0, 0, 0,
+  0, 0, 0, 2.2000000000000002e-08,
+  0, 0, 0, 0,
+  0, 0, 0, 0,
+  0, 0, 0, 0,
+  -1.5000000000000002e-09, 0, 0, 0,
+  0, 3.0000000000000004e-09, -1.5000000000000002e-09, 0,
+  0, 0, 0, 0,
+  0, -1.5000000000000002e-09, 1.5000000000000002e-09, 0,
+  0, 0, 0, 0,
+  0, 0, 0, 1e-08,
+};
+static constexpr double kRest[8] = {
+  3.0146175865087557e-05, 0.018671656248278923, 7.7567694756481664, 0.51354670806580904,
+  0.00072418519538885214, -0.86755025253160611, -0.2575853730954718, -0.86755027161771159,
+};
+static constexpr double kB0[8] = {
+  -0, -0, -0, -0,
+  -0, -0, -0, -0,
+};
+static constexpr int kNumS = 6;
+static constexpr int kS[6] = {0, 1, 3, 4, 6, 7};   // unknowns that carry a nonlinear device terminal
+static constexpr int kFix[3][2] = {{0, 10}, {2, 2}, {7, 3}};   // row, kind of the fixed node (1 ground, 2 +15 V, 3 -15 V, 4 trigger, 5 accent, 6 trig CH, 7 accent CH, 8 bp2out (cymbal: bp1out), 9 cymbal bp2out, 14 envelope input)
+static constexpr double kFixG[3] = {4.5454545454545452e-05, 9.9999999999999995e-07, 4.5454545454545452e-05};
+static constexpr int kCapFix[2][2] = {{3, 8}, {7, 14}};
+static constexpr double kCapFixC[2] = {2.2000000000000002e-08, 1e-08};
+static constexpr char kDevType[3] = {'D', 'N', 'N'};   // N, P (BJT), D
+static constexpr int kDev[3][3] = {{0, 1, -1}, {1, 3, 4}, {-2, 6, 7}};   // collector / anode, base / cathode, emitter: unknown index, -1 ground, -kind fixed node
+template <class D, bool WithJ> static inline void Devices(const double* y, const double* vf, double* f, double (*J)[6]) {
+  for (int i = 0; i < 6; ++i) f[i] = 0.0;
+  if (WithJ) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) J[i][j] = 0.0;
+  { /* D12 */ double id, gd; D::Diode(y[0] - y[1], id, gd);
+    f[0] += id;
+    f[1] -= id;
+    if (WithJ) {
+      J[0][0] += gd;
+      J[0][1] -= gd; J[1][0] -= gd;
+      J[1][1] += gd;
+    } }
+  { /* Q18 */ const auto c = D::Bjt(D::Npn(), 1.0 * (y[2] - y[3]), 1.0 * (y[2] - y[1]));
+    const double Ic = 1.0 * c.ic, Ib = 1.0 * c.ib, Ie = -(Ic + Ib);
+    f[1] += Ic;
+    f[2] += Ib;
+    f[3] += Ie;
+    if (WithJ) {
+      const double dIc[3] = {-c.icy, c.icx + c.icy, -c.icx}, dIb[3] = {-c.iby, c.ibx + c.iby, -c.ibx};   // d/d(collector, base, emitter)
+      J[1][1] += dIc[0];
+      J[2][1] += dIb[0];
+      J[3][1] += -(dIc[0] + dIb[0]);
+      J[1][2] += dIc[1];
+      J[2][2] += dIb[1];
+      J[3][2] += -(dIc[1] + dIb[1]);
+      J[1][3] += dIc[2];
+      J[2][3] += dIb[2];
+      J[3][3] += -(dIc[2] + dIb[2]);
+    } }
+  { /* Q25 */ const auto c = D::Bjt(D::Npn(), 1.0 * (y[4] - y[5]), 1.0 * (y[4] - vf[2]));
+    const double Ic = 1.0 * c.ic, Ib = 1.0 * c.ib, Ie = -(Ic + Ib);
+    f[4] += Ib;
+    f[5] += Ie;
+    if (WithJ) {
+      const double dIc[3] = {-c.icy, c.icx + c.icy, -c.icx}, dIb[3] = {-c.iby, c.ibx + c.iby, -c.ibx};   // d/d(collector, base, emitter)
+      J[4][4] += dIb[1];
+      J[5][4] += -(dIc[1] + dIb[1]);
+      J[4][5] += dIb[2];
+      J[5][5] += -(dIc[2] + dIb[2]);
+    } }
+}
+static constexpr int kPatternN = 8;
+// base = Phi v + Ainv force - S0 f0 (rows of the unknowns), only the structural nonzeros
+static inline void Pre(const double* Phi, const double* Ai, const double* S0, const double* v, const double* force, const double* f0, double* base) {
+  base[0] = Phi[0] * v[0] + Phi[5] * v[5] + Phi[6] * v[6] + Phi[7] * v[7] + Ai[0] * force[0] + Ai[7] * force[7] - S0[0] * f0[0] - S0[4] * f0[4] - S0[5] * f0[5];
+  base[1] = Phi[9] * v[1] - S0[7] * f0[1];
+  base[2] = Phi[18] * v[2] + Phi[19] * v[3] + Ai[18] * force[2] + Ai[19] * force[3] - S0[14] * f0[2];
+  base[3] = Phi[27] * v[3] + Ai[26] * force[2] + Ai[27] * force[3] - S0[20] * f0[2];
+  base[4] = Phi[36] * v[4] - S0[27] * f0[3];
+  base[5] = Phi[40] * v[0] + Phi[45] * v[5] + Phi[46] * v[6] + Phi[47] * v[7] + Ai[40] * force[0] + Ai[47] * force[7] - S0[30] * f0[0] - S0[34] * f0[4] - S0[35] * f0[5];
+  base[6] = Phi[48] * v[0] + Phi[53] * v[5] + Phi[54] * v[6] + Phi[55] * v[7] + Ai[48] * force[0] + Ai[55] * force[7] - S0[36] * f0[0] - S0[40] * f0[4] - S0[41] * f0[5];
+  base[7] = Phi[56] * v[0] + Phi[61] * v[5] + Phi[62] * v[6] + Phi[63] * v[7] + Ai[56] * force[0] + Ai[63] * force[7] - S0[42] * f0[0] - S0[46] * f0[4] - S0[47] * f0[5];
+}
+static inline void Recon(const double* S1, const double* base, const double* f, double* vn) {
+  vn[0] = base[0] - S1[0] * f[0] - S1[4] * f[4] - S1[5] * f[5];
+  vn[1] = base[1] - S1[7] * f[1];
+  vn[2] = base[2] - S1[14] * f[2];
+  vn[3] = base[3] - S1[20] * f[2];
+  vn[4] = base[4] - S1[27] * f[3];
+  vn[5] = base[5] - S1[30] * f[0] - S1[34] * f[4] - S1[35] * f[5];
+  vn[6] = base[6] - S1[36] * f[0] - S1[40] * f[4] - S1[41] * f[5];
+  vn[7] = base[7] - S1[42] * f[0] - S1[46] * f[4] - S1[47] * f[5];
+}
+// Newton update: solves A x = b in place (elimination without pivoting; false when a pivot is tiny)
+static inline bool NewtonSolve(double (*A)[6], double* b) {
+  double ip[6];   // reciprocals of the pivots: one division per pivot, the back substitution multiplies
+  { const double p = A[0][0]; if (!(std::fabs(p) > 1e-30)) return false; ip[0] = 1.0 / p;
+    { const double m = A[1][0] * ip[0]; A[1][1] -= m * A[0][1]; A[1][2] -= m * A[0][2]; A[1][3] -= m * A[0][3]; A[1][4] -= m * A[0][4]; A[1][5] -= m * A[0][5]; b[1] -= m * b[0]; }
+    { const double m = A[2][0] * ip[0]; A[2][1] -= m * A[0][1]; A[2][2] -= m * A[0][2]; A[2][3] -= m * A[0][3]; A[2][4] -= m * A[0][4]; A[2][5] -= m * A[0][5]; b[2] -= m * b[0]; }
+    { const double m = A[3][0] * ip[0]; A[3][1] -= m * A[0][1]; A[3][2] -= m * A[0][2]; A[3][3] -= m * A[0][3]; A[3][4] -= m * A[0][4]; A[3][5] -= m * A[0][5]; b[3] -= m * b[0]; }
+    { const double m = A[4][0] * ip[0]; A[4][1] -= m * A[0][1]; A[4][2] -= m * A[0][2]; A[4][3] -= m * A[0][3]; A[4][4] -= m * A[0][4]; A[4][5] -= m * A[0][5]; b[4] -= m * b[0]; }
+    { const double m = A[5][0] * ip[0]; A[5][1] -= m * A[0][1]; A[5][2] -= m * A[0][2]; A[5][3] -= m * A[0][3]; A[5][4] -= m * A[0][4]; A[5][5] -= m * A[0][5]; b[5] -= m * b[0]; }
+  }
+  { const double p = A[1][1]; if (!(std::fabs(p) > 1e-30)) return false; ip[1] = 1.0 / p;
+    { const double m = A[2][1] * ip[1]; A[2][2] -= m * A[1][2]; A[2][3] -= m * A[1][3]; A[2][4] -= m * A[1][4]; A[2][5] -= m * A[1][5]; b[2] -= m * b[1]; }
+    { const double m = A[3][1] * ip[1]; A[3][2] -= m * A[1][2]; A[3][3] -= m * A[1][3]; A[3][4] -= m * A[1][4]; A[3][5] -= m * A[1][5]; b[3] -= m * b[1]; }
+    { const double m = A[4][1] * ip[1]; A[4][2] -= m * A[1][2]; A[4][3] -= m * A[1][3]; A[4][4] -= m * A[1][4]; A[4][5] -= m * A[1][5]; b[4] -= m * b[1]; }
+    { const double m = A[5][1] * ip[1]; A[5][2] -= m * A[1][2]; A[5][3] -= m * A[1][3]; A[5][4] -= m * A[1][4]; A[5][5] -= m * A[1][5]; b[5] -= m * b[1]; }
+  }
+  { const double p = A[2][2]; if (!(std::fabs(p) > 1e-30)) return false; ip[2] = 1.0 / p;
+    { const double m = A[3][2] * ip[2]; A[3][3] -= m * A[2][3]; A[3][4] -= m * A[2][4]; A[3][5] -= m * A[2][5]; b[3] -= m * b[2]; }
+    { const double m = A[4][2] * ip[2]; A[4][3] -= m * A[2][3]; A[4][4] -= m * A[2][4]; A[4][5] -= m * A[2][5]; b[4] -= m * b[2]; }
+    { const double m = A[5][2] * ip[2]; A[5][3] -= m * A[2][3]; A[5][4] -= m * A[2][4]; A[5][5] -= m * A[2][5]; b[5] -= m * b[2]; }
+  }
+  { const double p = A[3][3]; if (!(std::fabs(p) > 1e-30)) return false; ip[3] = 1.0 / p;
+    { const double m = A[4][3] * ip[3]; A[4][4] -= m * A[3][4]; A[4][5] -= m * A[3][5]; b[4] -= m * b[3]; }
+    { const double m = A[5][3] * ip[3]; A[5][4] -= m * A[3][4]; A[5][5] -= m * A[3][5]; b[5] -= m * b[3]; }
+  }
+  { const double p = A[4][4]; if (!(std::fabs(p) > 1e-30)) return false; ip[4] = 1.0 / p;
+    { const double m = A[5][4] * ip[4]; A[5][5] -= m * A[4][5]; b[5] -= m * b[4]; }
+  }
+  { const double p = A[5][5]; if (!(std::fabs(p) > 1e-30)) return false; ip[5] = 1.0 / p;
+  }
+  b[5] = (b[5]) * ip[5];
+  b[4] = (b[4] - A[4][5] * b[5]) * ip[4];
+  b[3] = (b[3] - A[3][4] * b[4] - A[3][5] * b[5]) * ip[3];
+  b[2] = (b[2] - A[2][3] * b[3] - A[2][4] * b[4] - A[2][5] * b[5]) * ip[2];
+  b[1] = (b[1] - A[1][2] * b[2] - A[1][3] * b[3] - A[1][4] * b[4] - A[1][5] * b[5]) * ip[1];
+  b[0] = (b[0] - A[0][1] * b[1] - A[0][2] * b[2] - A[0][3] * b[3] - A[0][4] * b[4] - A[0][5] * b[5]) * ip[0];
+  return true;
+}
+};  // ad1
 // pots: resistor between rows a and b (-1 ground), full-scale ohms, fraction at the dump (R = max(rmax * fraction, 1 Ohm))
 struct pots { static constexpr double kRvr2Max = 2e6, kRvr2Dump = 0.5, kVr4Max = 20e3, kVr4Dump = 0.5, kVr6Max = 100e3, kVr6Dump = 0.16; };
 } }  // namespace dgg::cymodel
