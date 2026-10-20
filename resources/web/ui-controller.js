@@ -1070,7 +1070,7 @@ function syncKnobsToBlock(block) {
 
   ['kick', 'snare', 'hihat', 'ride', 'toms', 'cymbals'].forEach(g => {
     const modeEl = document.getElementById(g + 'PatternMode');
-    if (modeEl) paintPatternModeIcon(modeEl, getPatternMode(block, g));
+    if (modeEl) paintPatternModeIcon(modeEl, getPatternModeName(block, g));
   });
   refreshMainPatternModeIcon();
 
@@ -1873,80 +1873,198 @@ function paintPatternModeIcon(el, mode) {
   el.classList.toggle('mode-on', mode !== 'classic' && !!PATTERN_MODE_INFO[mode]);
   el.dataset.tooltip = `Pattern mode: ${info.label}\n${info.tip} Click to change. Density stays exact in every mode.`;
 }
-let patternModeMenuEl = null;
-function closePatternModeMenu() {
-  if (patternModeMenuEl) { patternModeMenuEl.remove(); patternModeMenuEl = null; }
+// The pattern mode panel stays open while you pick modes and edit a formula. It closes with Esc, a click outside or a second click on its letter.
+let patternModePanel = null;
+function closePatternModePanel() {
+  if (!patternModePanel) return;
+  document.removeEventListener('keydown', patternModePanel.onKey, true);
+  document.removeEventListener('mousedown', patternModePanel.onDown, true);
+  patternModePanel.el.remove();
+  patternModePanel = null;
 }
-function openPatternModeMenu(anchor, current, onPick) {
-  closePatternModeMenu();
-  const menu = document.createElement('div');
-  menu.className = 'add-block-menu pattern-mode-menu';
+// opts: anchor (the letter button), title, block, getMode(), getFormula(), onApply(mode, formula)
+function openPatternModePanel(opts) {
+  if (patternModePanel && patternModePanel.anchor === opts.anchor) { closePatternModePanel(); return; }
+  closePatternModePanel();
+  let mode = opts.getMode();
+  let formula = opts.getFormula();
+  const el = document.createElement('div');
+  el.className = 'pattern-mode-panel';
+
+  const head = document.createElement('div');
+  head.className = 'pattern-mode-head';
+  const title = document.createElement('span');
+  title.textContent = 'Pattern mode: ' + opts.title;
+  head.appendChild(title);
+  el.appendChild(head);
+
+  const list = document.createElement('div');
+  list.className = 'pattern-mode-list';
+  el.appendChild(list);
+
+  const formulaBox = document.createElement('div');
+  formulaBox.className = 'pattern-mode-formula';
+  const formulaLabel = document.createElement('div');
+  formulaLabel.textContent = 'Formula';
+  const presetSelect = document.createElement('select');
+  presetSelect.className = 'pattern-mode-preset';
+  const presetHint = document.createElement('option');
+  presetHint.value = '';
+  presetHint.textContent = 'Insert preset...';
+  presetSelect.appendChild(presetHint);
+  PATTERN_FORMULA_PRESETS.forEach((p, k) => {
+    const o = document.createElement('option');
+    o.value = String(k);
+    o.textContent = p.name;
+    presetSelect.appendChild(o);
+  });
+  wireCustomSelect(presetSelect);   // the native list would not scale with the UI
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'pattern-mode-input';
+  input.spellcheck = false;
+  input.maxLength = FORMULA_MAX_LENGTH;
+  input.value = formula;
+  const status = document.createElement('div');
+  status.className = 'pattern-mode-status';
+  const help = document.createElement('div');
+  help.className = 'pattern-mode-help';
+  help.textContent = 'Every step gets a score; the highest scores get the hits. Names: i (step), n (steps), hits, s1 s2 s3 (seed, 0 to 1), r (random per step, 0 to 1), pi, bar and bars (bar in the phrase, phrase length). Add "; count" for the number of hits per bar, e.g. ; hits*(bar+1)/bars builds up over the phrase. Functions: sin cos abs floor frac sqrt min max mod, mandel(x,y), julia(zx,zy,cx,cy), logi(r,x,k). Operators: + - * / % ^';
+  formulaBox.appendChild(formulaLabel);
+  formulaBox.appendChild(presetSelect);
+  formulaBox.appendChild(input);
+  formulaBox.appendChild(status);
+  formulaBox.appendChild(help);
+  el.appendChild(formulaBox);
+
+  const optButtons = {};
+  const refresh = () => {
+    PATTERN_MODES.forEach(m => optButtons[m].classList.toggle('active', m === mode));
+    formulaBox.style.display = mode === 'formula' ? '' : 'none';
+    const err = compileFormula(input.value).error;
+    status.textContent = err || 'Formula OK';
+    status.classList.toggle('error', !!err);
+  };
+  const apply = () => {
+    if (findBlock(opts.block.id) !== opts.block) { closePatternModePanel(); return; }   // undo or redo replaced the block
+    opts.onApply(mode, formula);
+  };
   PATTERN_MODES.forEach(m => {
     const info = PATTERN_MODE_INFO[m];
-    const item = document.createElement('button');
-    item.className = 'add-block-menu-item';
-    item.textContent = `${m === current ? '✓' : ' '} ${info.letter}  ${info.label}`;
-    item.dataset.tooltip = `${info.label}\n${info.tip}`;
-    item.addEventListener('click', (e) => { e.stopPropagation(); closePatternModeMenu(); if (m !== current) onPick(m); });
-    menu.appendChild(item);
+    const b = document.createElement('button');
+    b.className = 'pattern-mode-opt';
+    b.textContent = info.letter + '  ' + info.label;
+    b.dataset.tooltip = info.label + '\n' + info.tip;
+    b.addEventListener('click', () => {
+      if (m === mode) return;
+      mode = m;
+      if (m === 'formula' && !formula.trim()) { formula = DEFAULT_PATTERN_FORMULA; input.value = formula; }
+      refresh();
+      apply();
+      if (m === 'formula') input.focus();
+    });
+    optButtons[m] = b;
+    list.appendChild(b);
   });
-  const rect = anchor.getBoundingClientRect();
-  menu.style.left = rect.left + 'px';
-  menu.style.top = (rect.bottom + 2) + 'px';
-  document.body.appendChild(menu);
-  patternModeMenuEl = menu;
-  const dismiss = (e) => {
-    if (menu.contains(e.target)) return;
-    closePatternModeMenu();
-    document.removeEventListener('mousedown', dismiss, true);
+  presetSelect.addEventListener('change', () => {
+    const preset = PATTERN_FORMULA_PRESETS[+presetSelect.value];
+    presetSelect.value = '';
+    if (!preset) return;
+    input.value = preset.formula;
+    formula = preset.formula;
+    refresh();
+    apply();
+  });
+  input.addEventListener('input', refresh);
+  input.addEventListener('change', () => { formula = input.value; refresh(); apply(); });
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') input.blur();
+  });
+  refresh();
+
+  const onKey = (e) => { if (e.key === 'Escape') closePatternModePanel(); };
+  document.addEventListener('keydown', onKey, true);
+  // A click outside closes the panel; the click itself still reaches its target. The letter button toggles the panel on its own.
+  const onDown = (e) => {
+    if (el.contains(e.target) || opts.anchor.contains(e.target) || e.target.closest('.custom-select-list')) return;
+    closePatternModePanel();
   };
-  document.addEventListener('mousedown', dismiss, true);
+  document.addEventListener('mousedown', onDown, true);
+  document.body.appendChild(el);
+  const rect = opts.anchor.getBoundingClientRect();
+  const scale = currentUIScale();
+  const w = el.offsetWidth * scale, h = el.offsetHeight * scale;   // the panel scales with the UI (transform), so clamp its scaled size
+  el.style.left = Math.max(4, Math.min(rect.left, window.innerWidth - w - 4)) + 'px';
+  el.style.top = Math.max(4, Math.min(rect.bottom + 2, window.innerHeight - h - 4)) + 'px';
+  patternModePanel = { el, anchor: opts.anchor, blockId: opts.block.id, onKey, onDown };
 }
-// A letter button that opens the mode popup. The caller applies the mode in onPick (inside its own undo step).
-function makePatternModeIcon(getMode, onPick) {
+function paintPatternModeIcon(el, mode) {
+  const info = PATTERN_MODE_INFO[mode] || PATTERN_MODE_INFO.classic;
+  el.textContent = info.letter;
+  el.classList.toggle('mode-on', mode !== 'classic' && !!PATTERN_MODE_INFO[mode]);
+  el.dataset.tooltip = 'Pattern mode: ' + info.label + '\n' + info.tip + ' Click to change. Density stays exact in every mode.';
+}
+// A letter button that opens the mode panel. cfg: title, block, getMode(), getFormula(), onApply(mode, formula) which runs inside the caller's own undo step.
+function makePatternModeIcon(cfg) {
   const el = document.createElement('span');
   el.className = 'group-lock-icon pattern-mode-icon';
   el.style.cursor = 'pointer';
-  paintPatternModeIcon(el, getMode());
+  paintPatternModeIcon(el, cfg.getMode());
   el.addEventListener('click', (e) => {
     e.stopPropagation();
-    openPatternModeMenu(el, getMode(), (m) => { paintPatternModeIcon(el, m); onPick(m); });
+    openPatternModePanel({
+      anchor: el, title: cfg.title, block: cfg.block, getMode: cfg.getMode, getFormula: cfg.getFormula,
+      onApply: (m, f) => { paintPatternModeIcon(el, m); cfg.onApply(m, f); },
+    });
   });
   return el;
 }
 // Static groups: keeps seed and knobs, regenerates with the new distribution (a locked group only stores the mode).
+const PATTERN_GROUP_TITLES = { kick: 'Kick', snare: 'Snare', hihat: 'Hi-Hat', ride: 'Ride', toms: 'Toms', cymbals: 'Cymbals' };
 document.querySelectorAll('.pattern-mode-icon[data-group]').forEach(icon => icon.addEventListener('click', (e) => {
   e.stopPropagation();
   const groupId = icon.dataset.group;
   const block = findBlock(activeBlockId);
   if (!block) return;
-  openPatternModeMenu(icon, getPatternMode(block, groupId), async (m) => {
-    paintPatternModeIcon(icon, m);
-    const locked = block.lockedGroups && block.lockedGroups[groupId];
-    await withBlockDataUndoAsync(`Pattern mode ${PATTERN_MODE_INFO[m].label} (${blockDisplayName(block)})`, block, async () => {
-      setPatternMode(block, groupId, m);
-      if (!locked) await REROLL_FNS[groupId]({ suppressUndo: true });
-    });
-    refreshMainPatternModeIcon();
+  openPatternModePanel({
+    anchor: icon, title: PATTERN_GROUP_TITLES[groupId], block,
+    getMode: () => getPatternModeName(block, groupId),
+    getFormula: () => getPatternFormula(block, groupId),
+    onApply: async (m, f) => {
+      paintPatternModeIcon(icon, m);
+      const locked = block.lockedGroups && block.lockedGroups[groupId];
+      await withBlockDataUndoAsync('Pattern mode ' + PATTERN_MODE_INFO[m].label + ' (' + blockDisplayName(block) + ')', block, async () => {
+        setPatternSpec(block, groupId, m, f);
+        if (!locked) await REROLL_FNS[groupId]({ suppressUndo: true });
+      });
+    },
   });
 }));
-// Main letter: one mode for all six groups of the open block; Reroll All Blocks uses it as the method for every block.
+// Main letter: the method the Main dice and Reroll All Blocks reroll with. Picking it only stores the method.
 function refreshMainPatternModeIcon() {
+  if (patternModePanel && patternModePanel.blockId !== activeBlockId) closePatternModePanel();
   const el = document.getElementById('mainPatternMode');
   if (!el) return;
   const block = findBlock(activeBlockId);
   el.style.display = (!block || isFillGeneratedBlock(block)) ? 'none' : '';
-  if (block) paintPatternModeIcon(el, getMainPatternMethod(block) || 'classic');
+  if (block && !isFillGeneratedBlock(block)) paintPatternModeIcon(el, getMainPatternMethod(block).mode);
 }
 document.getElementById('mainPatternMode').addEventListener('click', (e) => {
   e.stopPropagation();
+  const icon = e.currentTarget;
   const block = findBlock(activeBlockId);
   if (!block || isFillGeneratedBlock(block)) return;
-  openPatternModeMenu(e.currentTarget, getMainPatternMethod(block) || 'classic', (m) => {
-    withBlockDataUndo(`Reroll method ${PATTERN_MODE_INFO[m].label} (${blockDisplayName(block)})`, block, () => {
-      setPatternMode(block, 'main', m);
-    });
-    refreshMainPatternModeIcon();
+  openPatternModePanel({
+    anchor: icon, title: 'Main (reroll method)', block,
+    getMode: () => getPatternModeName(block, 'main'),
+    getFormula: () => getPatternFormula(block, 'main'),
+    onApply: (m, f) => {
+      paintPatternModeIcon(icon, m);
+      withBlockDataUndo('Reroll method ' + PATTERN_MODE_INFO[m].label + ' (' + blockDisplayName(block) + ')', block, () => {
+        setPatternSpec(block, 'main', m, f);
+      });
+    },
   });
 });
 // Custom cluster: same gesture-undo wiring as the engine groups, plus its own reroll dice.

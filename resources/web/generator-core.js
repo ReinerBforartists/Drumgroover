@@ -726,22 +726,51 @@ const PATTERN_MODE_INFO = {
   sine:     { letter: 'S', label: 'Sine',     tip: 'Cross-rhythms from three sine waves.' },
   bit:      { letter: 'B', label: 'Bit',      tip: 'Driving, self-similar bit patterns.' },
   logistic: { letter: 'L', label: 'Logistic', tip: 'Chaotic but repeatable.' },
+  formula:  { letter: 'ƒ', label: 'Formula',  tip: 'Your own expression scores every step.' },
 };
+const DEFAULT_PATTERN_FORMULA = 'sin(i*pi*3/n)+r*0.5';
+// Formulas the panel can insert (see compileFormula in rhythm-logic.js for the language).
+const PATTERN_FORMULA_PRESETS = [
+  { name: 'Klaus Schulze (builds up)', formula: '0-(i*5)%n ; max(1,hits*(bar+1)/bars)' },
+  { name: 'Fade out', formula: '0-(i*5)%n ; hits*(bars-bar)/bars' },
+  { name: 'Euclid (even spacing)', formula: '0-(i*hits)%n' },
+  { name: 'Beat grid first', formula: '0-i%4+r*0.5' },
+  { name: 'Offbeats first', formula: '0-mod(i+2,4)+r*0.5' },
+  { name: 'Random', formula: 'r' },
+  { name: '3 against 4', formula: '0-min(i%3,i%4)+r*0.3' },
+  { name: 'Sine cross-rhythm', formula: 'sin(i*pi*6/n)+sin(i*pi*10/n)+r*0.2' },
+  { name: 'Rising density', formula: 'i/n+r*0.6' },
+  { name: 'Falling density', formula: '1-i/n+r*0.6' },
+  { name: 'Center cluster', formula: '0-abs(i-n/2)+r*3' },
+  { name: 'Logistic chaos', formula: 'logi(3.7+s1*0.29,0.1+s2*0.8,i+4)' },
+  { name: 'Mandelbrot line', formula: 'mandel(-2+i/n*2.6,s1*1.2-0.6)' },
+  { name: 'Julia line', formula: 'julia(i/n*3-1.5,s1*2-1,-0.8,0.156+s2*0.1)' },
+];
+
+// Per-block, per-group pattern mode (see PATTERN_MODES in rhythm-logic.js) and formula text. Absent means classic.
+function getPatternModeName(block, key) {
+  const mode = block.patternModes && block.patternModes[key];
+  return PATTERN_MODES.includes(mode) ? mode : 'classic';
+}
+function getPatternFormula(block, key) {
+  const text = block.patternFormulas && block.patternFormulas[key];
+  return typeof text === 'string' ? text : '';
+}
+// The mode as the generators take it: a mode name, or 'formula:<expression>'.
+function getPatternMode(block, key) {
+  const name = getPatternModeName(block, key);
+  return name === 'formula' ? 'formula:' + getPatternFormula(block, key) : name;
+}
+function setPatternSpec(block, key, mode, formula) {
+  block.patternModes = { ...(block.patternModes || {}), [key]: mode };
+  if (formula !== undefined) block.patternFormulas = { ...(block.patternFormulas || {}), [key]: formula };
+}
+function setPatternMode(block, key, mode) { setPatternSpec(block, key, mode); }
+
 // The method chosen at Main (patternModes.main, default classic). The Main dice and Reroll All Blocks reroll with it.
 function getMainPatternMethod(block) {
   if (!block || isFillGeneratedBlock(block)) return null;
-  const mode = block.patternModes && block.patternModes.main;
-  return PATTERN_MODES.includes(mode) ? mode : 'classic';
-}
-
-function setPatternMode(block, key, mode) {
-  block.patternModes = { ...(block.patternModes || {}), [key]: mode };
-}
-
-// Per-block, per-group pattern mode (see PATTERN_MODES in rhythm-logic.js). Absent means classic.
-function getPatternMode(block, groupId) {
-  const mode = block.patternModes && block.patternModes[groupId];
-  return PATTERN_MODES.includes(mode) ? mode : 'classic';
+  return { mode: getPatternModeName(block, 'main'), formula: getPatternFormula(block, 'main') };
 }
 
 // =========================================
@@ -869,7 +898,7 @@ function applyKickGroupToBlock(block, g, ov) {
   const notes = [];
   for (let barIdx = 0; barIdx < phrase; barIdx++) {
     const barSeed = phrase > 1 ? groupSeed + barIdx * 9973 : groupSeed;
-    const beats = generateAnchoredPattern(g.numerator, subdivision, Math.round((densityPct/100)*g.numerator*subdivision), feel, barSeed, anchorBeats, getPatternMode(block, 'kick')).map(x => x.beat);
+    const beats = generateAnchoredPattern(g.numerator, subdivision, Math.round((densityPct/100)*g.numerator*subdivision), feel, barSeed, anchorBeats, withBar(getPatternMode(block, 'kick'), barIdx, phrase)).map(x => x.beat);
     beats.concat(tripletBeats).forEach(b => notes.push({ beat: b + barIdx * g.numerator, vel: 110 }));
   }
   block.data['kick'] = notes;
@@ -992,7 +1021,7 @@ function applyCustomGroupToBlock(block, g, trackId, ov) {
   const notes = [];
   for (let barIdx = 0; barIdx < phrase; barIdx++) {
     const barSeed = phrase > 1 ? groupSeed + barIdx * 9973 : groupSeed;
-    generateAnchoredPattern(g.numerator, subdivision, hits, feel, barSeed, [], getPatternMode(block, groupId))
+    generateAnchoredPattern(g.numerator, subdivision, hits, feel, barSeed, [], withBar(getPatternMode(block, groupId), barIdx, phrase))
       .forEach(x => notes.push({ beat: x.beat + barIdx * g.numerator, vel: 110 }));
   }
   block.data[trackId] = notes.sort((a,b) => a.beat - b.beat);
@@ -1045,7 +1074,8 @@ function applySnareGroupToBlock(block, g, ov) {
   const notes = [];
   for (let barIdx = 0; barIdx < phrase; barIdx++) {
     const barSeed = phrase > 1 ? seed + barIdx * 9973 : seed;
-    const anchoredResult = generateAnchoredPattern(g.numerator, subdivision, mainHits, feel, barSeed, anchorBeats, mode);
+    const barMode = withBar(mode, barIdx, phrase);
+    const anchoredResult = generateAnchoredPattern(g.numerator, subdivision, mainHits, feel, barSeed, anchorBeats, barMode);
     const beats = anchoredResult.map(x => x.beat);
 
     let ghostBeats;
@@ -1054,7 +1084,7 @@ function applySnareGroupToBlock(block, g, ov) {
       const emptySteps = [];
       for (let i = 0; i < totalSteps; i++) if (!occupiedSteps.has(i)) emptySteps.push(i);
       const ghostHits = Math.round((ghostDensityPct/100) * emptySteps.length);
-      const ghostMask = patternMask(mode, ghostHits, emptySteps, barSeed+1, subdivision, totalSteps);
+      const ghostMask = patternMask(barMode, ghostHits, emptySteps, barSeed+1, subdivision, totalSteps);
       ghostBeats = [];
       ghostMask.forEach((on, i) => {
         if (!on) return;
@@ -1064,7 +1094,7 @@ function applySnareGroupToBlock(block, g, ov) {
         ghostBeats.push(beatIdx + applyFeelWarp(fracWithinBeat, feel));
       });
     } else {
-      ghostBeats = generateSnareGhostBeats(g.numerator, subdivision, mainHits, ghostDensityPct, feel, barSeed, mode);
+      ghostBeats = generateSnareGhostBeats(g.numerator, subdivision, mainHits, ghostDensityPct, feel, barSeed, barMode);
     }
 
     beats.forEach(b => notes.push({ beat: b + barIdx * g.numerator, vel: 110 }));
@@ -1112,7 +1142,7 @@ function applySnareGhostLayer(block, g, ov) {
     const emptySteps = [];
     for (let i = 0; i < totalSteps; i++) if (!occupiedSteps.has(i)) emptySteps.push(i);
     const ghostHits = Math.round((ghostDensityPct/100) * emptySteps.length);
-    const ghostMask = patternMask(mode, ghostHits, emptySteps, barSeed+1, subdivision, totalSteps);
+    const ghostMask = patternMask(withBar(mode, barIdx, phrase), ghostHits, emptySteps, barSeed+1, subdivision, totalSteps);
     ghostMask.forEach((on, i) => {
       if (!on) return;
       const step = emptySteps[i];
@@ -1141,7 +1171,7 @@ function applyPulseGroupToBlock(block, g, groupId, primaryTrack, tiers, mainVel,
   const notes = [];
   for (let barIdx = 0; barIdx < phrase; barIdx++) {
     const barSeed = phrase > 1 ? seed + barIdx * 9973 : seed;
-    const beats = generateGroupPattern(g.numerator, subdivision, Math.round((densityPct/100)*g.numerator*subdivision), feel, barSeed, getPatternMode(block, groupId));
+    const beats = generateGroupPattern(g.numerator, subdivision, Math.round((densityPct/100)*g.numerator*subdivision), feel, barSeed, withBar(getPatternMode(block, groupId), barIdx, phrase));
     beats.forEach(b => notes.push({ beat: b + barIdx * g.numerator, vel: mainVel }));
   }
   block.data[primaryTrack] = notes;
@@ -1732,7 +1762,7 @@ function rerollActiveBlock() {
     unlockedGroups.forEach(gid => {
       block.seeds = block.seeds || {};
       block.seeds[gid] = Math.floor(Math.random()*1e9);
-      setPatternMode(block, gid, method);
+      setPatternSpec(block, gid, method.mode, method.formula);
       REROLL_FNS[gid]({ suppressUndo: true, deferAudioSync: true, skipRender: true });
     });
   });
@@ -1749,7 +1779,7 @@ async function rerollAllBlocksGlobal() {
   if (shouldShowConfirmDialogs()) {
     const res = await showModal({
       title: 'Reroll every block?',
-      message: `This rerolls all unlocked instrument groups across ${targets.length} block${targets.length>1?'s':''} project-wide (${targets.map(blockDisplayName).join(', ')})${method ? ` with the ${PATTERN_MODE_INFO[method].label} pattern mode` : ''}. Locked groups, and any Break/Fill blocks, are left untouched.`,
+      message: `This rerolls all unlocked instrument groups across ${targets.length} block${targets.length>1?'s':''} project-wide (${targets.map(blockDisplayName).join(', ')})${method ? ` with the ${PATTERN_MODE_INFO[method.mode].label} pattern mode` : ''}. Locked groups, and any Break/Fill blocks, are left untouched.`,
       confirmLabel: 'Reroll all',
       danger: true,
       checkbox: { label: "Don't ask again (re-enable in Note Editor Options → Show confirmation dialogs)" }
@@ -1766,7 +1796,7 @@ async function rerollAllBlocksGlobal() {
     ALL_ENGINE_GROUPS.filter(gid => !(block.lockedGroups && block.lockedGroups[gid])).forEach(gid => {
       block.seeds = block.seeds || {};
       block.seeds[gid] = Math.floor(Math.random()*1e9);
-      if (method) setPatternMode(block, gid, method);
+      if (method) setPatternSpec(block, gid, method.mode, method.formula);
       REROLL_FNS[gid]({ suppressUndo: true, deferAudioSync: true, skipRender: true });
     });
   });

@@ -55,6 +55,7 @@ struct Block {
 
   // Pattern mode per engine group; absent means Classic.
   std::unordered_map<std::string, PatternMode> patternModes;
+  std::unordered_map<std::string, std::string> patternFormulas; // expression for groups in Formula mode
 
   // Per‑sub‑group whitelist of enabled articulations. Sub‑groups are the
   // individual drum instruments (e.g. rackTom1, cymbal3). If missing or

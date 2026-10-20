@@ -41,9 +41,17 @@ uint32_t barSeedFor(uint32_t groupSeedVal, int phrase, int barIdx) {
   return phrase > 1 ? groupSeedVal + static_cast<uint32_t>(barIdx) * 9973u : groupSeedVal;
 }
 
-PatternMode patternModeFor(const Block& block, const std::string& groupId) {
+PatternSpec withBar(PatternSpec spec, int bar, int bars) {
+  spec.bar = bar;
+  spec.bars = bars;
+  return spec;
+}
+
+PatternSpec patternModeFor(const Block& block, const std::string& groupId) {
   auto it = block.patternModes.find(groupId);
-  return it != block.patternModes.end() ? it->second : PatternMode::Classic;
+  if (it == block.patternModes.end()) return PatternSpec();
+  auto fit = block.patternFormulas.find(groupId);
+  return PatternSpec(it->second, fit != block.patternFormulas.end() ? fit->second : std::string());
 }
 }  // namespace
 
@@ -148,7 +156,7 @@ BeatDistribution generateFixedBreakHandPattern(double breakBeats, double stepsPe
 
 BeatDistribution generateBreakFill(double breakBeats, const std::vector<std::string>& instruments,
                                     double densityPct, uint32_t seed, double stepsPerBeat, Feel feel,
-                                    double beatOffset, PatternMode mode) {
+                                    double beatOffset, const PatternSpec& mode) {
   const int totalSteps = std::max(2, static_cast<int>(std::round(breakBeats * stepsPerBeat)));
 
   std::vector<std::string> voicePool;
@@ -706,7 +714,7 @@ void applyKickGroupToBlock(Block& block, const Grid& grid, double densityPct, do
   for (int barIdx = 0; barIdx < phrase; barIdx++) {
     const uint32_t barSeed = barSeedFor(seed, phrase, barIdx);
     auto beats = generateAnchoredPattern(grid.numerator, subdivision, hits, feel, barSeed, anchorBeats,
-                                         patternModeFor(block, "kick"));
+                                         withBar(patternModeFor(block, "kick"), barIdx, phrase));
     // Main beats first, then triplet beats.
     for (const auto& ab : beats) notes.push_back({ab.beat + barIdx * grid.numerator, 110});
     for (double b : tripletBeats) notes.push_back({b + barIdx * grid.numerator, 110});
@@ -729,7 +737,7 @@ void applyCustomGroupToBlock(Block& block, const Grid& grid, const std::string& 
   for (int barIdx = 0; barIdx < phrase; barIdx++) {
     const uint32_t barSeed = barSeedFor(seed, phrase, barIdx);
     auto beats = generateAnchoredPattern(grid.numerator, subdivision, hits, feel, barSeed, {},
-                                         patternModeFor(block, "custom:" + trackId));
+                                         withBar(patternModeFor(block, "custom:" + trackId), barIdx, phrase));
     for (const auto& ab : beats) notes.push_back({ab.beat + barIdx * grid.numerator, 110});
   }
   std::sort(notes.begin(), notes.end(), [](const Note& a, const Note& b) { return a.beat < b.beat; });
@@ -749,11 +757,12 @@ void applySnareGroupToBlock(Block& block, const Grid& grid, double densityPct, d
   const int totalSteps = static_cast<int>(std::round(grid.numerator * subdivision));
   const int mainHits = static_cast<int>(std::round((densityPct / 100.0) * totalSteps));
 
-  const PatternMode mode = patternModeFor(block, "snare");
+  const PatternSpec mode = patternModeFor(block, "snare");
   std::vector<Note> notes;
   for (int barIdx = 0; barIdx < phrase; barIdx++) {
     const uint32_t barSeed = barSeedFor(seed, phrase, barIdx);
-    auto anchoredResult = generateAnchoredPattern(grid.numerator, subdivision, mainHits, feel, barSeed, anchorBeats, mode);
+    const PatternSpec barMode = withBar(mode, barIdx, phrase);
+    auto anchoredResult = generateAnchoredPattern(grid.numerator, subdivision, mainHits, feel, barSeed, anchorBeats, barMode);
 
     std::vector<double> ghostBeats;
     if (!anchorBeats.empty()) {
@@ -767,7 +776,7 @@ void applySnareGroupToBlock(Block& block, const Grid& grid, double densityPct, d
       std::vector<int> emptySteps;
       for (int i = 0; i < totalSteps; i++) if (!occupied[i]) emptySteps.push_back(i);
       const int ghostHits = static_cast<int>(std::round((ghostDensityPct / 100.0) * emptySteps.size()));
-      auto ghostMask = patternMask(mode, ghostHits, emptySteps, barSeed + 1, subdivision, totalSteps);
+      auto ghostMask = patternMask(barMode, ghostHits, emptySteps, barSeed + 1, subdivision, totalSteps);
       for (int i = 0; i < static_cast<int>(ghostMask.size()); i++) {
         if (!ghostMask[i]) continue;
         const int step = emptySteps[i];
@@ -777,7 +786,7 @@ void applySnareGroupToBlock(Block& block, const Grid& grid, double densityPct, d
       }
     } else {
       // No anchors: use generateSnareGhostBeats.
-      ghostBeats = generateSnareGhostBeats(grid.numerator, subdivision, mainHits, ghostDensityPct, feel, barSeed, mode);
+      ghostBeats = generateSnareGhostBeats(grid.numerator, subdivision, mainHits, ghostDensityPct, feel, barSeed, barMode);
     }
 
     for (const auto& ab : anchoredResult) notes.push_back({ab.beat + barIdx * grid.numerator, 110});
@@ -798,7 +807,7 @@ void applySnareGhostLayer(Block& block, const Grid& grid, double ghostDensityPct
   const int totalSteps = static_cast<int>(std::round(grid.numerator * subdivision));
   const uint32_t seed = groupSeed(block, "snare");
   const int num = grid.numerator;
-  const PatternMode mode = patternModeFor(block, "snare");
+  const PatternSpec mode = patternModeFor(block, "snare");
 
   std::vector<Note> notes;
   for (int barIdx = 0; barIdx < phrase; barIdx++) {
@@ -828,7 +837,7 @@ void applySnareGhostLayer(Block& block, const Grid& grid, double ghostDensityPct
     for (int i = 0; i < totalSteps; i++) if (!occupied[i]) emptySteps.push_back(i);
 
     const int ghostHits = static_cast<int>(std::round((ghostDensityPct / 100.0) * emptySteps.size()));
-    auto ghostMask = patternMask(mode, ghostHits, emptySteps, barSeed + 1, subdivision, totalSteps);
+    auto ghostMask = patternMask(withBar(mode, barIdx, phrase), ghostHits, emptySteps, barSeed + 1, subdivision, totalSteps);
 
     for (size_t i = 0; i < ghostMask.size(); i++) {
       if (!ghostMask[i]) continue;
@@ -866,7 +875,8 @@ void applyPulseGroupToBlock(Block& block, const Grid& grid, const std::string& g
   for (int barIdx = 0; barIdx < phrase; barIdx++) {
     const uint32_t barSeed = barSeedFor(seed, phrase, barIdx);
     // Pulse groups have no anchors.
-    auto beats = generateGroupPattern(grid.numerator, subdivision, hits, feel, barSeed, patternModeFor(block, groupId));
+    auto beats = generateGroupPattern(grid.numerator, subdivision, hits, feel, barSeed,
+                                    withBar(patternModeFor(block, groupId), barIdx, phrase));
     for (double b : beats) notes.push_back({b + barIdx * grid.numerator, mainVel});
   }
   block.data[primaryTrack] = notes;

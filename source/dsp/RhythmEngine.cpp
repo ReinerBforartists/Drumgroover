@@ -3,8 +3,14 @@
 #include "RhythmEngine.h"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cmath>
+
+// The formula iterations (mandel, julia, logi) must round exactly like the JavaScript version: no fused multiply-add.
+#ifdef _MSC_VER
+#pragma fp_contract(off)
+#endif
 
 namespace dgg {
 
@@ -181,6 +187,248 @@ std::vector<int64_t> scoreLogistic(const std::vector<int>& positions, uint32_t s
   return out;
 }
 
+// ---- Formula mode (port of compileFormula / evalFormula in rhythm-logic.js; the grammar is documented there) ----
+enum class FOpType { Num, Var, Neg, Op, Fn };
+struct FOp {
+  FOpType type;
+  double  value = 0;  // Num
+  int     id    = 0;  // Var: index into the variable array; Fn: function id
+  char    op    = 0;  // Op
+};
+enum FFunc { kFnSin, kFnCos, kFnAbs, kFnFloor, kFnFrac, kFnSqrt, kFnMin, kFnMax, kFnMod, kFnMandel, kFnJulia, kFnLogi };
+int formulaArity(int fn) {
+  switch (fn) {
+    case kFnMin: case kFnMax: case kFnMod: case kFnMandel: return 2;
+    case kFnLogi: return 3;
+    case kFnJulia: return 4;
+    default: return 1;
+  }
+}
+
+struct FormulaParser {
+  const std::string& src;
+  size_t pos = 0;
+  std::vector<FOp> ops;
+  bool failed = false;
+
+  explicit FormulaParser(const std::string& s) : src(s) {}
+
+  static bool isDigit(char c) { return c >= '0' && c <= '9'; }
+  static bool isAlpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
+  char peek() {
+    while (pos < src.size() && src[pos] == ' ') pos++;
+    return pos < src.size() ? src[pos] : '\0';
+  }
+  void pushOp(char c) { FOp o{FOpType::Op}; o.op = c; ops.push_back(o); }
+
+  void parseExpr() {
+    parseTerm();
+    for (char c = peek(); !failed && (c == '+' || c == '-'); c = peek()) { pos++; parseTerm(); pushOp(c); }
+  }
+  void parseTerm() {
+    parseUnary();
+    for (char c = peek(); !failed && (c == '*' || c == '/' || c == '%'); c = peek()) { pos++; parseUnary(); pushOp(c); }
+  }
+  void parseUnary() {
+    if (peek() == '-') { pos++; parseUnary(); ops.push_back(FOp{FOpType::Neg}); }
+    else parsePower();
+  }
+  void parsePower() {
+    parseAtom();
+    if (!failed && peek() == '^') { pos++; parseUnary(); pushOp('^'); }
+  }
+  void parseAtom() {
+    if (failed) return;
+    const char c = peek();
+    if (c == '(') {
+      pos++; parseExpr();
+      if (failed) return;
+      if (peek() != ')') { failed = true; return; }
+      pos++;
+    } else if (isDigit(c) || c == '.') {
+      const size_t start = pos;
+      while (pos < src.size() && isDigit(src[pos])) pos++;
+      if (pos < src.size() && src[pos] == '.') { pos++; while (pos < src.size() && isDigit(src[pos])) pos++; }
+      const std::string numText = src.substr(start, pos - start);
+      if (numText == ".") { failed = true; return; }
+      FOp o{FOpType::Num};
+      std::from_chars(numText.data(), numText.data() + numText.size(), o.value);
+      ops.push_back(o);
+    } else if (isAlpha(c)) {
+      const size_t start = pos;
+      while (pos < src.size() && (isAlpha(src[pos]) || isDigit(src[pos]))) pos++;
+      const std::string id = src.substr(start, pos - start);
+      if (peek() == '(') {
+        struct F { const char* name; int fn; int arity; };
+        static const F funcs[] = {{"sin", kFnSin, 1}, {"cos", kFnCos, 1}, {"abs", kFnAbs, 1}, {"floor", kFnFloor, 1},
+                                  {"frac", kFnFrac, 1}, {"sqrt", kFnSqrt, 1}, {"min", kFnMin, 2}, {"max", kFnMax, 2},
+                                  {"mod", kFnMod, 2}, {"mandel", kFnMandel, 2}, {"julia", kFnJulia, 4}, {"logi", kFnLogi, 3}};
+        const F* found = nullptr;
+        for (const auto& f : funcs) if (id == f.name) found = &f;
+        if (!found) { failed = true; return; }
+        pos++;
+        for (int k = 0; k < found->arity; k++) {
+          parseExpr();
+          if (failed) return;
+          if (k < found->arity - 1) { if (peek() != ',') { failed = true; return; } pos++; }
+        }
+        if (peek() != ')') { failed = true; return; }
+        pos++;
+        FOp o{FOpType::Fn};
+        o.id = found->fn;
+        ops.push_back(o);
+      } else {
+        static const char* vars[] = {"i", "n", "hits", "s1", "s2", "s3", "r", "pi", "bar", "bars"};
+        int idx = -1;
+        for (int k = 0; k < 10; k++) if (id == vars[k]) idx = k;
+        if (idx < 0) { failed = true; return; }
+        FOp o{FOpType::Var};
+        o.id = idx;
+        ops.push_back(o);
+      }
+    } else {
+      failed = true;
+    }
+  }
+};
+
+bool compileExpr(const std::string& src, std::vector<FOp>& out) {
+  FormulaParser parser(src);
+  parser.parseExpr();
+  if (parser.failed || parser.peek() != '\0') return false;
+  out = std::move(parser.ops);
+  return true;
+}
+
+struct CompiledFormula {
+  std::vector<FOp> ops;
+  std::vector<FOp> countOps;
+  bool hasCount = false;
+};
+
+// "score" or "score ; count" (see compileFormula in rhythm-logic.js). Returns false if it does not parse or is too long.
+bool compileFormula(const std::string& src, CompiledFormula& out) {
+  if (src.size() > 200) return false;
+  const size_t semi = src.find(';');
+  if (!compileExpr(semi == std::string::npos ? src : src.substr(0, semi), out.ops)) return false;
+  out.hasCount = false;
+  if (semi != std::string::npos) {
+    const std::string countText = src.substr(semi + 1);
+    if (countText.find_first_not_of(" \t\r\n") != std::string::npos) {
+      if (!compileExpr(countText, out.countOps)) return false;
+      out.hasCount = true;
+    }
+  }
+  return true;
+}
+
+double formulaFinite(double x) { return std::isfinite(x) ? x : 0.0; }
+double formulaPow(double a, double b) {
+  int k = static_cast<int>(std::floor(b + 0.5));
+  k = k < -8 ? -8 : (k > 8 ? 8 : k);
+  double r = 1;
+  for (int j = 0; j < std::abs(k); j++) r *= a;
+  return k < 0 ? (r == 0 ? 0.0 : 1 / r) : r;
+}
+// Escape count of z <- z*z + c starting at z (Julia), or at 0 (Mandelbrot), capped at 32 iterations.
+double formulaJulia(double zx, double zy, double cx, double cy) {
+  double x = zx, y = zy;
+  int n = 0;
+  while (n < 32 && x * x + y * y <= 4) {
+    const double t = x * x - y * y + cx;
+    y = 2 * x * y + cy;
+    x = t;
+    n++;
+  }
+  return n;
+}
+double formulaLogi(double r, double x, double k) {
+  int count = static_cast<int>(std::floor(k + 0.5));
+  count = count < 0 ? 0 : (count > 64 ? 64 : count);
+  for (int j = 0; j < count; j++) x = r * x * (1 - x);
+  return x;
+}
+double formulaSin(double x) { return fastSin(x - 6.283185307179586 * std::floor(x / 6.283185307179586 + 0.5)); }
+
+double evalFormula(const std::vector<FOp>& ops, const double* vars) {
+  std::vector<double> st;
+  for (const auto& o : ops) {
+    switch (o.type) {
+      case FOpType::Num: st.push_back(o.value); break;
+      case FOpType::Var: st.push_back(vars[o.id]); break;
+      case FOpType::Neg: st.back() = -st.back(); break;
+      case FOpType::Op: {
+        const double b = st.back(); st.pop_back();
+        const double a = st.back(); st.pop_back();
+        double v;
+        if (o.op == '+') v = a + b;
+        else if (o.op == '-') v = a - b;
+        else if (o.op == '*') v = a * b;
+        else if (o.op == '/') v = b == 0 ? 0.0 : a / b;
+        else if (o.op == '%') v = b == 0 ? 0.0 : a - b * std::floor(a / b);
+        else v = formulaPow(a, b);
+        st.push_back(formulaFinite(v));
+        break;
+      }
+      case FOpType::Fn: {
+        const int arity = formulaArity(o.id);
+        double args[4] = {0, 0, 0, 0};
+        for (int k = arity - 1; k >= 0; k--) { args[k] = st.back(); st.pop_back(); }
+        const double a = args[0], b = args[1];
+        double v;
+        switch (o.id) {
+          case kFnSin:   v = formulaSin(a); break;
+          case kFnCos:   v = formulaSin(a + 1.5707963267948966); break;
+          case kFnAbs:   v = std::fabs(a); break;
+          case kFnFloor: v = std::floor(a); break;
+          case kFnFrac:  v = a - std::floor(a); break;
+          case kFnSqrt:  v = a < 0 ? 0.0 : std::sqrt(a); break;
+          case kFnMin:   v = a < b ? a : b; break;
+          case kFnMax:   v = a > b ? a : b; break;
+          case kFnMandel: v = formulaJulia(0, 0, a, b); break;
+          case kFnJulia:  v = formulaJulia(a, b, args[2], args[3]); break;
+          case kFnLogi:   v = formulaLogi(a, b, args[2]); break;
+          default:       v = b == 0 ? 0.0 : a - b * std::floor(a / b); break;
+        }
+        st.push_back(formulaFinite(v));
+        break;
+      }
+    }
+  }
+  return st.back();
+}
+
+// The number of hits the count expression asks for in this bar (rounded; the caller limits it to the steps available).
+int formulaHitCount(const CompiledFormula& compiled, int hits, int total, uint32_t seed, int bar, int bars) {
+  double s[3];
+  for (int k = 0; k < 3; k++) s[k] = (seedStream(seed, 10u + static_cast<uint32_t>(k)) % 65536u) / 65536.0;
+  const double vars[10] = {0, static_cast<double>(total), static_cast<double>(hits), s[0], s[1], s[2], 0,
+                           3.141592653589793, static_cast<double>(bar), static_cast<double>(bars)};
+  const double v = evalFormula(compiled.countOps, vars);
+  const double clamped = v > 1e6 ? 1e6 : (v < -1e6 ? -1e6 : v);
+  return static_cast<int>(std::floor(clamped + 0.5));
+}
+
+std::vector<int64_t> scoreFormula(const std::vector<int>& positions, uint32_t seed, int total, int hits,
+                                  const CompiledFormula* compiled, int bar, int bars) {
+  if (!compiled) return std::vector<int64_t>(positions.size(), 0);
+  const std::vector<FOp>& ops = compiled->ops;
+  double s[3];
+  for (int k = 0; k < 3; k++) s[k] = (seedStream(seed, 10u + static_cast<uint32_t>(k)) % 65536u) / 65536.0;
+  std::vector<int64_t> out;
+  out.reserve(positions.size());
+  for (int p : positions) {
+    const double vars[10] = {static_cast<double>(p), static_cast<double>(total), static_cast<double>(hits),
+                             s[0], s[1], s[2],
+                             seedStream(seed, 500u + static_cast<uint32_t>(p)) / 4294967296.0, 3.141592653589793,
+                             static_cast<double>(bar), static_cast<double>(bars)};
+    const double v = evalFormula(ops, vars);
+    const double clamped = v > 1e6 ? 1e6 : (v < -1e6 ? -1e6 : v);
+    out.push_back(static_cast<int64_t>(std::floor(clamped * 100000 + 0.5)));
+  }
+  return out;
+}
+
 }  // namespace
 
 PatternMode patternModeFromString(const std::string& s) {
@@ -188,6 +436,7 @@ PatternMode patternModeFromString(const std::string& s) {
   if (s == "sine")     return PatternMode::Sine;
   if (s == "bit")      return PatternMode::Bit;
   if (s == "logistic") return PatternMode::Logistic;
+  if (s == "formula")  return PatternMode::Formula;
   return PatternMode::Classic;
 }
 
@@ -197,6 +446,7 @@ const char* patternModeToString(PatternMode mode) {
     case PatternMode::Sine:     return "sine";
     case PatternMode::Bit:      return "bit";
     case PatternMode::Logistic: return "logistic";
+    case PatternMode::Formula:  return "formula";
     default:                    return "classic";
   }
 }
@@ -207,21 +457,30 @@ std::vector<int> stepRange(int n) {
   return out;
 }
 
-std::vector<bool> patternMask(PatternMode mode, int hits, const std::vector<int>& positions,
+std::vector<bool> patternMask(const PatternSpec& spec, int hits, const std::vector<int>& positions,
                               uint32_t seed, double stepsPerBeat, int total, bool anchorEnd) {
+  const PatternMode mode = spec.mode;
   const int n = static_cast<int>(positions.size());
   if (mode == PatternMode::Classic) return euclideanRhythm(hits, n, seed);
   if (n <= 0) return {};
+  const int cycle = std::max(1, total);
+  const int requestedHits = hits;
+  CompiledFormula compiled;
+  bool formulaOk = false;
+  if (mode == PatternMode::Formula) {
+    formulaOk = compileFormula(spec.formula, compiled);
+    if (formulaOk && compiled.hasCount) hits = formulaHitCount(compiled, requestedHits, cycle, seed, spec.bar, spec.bars);
+  }
   if (hits <= 0) return std::vector<bool>(n, false);
   if (hits >= n) return std::vector<bool>(n, true);
 
   const int spb = std::max(1, static_cast<int>(std::round(stepsPerBeat)));
-  const int cycle = std::max(1, total);
   std::vector<int64_t> scores;
   switch (mode) {
     case PatternMode::Metric:   scores = scoreMetric(positions, seed, spb); break;
     case PatternMode::Sine:     scores = scoreSine(positions, seed, cycle); break;
     case PatternMode::Bit:      scores = scoreBit(positions, seed); break;
+    case PatternMode::Formula:  scores = scoreFormula(positions, seed, cycle, requestedHits, formulaOk ? &compiled : nullptr, spec.bar, spec.bars); break;
     default:                    scores = scoreLogistic(positions, seed); break;
   }
   if (anchorEnd) scores[n - 1] += 1000000000;
@@ -258,7 +517,7 @@ double warpAbsoluteBeat(double absBeat, Feel feel) {
 }
 
 std::vector<double> generateGroupPattern(int numerator, double stepsPerBeat, int hits, Feel feel, uint32_t seed,
-                                         PatternMode mode) {
+                                         const PatternSpec& mode) {
   if (feel == Feel::Halftime) {
     int halfSteps = static_cast<int>(std::round((numerator / 2.0) * stepsPerBeat));
     int halfHits = std::max(1, static_cast<int>(std::round(hits / 2.0)));
@@ -287,7 +546,7 @@ std::vector<double> generateGroupPattern(int numerator, double stepsPerBeat, int
 
 std::vector<AnchoredBeat> generateAnchoredPattern(
     int numerator, double stepsPerBeat, int hits, Feel feel, uint32_t seed,
-    const std::vector<double>& anchorBeats, PatternMode mode) {
+    const std::vector<double>& anchorBeats, const PatternSpec& mode) {
 
   int totalSteps = static_cast<int>(std::round(numerator * stepsPerBeat));
 
@@ -366,7 +625,7 @@ std::vector<double> generateTripletLayerBeats(
 
 std::vector<double> generateSnareGhostBeats(
     int numerator, double stepsPerBeat, int mainHits, double ghostDensityPct,
-    Feel feel, uint32_t seed, PatternMode mode) {
+    Feel feel, uint32_t seed, const PatternSpec& mode) {
   int totalSteps = static_cast<int>(std::round(numerator * stepsPerBeat));
   auto mainMask = patternMask(mode, mainHits, stepRange(totalSteps), seed, stepsPerBeat, totalSteps);
 
@@ -457,8 +716,8 @@ std::vector<bool> buildEndAnchoredEuclidean(int hits, int steps, uint32_t seed) 
   return seed ? seededShuffleMask(mask, seed) : mask;
 }
 
-std::vector<bool> endAnchoredMask(PatternMode mode, int hits, int steps, uint32_t seed, double stepsPerBeat) {
-  if (mode == PatternMode::Classic) return buildEndAnchoredEuclidean(hits, steps, seed);
+std::vector<bool> endAnchoredMask(const PatternSpec& mode, int hits, int steps, uint32_t seed, double stepsPerBeat) {
+  if (mode.mode == PatternMode::Classic) return buildEndAnchoredEuclidean(hits, steps, seed);
   return patternMask(mode, hits, stepRange(steps), seed, stepsPerBeat, steps, true);
 }
 

@@ -201,7 +201,19 @@ body.a11y-hover-zoom .fx-pop .lim-knobs-inner:hover .ctrl {
 .pattern-mode-icon::after { content:'▾'; font-size:7px; margin-left:2px; opacity:.7; }
 .pattern-mode-icon:hover { border-color:var(--amber); }
 .pattern-mode-icon.mode-on { color:var(--cyan); border-color:var(--cyan); }
-.add-block-menu.pattern-mode-menu { position:fixed; right:auto; bottom:auto; min-width:130px; z-index:10000; }
+.pattern-mode-panel { position:fixed; z-index:9000; width:290px; transform:scale(var(--ui-scale, 1)); transform-origin:top left; background:var(--panel); border:1px solid var(--border2); border-radius:6px; box-shadow:0 4px 16px rgba(0,0,0,.4); padding:6px; font-size:11px; color:var(--text); }
+.pattern-mode-head { display:flex; justify-content:space-between; align-items:center; font-weight:600; margin-bottom:6px; }
+.pattern-mode-list { display:grid; grid-template-columns:1fr 1fr; gap:3px; }
+.pattern-mode-opt { text-align:left; background:var(--bg); border:1px solid var(--border2); color:var(--text); border-radius:3px; padding:3px 6px; cursor:pointer; font-size:11px; }
+.pattern-mode-opt:hover { border-color:var(--amber); }
+.pattern-mode-opt.active { border-color:var(--cyan); color:var(--cyan); font-weight:700; }
+.pattern-mode-formula { margin-top:8px; }
+.pattern-mode-preset { width:100%; box-sizing:border-box; margin-top:2px; background:var(--bg); color:var(--text); border:1px solid var(--border2); border-radius:3px; padding:3px 4px; font-size:11px; cursor:pointer; }
+.pattern-mode-input { width:100%; box-sizing:border-box; margin-top:2px; background:var(--bg); color:var(--text); border:1px solid var(--border2); border-radius:3px; padding:4px 6px; font-family:monospace; font-size:12px; }
+.pattern-mode-input:focus { outline:1px solid var(--amber); border-color:var(--amber); }
+.pattern-mode-status { margin-top:3px; font-size:10px; color:var(--cyan); }
+.pattern-mode-status.error { color:#f87171; }
+.pattern-mode-help { margin-top:4px; font-size:10px; opacity:.7; line-height:1.4; }
 .knob-cluster input:disabled { opacity:.35; cursor:not-allowed; }
 /* Fill and Fill Kick: a different kind of group than the instrument groups, so their titles carry another colour. */
 .ne-fill-cluster .cluster-title, .ne-sidebar-heading { color:var(--cyan); }

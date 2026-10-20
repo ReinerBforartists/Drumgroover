@@ -412,6 +412,12 @@ dgg::Block BlockFromJson(const nlohmann::json& j)
       if (val.is_string()) b.patternModes[groupId] = dgg::patternModeFromString(val.get<std::string>());
   }
 
+  if (j.contains("patternFormulas") && j["patternFormulas"].is_object())
+  {
+    for (auto& [groupId, val] : j["patternFormulas"].items())
+      if (val.is_string()) b.patternFormulas[groupId] = val.get<std::string>();
+  }
+
   if (j.contains("enabledArticulations") && j["enabledArticulations"].is_object())
   {
     for (auto& [subGroup, ids] : j["enabledArticulations"].items())
