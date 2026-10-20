@@ -357,7 +357,7 @@ window.addEventListener('drop', (e) => { if (hasFiles(e)) e.preventDefault(); })
     // Dirty baseline: set once the async default blocks exist.
     markProjectClean();
     initKnobs();
-    wireNudgeKnob();
+    wireNudgeButtons();
     if (typeof dggOnReady === 'function') {
       dggOnReady(initTabs);
     } else {

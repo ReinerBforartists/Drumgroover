@@ -86,6 +86,7 @@
         <div class="add-block-menu ne-settings-panel" id="neSettingsPanel" style="display:none;">
           <label class="gm-toggle" id="gmToggleLabel" data-tooltip="Show GM Notes&#10;Adds an editable MIDI/GM note-number field to every instrument row — lets you remap a track to a different sample/note without touching your DAW mapping."><input type="checkbox" id="gmNotesToggle"> Show GM Notes</label>
           <label class="gm-toggle" id="infoStringToggleLabel" data-tooltip="Show Info String&#10;Shows or hides the info strip above the grid (genre and feel, time signature and snap, number of blocks and notes, seed). Purely cosmetic."><input type="checkbox" id="infoStringToggle" checked> Show Info String</label>
+          <label class="gm-toggle" id="showToolbarToggleLabel" data-tooltip="Show toolbar&#10;Shows or hides the generator controls: the group knobs, rerolls and pattern modes in the toolbar, Genre and Feel, and the Fill, Break and instrument settings in the sidebar. Snap, Time Signature, the block length and the selection tools (Quant, Swing, Rnd, Nudge) in the sidebar stay. Turn it off if you set your notes by hand."><input type="checkbox" id="showToolbarToggle" checked> Show toolbar</label>
           <div class="add-block-menu-sep"></div>
           <label class="gm-toggle" id="showConfirmDialogsToggleLabel" data-tooltip="Show confirmation dialogs&#10;Asks before actions that throw work away: discarding hand edits, rerolling all blocks, clearing all blocks or the timeline. Turn off to skip straight to the action."><input type="checkbox" id="showConfirmDialogsToggle"> Show confirmation dialogs</label>
           <div class="add-block-menu-sep"></div>
@@ -420,13 +421,11 @@
   
   <div class="ne-layout" id="neLayout">
     <div class="ne-grid-col">
-            <div class="ne-editing-toolbar">
+            <div class="ne-editing-toolbar" id="neEditingToolbar">
           <div class="controls">
-            <div class="knob-cluster">
+            <div class="knob-cluster" id="mainKnobCluster">
               <div class="cluster-title">Main <span id="rerollAllBtn" class="group-lock-icon" style="cursor:pointer" data-tooltip="Reroll All&#10;Rerolls everything unlocked in this block — regular blocks: all six instrument groups, using the pattern mode chosen next to it. Break/Intro/Outro: Fill + Kick. Locked parts are skipped.">🎲</span><span id="mainPatternMode" class="group-lock-icon pattern-mode-icon" style="cursor:pointer">C</span></div>
               <div class="cluster-knobs">
-                <div class="ctrl" data-tooltip="Randomize&#10;Randomizes the selected note(s)' timing and velocity by this amount. A post-processing tool on your Note Editor selection, applied on release — does nothing without a selection."><div class="ctrl-label">Rnd <span class="val" id="randomizeAmtVal">0%</span></div><input type="range" id="randomizeAmt" min="0" max="100" value="0"></div>
-                <div class="ctrl" id="nudgeCtrl" data-tooltip="Nudge&#10;Nudges the selected note(s) by 1/8 of the current Snap step per turn — fine timing feel, independent of the Snap grid (not quantized). Select a note first."><div class="ctrl-label">Nudge</div><div class="knob-visual" id="nudgeKnob"><div class="knob-marker" id="nudgeKnobMarker"><div class="marker-dot"></div></div></div><span class="val" id="nudgeVal">0</span></div>
               </div>
             </div>
 
@@ -540,7 +539,7 @@
             </optgroup>
           </select>
         </div>
-      <div class="ctrl w-genre select-only" data-tooltip="Genre&#10;A starting point, not a lock-in — sets the time signature and a baseline Feel, and applies matching preset values to Verse/Chorus/Bridge. Everything it sets can be freely overridden afterward.">
+      <div class="ctrl w-genre select-only ne-gen-only" data-tooltip="Genre&#10;A starting point, not a lock-in — sets the time signature and a baseline Feel, and applies matching preset values to Verse/Chorus/Bridge. Everything it sets can be freely overridden afterward.">
           <div class="ctrl-label">Genre</div>
           <select id="genreSelect">
             <option value="straight" selected>Straight</option>
@@ -570,6 +569,11 @@
             </select>
           </div>
         </div>
+      <div class="ne-sidebar-heading">Selected notes</div>
+      <div class="ctrl" data-tooltip="Randomize&#10;Randomizes the selected note(s)' timing and velocity by this amount. A post-processing tool on your Note Editor selection, applied on release — does nothing without a selection."><div class="ctrl-label">Rnd</div><input type="range" class="ne-mini-slider" id="randomizeAmt" min="0" max="100" value="0"><span class="ne-mini-val" id="randomizeAmtVal">0%</span></div>
+      <div class="ctrl" data-tooltip="Quantize&#10;Pulls the selected note(s) toward the Snap grid by this strength: 100% puts them exactly on it (like Snap to Grid), lower values only tighten the timing. Applied on release, does nothing without a selection."><div class="ctrl-label">Quant</div><input type="range" class="ne-mini-slider" id="quantizeAmt" min="0" max="100" value="0"><span class="ne-mini-val" id="quantizeAmtVal">0%</span></div>
+      <div class="ctrl" data-tooltip="Swing&#10;Delays the off-beat notes of the selected note(s), every second Snap step: 50% is straight, 75% a hard 3:1 swing. Applied on release, each note keeps its own timing feel. Does nothing without a selection."><div class="ctrl-label">Swing</div><input type="range" class="ne-mini-slider" id="swingAmt" min="50" max="75" value="50"><span class="ne-mini-val" id="swingAmtVal">50%</span></div>
+      <div class="ctrl" id="nudgeCtrl" data-tooltip="Nudge&#10;Shifts the selected note(s) back or forward by 1/8 of the current Snap step per click — fine timing feel, independent of the Snap grid (not quantized). Select a note first."><div class="ctrl-label">Nudge</div><div class="ne-nudge-group"><button class="ne-barnav-btn" id="nudgeBackBtn" type="button">◀</button><span class="ne-mini-val" id="nudgeVal">0</span><button class="ne-barnav-btn" id="nudgeFwdBtn" type="button">▶</button></div></div>
     </div><div class="ne-sidebar" id="neSidebar"></div>
     </div>
   </div>

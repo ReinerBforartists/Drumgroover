@@ -1208,6 +1208,12 @@ function updateGroupLockUI() {
     rndSlider.disabled = noSelection;
     rndSlider.closest('.ctrl').classList.toggle('knob-disabled', noSelection);
   }
+  ['swingAmt', 'quantizeAmt'].forEach(id => {
+    const slider = document.getElementById(id);
+    if (!slider) return;
+    slider.disabled = noSelection;
+    slider.closest('.ctrl').classList.toggle('knob-disabled', noSelection);
+  });
   const nudgeCtrl = document.getElementById('nudgeCtrl');
   if (nudgeCtrl) nudgeCtrl.classList.toggle('knob-disabled', noSelection);
 }
@@ -1812,6 +1818,8 @@ async function neDeleteCustomTrack(t) {
 // =========================================
 const sliderMap = {
   randomizeAmt:['randomizeAmtVal', v=>v+'%'],
+  swingAmt:['swingAmtVal', v=>v+'%'],
+  quantizeAmt:['quantizeAmtVal', v=>v+'%'],
 };
 Object.entries(sliderMap).forEach(([id,[valId,fmt]]) => {
   document.getElementById(id)?.addEventListener('input', e => { document.getElementById(valId).textContent = fmt(e.target.value); });
@@ -1855,6 +1863,74 @@ function randomizeRegen() {
 }
 wireKnobGestureUndo(['randomizeAmt'], randomizeRegen, 'Randomize');
 document.getElementById('randomizeAmt').addEventListener('change', () => { randomizeGestureItems = null; });
+
+// Swing: delays every off-beat note (odd Snap step) of the selection by up to half a Snap step; 50% leaves the notes alone.
+let swingGestureItems = null;
+function swingRegen() {
+  const block = findBlock(activeBlockId);
+  if (!block) return;
+  if (!swingGestureItems) {
+    if (!selectedNotes.size) return;
+    const items = neResolveSelection(block);
+    if (!items.length) return;
+    swingGestureItems = items.map(it => ({ trackId: it.trackId, note: it.note, origBeat: it.note.beat }));
+  }
+  const g = readGrid();
+  const shift = g.snap * (2 * (getParamNum('swingAmt') / 100) - 1);
+  const totalBeats = (block.length || 1) * g.numerator;
+  const touchedTracks = new Set();
+  swingGestureItems.forEach(it => {
+    const step = Math.round(it.origBeat / g.snap);
+    const offBeat = step % 2 !== 0 && Math.abs(it.origBeat - step * g.snap) <= g.snap * 0.3;
+    it.note.beat = offBeat ? Math.max(0, Math.min(totalBeats - 0.0001, it.origBeat + shift)) : it.origBeat;
+    if (shift !== 0 && it.note.turnaround) delete it.note.turnaround;
+    touchedTracks.add(it.trackId);
+  });
+  touchedTracks.forEach(tid => block.data[tid].sort((a, b) => a.beat - b.beat));
+  selectedNotes.clear();
+  swingGestureItems.forEach(it => selectedNotes.add(it.trackId + '|' + it.note.beat));
+  if (shift !== 0) touchedTracks.forEach(tid => markTrackManuallyEdited(block, tid));
+  block.generated = false;
+  rebuildFullFromEditedBlocks();
+  renderNoteEditor();
+}
+wireKnobGestureUndo(['swingAmt'], swingRegen, 'Swing');
+document.getElementById('swingAmt').addEventListener('change', () => { swingGestureItems = null; });
+
+// Quantize strength: moves each selected note from where it was toward its Snap grid position by the chosen share; 100% equals Snap to Grid.
+let quantizeGestureItems = null;
+function quantizeRegen() {
+  const block = findBlock(activeBlockId);
+  if (!block) return;
+  const g = readGrid();
+  const totalBeats = (block.length || 1) * g.numerator;
+  if (!quantizeGestureItems) {
+    if (!selectedNotes.size) return;
+    const items = neResolveSelection(block);
+    if (!items.length) return;
+    quantizeGestureItems = items.map(it => ({
+      trackId: it.trackId, note: it.note, origBeat: it.note.beat,
+      target: Math.max(0, Math.min(totalBeats - 0.0001, neQuantizeForTrack(it.note.beat, g, block, it.trackId)))
+    }));
+  }
+  const strength = getParamNum('quantizeAmt') / 100;
+  const touchedTracks = new Set();
+  quantizeGestureItems.forEach(it => {
+    it.note.beat = it.origBeat + (it.target - it.origBeat) * strength;
+    if (strength > 0 && it.note.turnaround) delete it.note.turnaround;
+    touchedTracks.add(it.trackId);
+  });
+  touchedTracks.forEach(tid => block.data[tid].sort((a, b) => a.beat - b.beat));
+  selectedNotes.clear();
+  quantizeGestureItems.forEach(it => selectedNotes.add(it.trackId + '|' + it.note.beat));
+  if (strength > 0) touchedTracks.forEach(tid => markTrackManuallyEdited(block, tid));
+  block.generated = false;
+  rebuildFullFromEditedBlocks();
+  renderNoteEditor();
+}
+wireKnobGestureUndo(['quantizeAmt'], quantizeRegen, 'Quantize');
+document.getElementById('quantizeAmt').addEventListener('change', () => { quantizeGestureItems = null; });
+['randomizeAmt', 'swingAmt', 'quantizeAmt'].forEach(id => wireMiniSliderWheel(document.getElementById(id)));
 
 const REROLL_FNS = { kick: regenerateKickGroup, snare: regenerateSnareGroup, hihat: regenerateHihatGroup, ride: regenerateRideGroup, toms: regenerateTomsGroup, cymbals: regenerateCymbalsGroup };
 async function rerollGroup(groupId) {
@@ -2066,6 +2142,23 @@ document.getElementById('mainPatternMode').addEventListener('click', (e) => {
       });
     },
   });
+});
+// Options > Show toolbar: off hides the generator controls (toolbar clusters, Genre, Feel, Fill/Break/instrument settings) for people who set notes by hand;
+// The selection tools (Rnd, Swing, Nudge) live in the sidebar and stay. The choice is remembered like the other options.
+const SHOW_TOOLBAR_KEY = 'dggShowToolbar';
+const showToolbarToggle = document.getElementById('showToolbarToggle');
+function applyShowToolbar() {
+  const show = dggGetItem(SHOW_TOOLBAR_KEY) !== '0';
+  showToolbarToggle.checked = show;
+  document.getElementById('neEditingToolbar').classList.toggle('collapsed', !show);
+  document.body.classList.toggle('ne-hand-mode', !show);
+  if (!show) closePatternModePanel();
+  window.dispatchEvent(new Event('resize'));   // the note grid takes the freed room
+}
+if (typeof dggOnReady === 'function') dggOnReady(applyShowToolbar); else applyShowToolbar();
+showToolbarToggle.addEventListener('change', (e) => {
+  dggSetItem(SHOW_TOOLBAR_KEY, e.target.checked ? '1' : '0');
+  applyShowToolbar();
 });
 // Click feedback for every dice (static, Main, Custom and the Break/Fill/Turnaround rows) and pattern mode letter.
 document.addEventListener('click', (e) => {
@@ -2619,7 +2712,7 @@ function wireMiniSliderWheel(slider) {
 }
 
 function initKnobs() {
-  const sliders = document.querySelectorAll('input[type="range"]:not(#tlZoomSlider)');
+  const sliders = document.querySelectorAll('input[type="range"]:not(#tlZoomSlider):not(.ne-mini-slider)');
   sliders.forEach(wireKnob);
 }
 
@@ -2627,84 +2720,19 @@ function updateNudgeDisplay() {
   const val = document.getElementById('nudgeVal');
   if (val) val.textContent = (neNudgeSteps > 0 ? '+' : '') + neNudgeSteps;
 }
-function wireNudgeKnob() {
-  const ctrlBox = document.getElementById('nudgeCtrl');
-  const visual = document.getElementById('nudgeKnob');
-  const marker = document.getElementById('nudgeKnobMarker');
-  if (!ctrlBox || !visual || !marker) return;
-  const DEG_PER_STEP = 18;
-  let spinDeg = 0;
-
-  const applyStep = (dir) => {
-    const block = findBlock(activeBlockId);
-    if (!block) return false;
-    if (!selectedNotes.size) { const st = document.getElementById('statusText'); if (st) st.textContent = 'Select a note first to nudge it'; return false; }
-    const g = readGrid();
-    const changed = neNudgeSelection(block, g, dir);
-    if (!changed) return false;
-    neNudgeSteps += dir;
-    updateNudgeDisplay();
-    return true;
-  };
-
-  const PX_PER_STEP = 6;
-  let dragging = false, startY = 0, baseSpinDeg = 0, dragSteps = 0, dragBlock = null, dragSnapshot = null, dragSnapshotLocked = null;
-  const onMove = (e) => {
-    if (!dragging) return;
-    e.preventDefault();
-    const rawSteps = (startY - e.clientY) / PX_PER_STEP;
-    spinDeg = baseSpinDeg + rawSteps * DEG_PER_STEP;
-    marker.style.transform = `rotate(${spinDeg}deg)`;
-    const targetSteps = Math.trunc(rawSteps);
-    while (dragSteps < targetSteps) { if (applyStep(1)) dragSteps++; else break; }
-    while (dragSteps > targetSteps) { if (applyStep(-1)) dragSteps--; else break; }
-  };
-  const endDrag = (e) => {
-    if (!dragging) return;
-    dragging = false;
-    ctrlBox.classList.remove('active');
-    document.body.classList.remove('knob-dragging');
-    try { visual.releasePointerCapture(e.pointerId); } catch (_) {}
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', endDrag);
-    window.removeEventListener('pointercancel', endDrag);
-    if (dragSteps !== 0 && dragBlock && dragSnapshot) {
-      rebuildFullFromEditedBlocks();
-      renderNoteEditor();
-      const before = dragSnapshot, after = JSON.stringify(dragBlock.data), block = dragBlock, n = dragSteps;
-      const afterLocked = snapshotLocked(block);
-      pushUndo(`Nudge ${n > 0 ? '+' : ''}${n}`,
-        () => { block.data = JSON.parse(before); restoreLocked(block, dragSnapshotLocked); block.generated = false; rebuildFullFromEditedBlocks(); renderNoteEditor(); },
-        () => { block.data = JSON.parse(after); restoreLocked(block, afterLocked); block.generated = false; rebuildFullFromEditedBlocks(); renderNoteEditor(); }
-      );
-    }
-    dragBlock = null; dragSnapshot = null; dragSnapshotLocked = null;
-  };
-  visual.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    dragging = true; startY = e.clientY; baseSpinDeg = spinDeg; dragSteps = 0;
-    dragBlock = findBlock(activeBlockId);
-    dragSnapshot = dragBlock ? JSON.stringify(dragBlock.data) : null;
-    dragSnapshotLocked = dragBlock ? snapshotLocked(dragBlock) : null;
-    ctrlBox.classList.add('active');
-    document.body.classList.add('knob-dragging');
-    try { visual.setPointerCapture(e.pointerId); } catch (_) {}
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', endDrag);
-    window.addEventListener('pointercancel', endDrag);
-  });
-
-  visual.addEventListener('wheel', (e) => {
-    e.preventDefault(); e.stopPropagation();
+function wireNudgeButtons() {
+  const back = document.getElementById('nudgeBackBtn');
+  const fwd = document.getElementById('nudgeFwdBtn');
+  if (!back || !fwd) return;
+  const nudge = (dir) => {
     const block = findBlock(activeBlockId);
     if (!block) return;
     if (!selectedNotes.size) { const st = document.getElementById('statusText'); if (st) st.textContent = 'Select a note first to nudge it'; return; }
     const before = JSON.stringify(block.data);
     const beforeLocked = snapshotLocked(block);
-    const dir = e.deltaY < 0 ? 1 : -1;
-    if (!applyStep(dir)) return;
-    spinDeg += dir * DEG_PER_STEP;
-    marker.style.transform = `rotate(${spinDeg}deg)`;
+    if (!neNudgeSelection(block, readGrid(), dir)) return;
+    neNudgeSteps += dir;
+    updateNudgeDisplay();
     rebuildFullFromEditedBlocks();
     renderNoteEditor();
     const after = JSON.stringify(block.data);
@@ -2713,7 +2741,9 @@ function wireNudgeKnob() {
       () => { block.data = JSON.parse(before); restoreLocked(block, beforeLocked); block.generated = false; rebuildFullFromEditedBlocks(); renderNoteEditor(); },
       () => { block.data = JSON.parse(after); restoreLocked(block, afterLocked); block.generated = false; rebuildFullFromEditedBlocks(); renderNoteEditor(); }
     );
-  }, { passive: false });
+  };
+  back.addEventListener('click', () => nudge(-1));
+  fwd.addEventListener('click', () => nudge(1));
 }
 
 // =========================================

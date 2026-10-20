@@ -222,6 +222,20 @@ function renderNoteEditor() {
         rSlider.dispatchEvent(new Event('input'));
         suppressKnobRegen = false;
       }
+      const sSlider = document.getElementById('swingAmt');
+      if (sSlider && +sSlider.value !== 50 && !swingGestureItems) {
+        suppressKnobRegen = true;
+        sSlider.value = 50;
+        sSlider.dispatchEvent(new Event('input'));
+        suppressKnobRegen = false;
+      }
+      const qSlider = document.getElementById('quantizeAmt');
+      if (qSlider && +qSlider.value !== 0 && !quantizeGestureItems) {
+        suppressKnobRegen = true;
+        qSlider.value = 0;
+        qSlider.dispatchEvent(new Event('input'));
+        suppressKnobRegen = false;
+      }
     }
     neNudgeSelectedRefs = resolvedNow;
     updateNudgeDisplay();

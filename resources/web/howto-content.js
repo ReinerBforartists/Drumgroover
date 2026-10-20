@@ -55,7 +55,7 @@ howtoSet('howto-generator', `
   If you edit a note of a group by hand, that whole group is <b>locked</b>: a 🔒 appears next to its title and its knobs and reroll stop changing it. Click the 🔒 to discard your edits and hand the group back to the knobs, or use <b>Edit ▾ → Discard → All Edits (Block)</b> / <b>(Global)</b>.<br>
   <b>Shift+drag</b> one of the six Density knobs to scale all six proportionally (Energy macro, one undo step).<br>
   <b style="display:block;margin-top:12px">The Main cluster</b>
-  <b>Randomize</b> jitters the timing and velocity of the <i>selected</i> notes by the chosen amount (applied when you let go). <b>Nudge</b> shifts the selected notes by an eighth of a Snap step per turn — fine timing feel, not quantized. Both do nothing without a selection.<br>
+  The <b>Selected notes</b> block in the sidebar works on the notes you have selected, and does nothing without a selection: <b>Quant</b> pulls their timing toward the Snap grid by the chosen strength (100% = Snap to Grid), <b>Rnd</b> jitters their timing and velocity by the chosen amount, <b>Swing</b> delays the off-beat notes (every second Snap step; 50% is straight, 75% a hard 3:1 swing), and the <b>◀ ▶</b> buttons of <b>Nudge</b> shift them back or forward by an eighth of a Snap step per click — fine timing feel, not quantized. The sliders apply when you let go.<br>
   <b style="display:block;margin-top:12px">Custom tracks</b>
   <b>+ Add Track</b> adds an extra percussion instrument (High Conga, Claves, Hand Clap, Maracas, Cowbell, PC-2). Pick the instrument and its MIDI note number in the dialog; each instrument can be used once. Its knobs are in the Custom cluster, its sound in the Drum Engine tab (Custom).
 `);
@@ -145,7 +145,7 @@ howtoSet('howto-export', `
 howtoSet('howto-options', `
   Every tab has an <b>Options ⚙</b> menu with the settings that matter there:<br>
   <b>Everywhere:</b> <b>Show tooltips</b> turns the hover help on or off. <b>Accessible Zoom</b> enlarges the knob cluster under the cursor on hover (<b>Zoom Factor</b> sets how much). <b>UI Scale</b> (75%–200%) resizes the plugin window if your DAW allows it. <b>Developer tools</b> enables right-click → Inspect for debugging; leave it off unless you need it.<br>
-  <b>Note Editor:</b> <b>Show GM Notes</b> (a MIDI note field on every row), <b>Show Info String</b> (the small strip above the grid), <b>Show confirmation dialogs</b> (ask before discarding hand edits, rerolling all blocks, clearing all blocks or the timeline).<br>
+  <b>Note Editor:</b> <b>Show GM Notes</b> (a MIDI note field on every row), <b>Show Info String</b> (the small strip above the grid), <b>Show toolbar</b> (turn it off if you set notes by hand: the group knobs, rerolls and pattern modes, Genre, Feel and the Fill, Break and instrument settings are hidden, while Snap, Time Signature, the block length and the Selected notes tools stay),<b>Show confirmation dialogs</b> (ask before discarding hand edits, rerolling all blocks, clearing all blocks or the timeline).<br>
   <b>Drum Engine:</b> <b>Retrigger</b> (repeat rate of the Morph Pads and the knob preview while held), <b>Meter Peak Hold</b>, <b>Preview sound on knob turn</b> (plays the instrument while you turn one of its knobs).<br>
   <b>Mixer:</b> <b>Meter Peak Hold</b>, <b>Auto Gain Time</b>, <b>Close all effect panels</b>.<br>
   Tooltips show the name, what the control does and how to use it; hold the pointer still over any control.

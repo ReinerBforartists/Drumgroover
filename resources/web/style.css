@@ -100,6 +100,12 @@ body { overflow:hidden; }
 .panel-row.seq-panel { display:flex; flex-direction:column; gap:8px; overflow:hidden; }
 /* Editing toolbar (Main/Kick/Snare/.../Time Signature/Snap/Genre) */
 .ne-editing-toolbar { padding-bottom:10px; margin-bottom:10px; border-bottom:1px solid var(--border); }
+/* Options > Show toolbar off ("hand mode"): the toolbar goes, and so do Genre, Feel and the generator sections of the sidebar. The selection tools (Rnd, Swing, Nudge) live in the sidebar and stay. */
+.ne-editing-toolbar.collapsed { display:none; }
+.ne-nudge-group { display:flex; align-items:center; gap:4px; }
+.ne-nudge-group .ne-mini-val { min-width:24px; text-align:center; }
+.ctrl.knob-disabled .ne-mini-slider, .ctrl.knob-disabled .ne-barnav-btn { opacity:.35; pointer-events:none; }
+body.ne-hand-mode .ne-gen-only { display:none !important; }
 .panel-title { font-size:9px; letter-spacing:.1em; color:var(--muted); text-transform:uppercase; }
 .controls { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; }
 

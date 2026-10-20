@@ -127,9 +127,9 @@ function neSidebarHeading(text) {
 }
 
 // The sidebar is a stack of framed sections, each with its own heading. Builders append to the current section of the root.
-function neNewSection(root, title) {
+function neNewSection(root, title, generatorOnly) {
   const sec = document.createElement('div');
-  sec.className = 'ne-section';
+  sec.className = 'ne-section' + (generatorOnly ? ' ne-gen-only' : '');
   if (title) sec.appendChild(neSidebarHeading(title));
   root.appendChild(sec);
   root._section = sec;
@@ -241,7 +241,7 @@ function neBuildControlsPanel(ctx) {
 function neBuildFeelGroup(ctx) {
   const { block, g } = ctx;
   const wrap = document.createElement('div');
-  wrap.className = 'ne-ctl-group ne-ctl-inline';
+  wrap.className = 'ne-ctl-group ne-ctl-inline ne-gen-only';
   wrap.innerHTML = '<span class="ne-ctl-label">Feel</span>';
   const sel = document.createElement('select');
   sel.className = 'ne-select';
@@ -409,7 +409,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
   const { block, g } = ctx;
   const fillGroups = neRelevantEngineGroups(block.turnaroundInstruments || ['snare']);
 
-  neNewSection(panel, 'Turnaround (Fill)');
+  neNewSection(panel, 'Turnaround (Fill)', true);
   const taGroup = document.createElement('div');
   taGroup.className = 'ne-ctl-group ne-ctl-inline';
   taGroup.innerHTML = '<span class="ne-ctl-label">Fill Every</span>';
@@ -542,7 +542,7 @@ function neBuildTurnaroundPanel(panel, ctx) {
     applyTurnaroundChange, 'turnaround-fill', false,
     'Fill Instruments\nWhich instruments the fill can use. Drag across checkboxes to set several at once.');
   neAppendFillInstruments(tiGroup, tiBox);
-  neNewSection(panel, 'Fill Instruments');
+  neNewSection(panel, 'Fill Instruments', true);
   neSec(panel).appendChild(tiGroup);
 
   // Kick layer
@@ -762,7 +762,7 @@ function neBuildBreakPanel(panel, ctx) {
     () => { neEnsureSeed(block, 'breakSeed'); return regenerateMainAlways(); }, 'break-fill', false,
     neFillKind(block) + ' Instruments\nWhich instruments the ' + neFillKind(block).toLowerCase() + ' can use. Drag across checkboxes to set several at once.');
   neAppendFillInstruments(biGroup, biBox);
-  neNewSection(panel, neFillKind(block) + ' Instruments');
+  neNewSection(panel, neFillKind(block) + ' Instruments', true);
   neSec(panel).appendChild(biGroup);
 
   // Kick layer
@@ -869,7 +869,7 @@ function neBuildFillPanel(panel, ctx) {
     () => { neEnsureSeed(block, 'fillSeed'); return regenerate(); }, 'fill-fill', undefined,
     neFillKind(block) + ' Instruments\nWhich instruments the ' + neFillKind(block).toLowerCase() + ' can use. Drag across checkboxes to set several at once.');
   neAppendFillInstruments(fiGroup, fiBox);
-  neNewSection(panel, neFillKind(block) + ' Instruments');
+  neNewSection(panel, neFillKind(block) + ' Instruments', true);
   neSec(panel).appendChild(fiGroup);
 
   // Kick layer
