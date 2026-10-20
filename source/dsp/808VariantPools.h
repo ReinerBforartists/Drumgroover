@@ -38,6 +38,15 @@ inline uint64_t QuantizeVariantPitch(double x)
 }
 inline double DequantizeVariant(uint64_t q) { return (double)q / 100.0; }
 
+// Accent of a baked set: the Accent amount (0..1) in steps of 1 % (the steps of the Accent slider) (0 = a normal hit, the key and file name of a set without accent stay as they were). Accented sets are baked on demand
+// (the first accented hit that finds no variant plays live and starts the bake), never ahead of time. The step lives in the upper 32 bits of TR808VariantKey128::hi, the sample rate in the lower.
+constexpr int kAccentStepsPerUnit = 100;
+inline int QuantizeAccentStep(double accent01) { return (int)std::llround(std::clamp(accent01, 0.0, 1.0) * kAccentStepsPerUnit); }
+inline double DequantizeAccentStep(int step) { return std::clamp(step, 0, kAccentStepsPerUnit) / (double)kAccentStepsPerUnit; }
+inline uint64_t PackKeyHi(double sampleRateHz, int accentStep) { return (uint64_t)std::llround(sampleRateHz) | ((uint64_t)std::clamp(accentStep, 0, kAccentStepsPerUnit) << 32); }
+inline double KeyHiSampleRate(uint64_t hi) { return (double)(hi & 0xFFFFFFFFull); }
+inline int KeyHiAccentStep(uint64_t hi) { return (int)(hi >> 32); }
+
 struct TR808VariantKey128Hash
 {
   size_t operator()(const TR808VariantKey128& k) const

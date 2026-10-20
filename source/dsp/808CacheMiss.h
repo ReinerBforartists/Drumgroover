@@ -15,4 +15,11 @@ inline std::atomic<uint32_t>& CacheMissSeq()
   return seq;
 }
 
+// Same for a hit with an accent (Accent amount > 0) that found no baked variant of its accented set: only that set is baked (on demand), the hit is synthesised live.
+inline std::atomic<uint32_t>& CacheMissAccentSeq()
+{
+  static std::atomic<uint32_t> seq{0};
+  return seq;
+}
+
 }  // namespace dgg

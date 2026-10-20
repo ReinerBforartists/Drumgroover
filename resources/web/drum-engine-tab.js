@@ -293,7 +293,7 @@ function deSendVoiceParam(family, param, value, index) {
 // EnqueueVariantBake).
 function deSendVoiceParamCommit(family, param, value, index) {
   if (typeof hostBridge === 'undefined' || !hostBridge.send) return;
-  const payload = { family, param, value };
+  const payload = { family, param, value, accent: dePreviewAccentOn() };   // the host bakes the normal set and, with Preview accent on, the accented set as well
   if (index !== undefined) payload.index = index;
   hostBridge.send('commitVoiceParam', payload);
 }

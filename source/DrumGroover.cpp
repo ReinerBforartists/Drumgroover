@@ -2784,6 +2784,11 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
   DGG_Log("HandleSetVoiceParam: family='" + family + "' param='" + param + "' index=" + std::to_string(index) + " value=" + std::to_string(value));
 
   mVoiceParamsConfigured.store(true, std::memory_order_relaxed);
+  if (family == "ride" || family == "hihat" || family == "cymbal")
+  {
+    mParamEditMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
+    mParamDragging.store(true, std::memory_order_relaxed);
+  }
 
   if (family == "kick")
   {
@@ -2855,21 +2860,30 @@ void DrumGroover::HandleCommitVoiceParam(const nlohmann::json& payload)
   const std::string family = payload.value("family", "");
   const int index = payload.value("index", -1);
   const bool rebake = ReadRebakeOnChange();
+  // The normal set of the final values is always baked; with Preview accent on (and an Accent amount above 0 %) the accented set of the final values is baked as well.
+  const int accentStep = payload.value("accent", false) ? dgg::QuantizeAccentStep(mAccentAmount.load(std::memory_order_relaxed)) : 0;
+
+  // The drag is over: the misses of its preview hits belonged to moving knob values and are dropped; the bakes below are the ones of the final values. An accented set that is not baked here follows with the first accented hit (on demand).
+  mParamDragging.store(false, std::memory_order_relaxed);
+  for (int w = 0; w < 2; ++w) { mMissNoteBits[w].store(0, std::memory_order_relaxed); mMissAccentNoteBits[w].store(0, std::memory_order_relaxed); }
 
   if (family == "ride")
   {
     const int idx = (index >= 0 && index < dgg::CountInstruments("ride")) ? index : 0;
     EnqueueRideVariantBake(idx, rebake);
+    if (accentStep > 0) EnqueueRideVariantBake(idx, rebake, accentStep);
   }
   else if (family == "hihat")
   {
     const int idx = (index >= 0 && index < dgg::CountInstruments("hihat")) ? index : 0;
     EnqueueHiHatVariantBake(idx, rebake);
+    if (accentStep > 0) EnqueueHiHatVariantBake(idx, rebake, accentStep);
   }
   else if (family == "cymbal")
   {
     const int idx = (index >= 0 && index < dgg::CountInstruments("cymbal")) ? index : 0;
     EnqueueCrashVariantBake(idx, rebake);
+    if (accentStep > 0) EnqueueCrashVariantBake(idx, rebake, accentStep);
   }
 }
 
@@ -3150,6 +3164,7 @@ void EnqueueRideSet(const char* label, const dgg::TR808VariantKey128& key, int t
     bakeVoice.decayKnob01 = p.decay; bakeVoice.toneKnob = p.tone; bakeVoice.levelKnob = p.level;
     bakeVoice.pitchRatio = p.pitch;
     bakeVoice.diagUseVariantPool = false;
+    bakeVoice.SetAccent(dgg::DequantizeAccentStep(p.accentStep));   // an accented set is rendered at its quantized Accent amount (0 = the normal set)
     std::vector<float> tap;
     std::vector<double> scratch(4096);
     bakeVoice.tapVariantBake = &tap;
@@ -3178,6 +3193,7 @@ void EnqueueHiHatSet(const dgg::TR808VariantKey128& key, int target, bool loadIf
     bakeVoice.decayKnob01 = p.decay; bakeVoice.levelKnob01 = p.level;
     bakeVoice.pitchRatio = p.pitch;
     bakeVoice.diagUseVariantPool = false;
+    bakeVoice.SetAccent(dgg::DequantizeAccentStep(p.accentStep));
     std::vector<float> tap;
     std::vector<double> scratch(4096);
     bakeVoice.tapVariantBake = &tap;
@@ -3476,37 +3492,44 @@ void DrumGroover::PollApplyJob()
     {"total", gApplyJob.total}, {"remaining", remaining} });
 }
 
-void DrumGroover::EnqueueRideVariantBake(int poolIndex, bool rebakeAll)
+void DrumGroover::EnqueueRideVariantBake(int poolIndex, bool rebakeAll, int accentStep)
 {
   if (poolIndex < 0 || poolIndex >= (int)mRidePools.size()) return;
   auto& voices = mRidePools[poolIndex].Voices();
   if (voices.empty()) return;
-  EnqueueRideSet("ride", dgg::RideVoiceKey(dgg::RideArticulationForPool(poolIndex), voices[0], GetSampleRate()),
+  EnqueueRideSet("ride", dgg::RideVoiceKey(dgg::RideArticulationForPool(poolIndex), voices[0], GetSampleRate(), accentStep),
     mCacheVariantCount.load(std::memory_order_relaxed), /*loadIfComplete=*/true, rebakeAll);
 }
 
-void DrumGroover::EnqueueHiHatVariantBake(int poolIndex, bool rebakeAll)
+void DrumGroover::EnqueueHiHatVariantBake(int poolIndex, bool rebakeAll, int accentStep)
 {
   if (poolIndex < 0 || poolIndex >= (int)mHiHatPools.size()) return;
   auto& voices = mHiHatPools[poolIndex].Voices();
   if (voices.empty()) return;
-  EnqueueHiHatSet(dgg::HiHatVoiceKey(poolIndex, voices[0], GetSampleRate()),
+  EnqueueHiHatSet(dgg::HiHatVoiceKey(poolIndex, voices[0], GetSampleRate(), accentStep),
     mCacheVariantCount.load(std::memory_order_relaxed), /*loadIfComplete=*/true, rebakeAll);
 }
 
 // Cymbal plays through TR808RideVoice (Crash/Mute articulations, see
 // 808RideVoice.h); poolIndex = cymbalPos * 2 + (isMute ? 1 : 0).
-void DrumGroover::EnqueueCrashVariantBake(int poolIndex, bool rebakeAll)
+void DrumGroover::EnqueueCrashVariantBake(int poolIndex, bool rebakeAll, int accentStep)
 {
   if (poolIndex < 0 || poolIndex >= (int)mCymbalPools.size()) return;
   auto& voices = mCymbalPools[poolIndex].Voices();
   if (voices.empty()) return;
-  EnqueueRideSet("cymbal", dgg::RideVoiceKey(dgg::CymbalArticulationForPool(poolIndex), voices[0], GetSampleRate()),
+  EnqueueRideSet("cymbal", dgg::RideVoiceKey(dgg::CymbalArticulationForPool(poolIndex), voices[0], GetSampleRate(), accentStep),
     mCacheVariantCount.load(std::memory_order_relaxed), /*loadIfComplete=*/true, rebakeAll);
 }
 
 void DrumGroover::DrainCacheMisses()
 {
+  if (mParamDragging.load(std::memory_order_relaxed))
+  {
+    constexpr int64_t kDragWatchdogMs = 3000;   // no setVoiceParam for this long: the release was lost, the drag is over
+    const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (nowMs - mParamEditMs.load(std::memory_order_relaxed) < kDragWatchdogMs) return;   // the bits stay set until the release drops them
+    mParamDragging.store(false, std::memory_order_relaxed);
+  }
   for (int w = 0; w < 2; ++w)
   {
     uint64_t bits = mMissNoteBits[w].exchange(0, std::memory_order_relaxed);
@@ -3525,6 +3548,26 @@ void DrumGroover::DrainCacheMisses()
     }
   }
 
+  // Accented hits that found no baked variant of their accented set: bake that set now (on demand, never ahead of time), at the current Accent amount; the hit itself was played live.
+  const int accentStep = dgg::QuantizeAccentStep(mAccentAmount.load(std::memory_order_relaxed));
+  for (int w = 0; w < 2; ++w)
+  {
+    uint64_t bits = mMissAccentNoteBits[w].exchange(0, std::memory_order_relaxed);
+    while (bits)
+    {
+      int b = 0;
+      while (!((bits >> b) & 1)) ++b;
+      bits &= bits - 1;
+      if (accentStep <= 0) continue;
+      for (const auto& target : NoteToVariantPoolTargets(w * 64 + b))
+      {
+        DGG_Log("CacheMissAccent: note " + std::to_string(w * 64 + b) + " -> " + target.instrument + " pool " + std::to_string(target.poolIndex) + " accent step " + std::to_string(accentStep));
+        if (target.instrument == "ride")   EnqueueRideVariantBake(target.poolIndex, false, accentStep);
+        if (target.instrument == "hihat")  EnqueueHiHatVariantBake(target.poolIndex, false, accentStep);
+        if (target.instrument == "cymbal") EnqueueCrashVariantBake(target.poolIndex, false, accentStep);
+      }
+    }
+  }
 }
 
 
@@ -3726,10 +3769,12 @@ void DrumGroover::TriggerInstrument(const dgg::InstrumentDef& inst, double veloc
 
 void DrumGroover::TriggerGmNote(int note, double velocity01, bool accent)
 {
-  const uint32_t missBefore = dgg::CacheMissSeq().load(std::memory_order_relaxed);
+  const uint32_t missBefore = dgg::CacheMissSeq().load(std::memory_order_relaxed), missAccentBefore = dgg::CacheMissAccentSeq().load(std::memory_order_relaxed);
   TriggerGmNoteVoices(note, velocity01, accent);
   if (note >= 0 && note < 128 && dgg::CacheMissSeq().load(std::memory_order_relaxed) != missBefore)
     mMissNoteBits[note >> 6].fetch_or(uint64_t(1) << (note & 63), std::memory_order_relaxed);
+  if (note >= 0 && note < 128 && dgg::CacheMissAccentSeq().load(std::memory_order_relaxed) != missAccentBefore)
+    mMissAccentNoteBits[note >> 6].fetch_or(uint64_t(1) << (note & 63), std::memory_order_relaxed);
 }
 
 void DrumGroover::TriggerGmNoteVoices(int note, double velocity01, bool accent)

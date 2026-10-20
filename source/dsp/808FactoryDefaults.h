@@ -42,15 +42,15 @@ inline HiHat808Voice::CircuitFamily HiHatPoolFamily(int poolIndex)
 // The key of the set a voice currently plays -- the one place every cache
 // request (pattern sync, knob release, clear-cache reload) builds its key
 // from a live voice.
-inline TR808VariantKey128 RideVoiceKey(TR808RideVoice::Articulation art, const TR808RideVoice& v, double sampleRateHz)
+inline TR808VariantKey128 RideVoiceKey(TR808RideVoice::Articulation art, const TR808RideVoice& v, double sampleRateHz, int accentStep = 0)
 {
-  return TR808RideVoice::MakeVariantPoolKey(static_cast<int>(art), v.decayKnob01, v.toneKnob, v.levelKnob, v.pitchRatio, sampleRateHz);
+  return TR808RideVoice::MakeVariantPoolKey(static_cast<int>(art), v.decayKnob01, v.toneKnob, v.levelKnob, v.pitchRatio, sampleRateHz, accentStep);
 }
 
-inline TR808VariantKey128 HiHatVoiceKey(int poolIndex, const HiHat808Voice& v, double sampleRateHz)
+inline TR808VariantKey128 HiHatVoiceKey(int poolIndex, const HiHat808Voice& v, double sampleRateHz, int accentStep = 0)
 {
   return HiHat808Voice::MakeVariantPoolKey(HiHat808Voice::FamilyKey(HiHatPoolFamily(poolIndex)), poolIndex,
-    v.decayKnob01, v.levelKnob01, v.pitchRatio, sampleRateHz);
+    v.decayKnob01, v.levelKnob01, v.pitchRatio, sampleRateHz, accentStep);
 }
 
 // The key of a factory-default set.

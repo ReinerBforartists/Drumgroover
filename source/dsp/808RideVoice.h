@@ -62,7 +62,7 @@ public:
 
   // Variant pool key. pitchRatio is part of it (see 808VariantPools.h::TR808VariantKey128), and so is the articulation: every articulation gets its
   // own baked set.
-  static dgg::TR808VariantKey128 MakeVariantPoolKey(int art, double decay01, double tone01, double levelKnob01, double pitchRatio, double sampleRateHz)
+  static dgg::TR808VariantKey128 MakeVariantPoolKey(int art, double decay01, double tone01, double levelKnob01, double pitchRatio, double sampleRateHz, int accentStep = 0)
   {
     dgg::TR808VariantKey128 key;
     uint64_t lo = (uint64_t)(art & 0xF);
@@ -71,13 +71,13 @@ public:
     lo = (lo << 12) | QuantizeVariantKnob01(levelKnob01);
     lo = (lo << 12) | QuantizeVariantPitch(pitchRatio);
     key.lo = lo;
-    key.hi = (uint64_t)std::llround(sampleRateHz);
+    key.hi = dgg::PackKeyHi(sampleRateHz, accentStep);
     return key;
   }
 
   // The quantized settings a key stands for -- the exact inverse of MakeVariantPoolKey(). A bake renders these (not the raw knob values),
   // so a cached set is a pure function of its key.
-  struct VariantPoolParams { int art; double decay, tone, level, pitch, sampleRateHz; };
+  struct VariantPoolParams { int art; double decay, tone, level, pitch, sampleRateHz; int accentStep; };
   static VariantPoolParams DecodeVariantPoolKey(const dgg::TR808VariantKey128& key)
   {
     VariantPoolParams p;
@@ -86,7 +86,8 @@ public:
     p.tone  = dgg::DequantizeVariant((key.lo >> 24) & 0xFFF);
     p.decay = dgg::DequantizeVariant((key.lo >> 36) & 0xFFF);
     p.art   = (int)((key.lo >> 48) & 0xF);
-    p.sampleRateHz = (double)key.hi;
+    p.sampleRateHz = dgg::KeyHiSampleRate(key.hi);
+    p.accentStep = dgg::KeyHiAccentStep(key.hi);
     return p;
   }
 
@@ -97,10 +98,11 @@ public:
   {
     static const char* kArtNames[7] = { "Ride_BowTip", "Ride_BowShank", "Ride_BellTip", "Ride_BellShank", "Ride_Edge", "Ride_Mute", "Cymbal_Crash" };
     const VariantPoolParams p = DecodeVariantPoolKey(key);
-    char buf[128];
-    std::snprintf(buf, sizeof(buf), "%s_decay%d_tone%d_level%d_pitch%d_sr%d_m%d",
+    char buf[160], acc[16] = "";
+    if (p.accentStep > 0) std::snprintf(acc, sizeof(acc), "_acc%d", p.accentStep * 100 / dgg::kAccentStepsPerUnit);   // accented set: the Accent amount in percent; no suffix = the normal set
+    std::snprintf(buf, sizeof(buf), "%s_decay%d_tone%d_level%d_pitch%d_sr%d%s_m%d",
       kArtNames[std::clamp(p.art, 0, 6)], (int)std::llround(p.decay * 100.0), (int)std::llround(p.tone * 100.0),
-      (int)std::llround(p.level * 100.0), (int)std::llround(p.pitch * 100.0), (int)std::llround(p.sampleRateHz), kModelVersion);
+      (int)std::llround(p.level * 100.0), (int)std::llround(p.pitch * 100.0), (int)std::llround(p.sampleRateHz), acc, kModelVersion);
     return buf;
   }
 
@@ -115,7 +117,7 @@ public:
   void Trigger(double velocity01) override { Trigger(velocity01, Articulation::BowTip); }
 
   // Accent of the NEXT Trigger(), 0..1 of the 808 trigger range (0 = the normal note, 4.09 V, the calibrated reference every cached variant is baked at; 1 = 14 V). The velocity is only
-  // the loudness (linear, applied to the output). An accented hit is not in the variant pool: it is synthesised live with the accent voltage on the accent stage of the circuit model.
+  // the loudness (linear, applied to the output). An accented hit plays from its own set of the variant pool (key with the Accent amount in steps of 1 %), baked on demand; until a variant exists it is synthesised live with the accent voltage on the accent stage of the circuit model.
   void SetAccent(double accent01) override { mAccent = std::clamp(accent01, 0.0, 1.0); }
 
   void Trigger(double velocity01, Articulation art)
@@ -138,13 +140,15 @@ public:
     mCachePlaybackPos = 0;
     mDebugVariantPoolIndex = -1;
     mDebugVariantPoolSize = 0;
-    if (diagUseVariantPool && mAccent <= 0.0)
+    const int accentStep = dgg::QuantizeAccentStep(mAccent);   // 0 = a normal hit
+    if (diagUseVariantPool)
     {
-      const dgg::TR808VariantKey128 variantKey = MakeVariantPoolKey(static_cast<int>(art), decayKnob01, toneKnob, levelKnob, pitchRatio, mSampleRate);
+      const dgg::TR808VariantKey128 variantKey = MakeVariantPoolKey(static_cast<int>(art), decayKnob01, toneKnob, levelKnob, pitchRatio, mSampleRate, accentStep);
       mCachePlayback = dgg::TR808RideVariantPool::Instance().GetRandomIndexed(variantKey, mDebugVariantPoolIndex, &mDebugVariantPoolSize);
     }
-    // A miss on a plugin voice is reported (the plugin bakes the key); this hit is synthesised live with the fast model below.
-    if (cacheOnly && mAccent <= 0.0 && !mCachePlayback) dgg::CacheMissSeq().fetch_add(1, std::memory_order_relaxed);
+    // A miss on a plugin voice is reported (the plugin bakes the key: the normal set at once, an accented set on demand); this hit is synthesised live with the fast model below.
+    // While a set is only partly baked, GetRandomIndexed() plays one of the variants that exist.
+    if (cacheOnly && !mCachePlayback) (accentStep > 0 ? dgg::CacheMissAccentSeq() : dgg::CacheMissSeq()).fetch_add(1, std::memory_order_relaxed);
     mFastActive = false;
     if (!mCachePlayback)
     {

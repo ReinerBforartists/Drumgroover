@@ -258,9 +258,9 @@ private:
   // in-memory pool (see DrumGroover.cpp).
   // rebakeAll: bake a completely new set even if one exists (Cache panel
   // "Rebake at value change").
-  void EnqueueRideVariantBake(int poolIndex, bool rebakeAll = false);
-  void EnqueueHiHatVariantBake(int poolIndex, bool rebakeAll = false);
-  void EnqueueCrashVariantBake(int poolIndex, bool rebakeAll = false);
+  void EnqueueRideVariantBake(int poolIndex, bool rebakeAll = false, int accentStep = 0);   // accentStep > 0: the accented set (on demand), 0: the normal set
+  void EnqueueHiHatVariantBake(int poolIndex, bool rebakeAll = false, int accentStep = 0);
+  void EnqueueCrashVariantBake(int poolIndex, bool rebakeAll = false, int accentStep = 0);
 
   // Scans `fp` for which Ride/HiHat/Cymbal pools are actually used (via
   // mTracks' trackId->gm lookup + NoteToVariantPoolTargets(), see
@@ -429,6 +429,11 @@ private:
   // Hits that found no baked variant, written on the audio thread, serviced in OnIdle() by DrainCacheMisses():
   // Ride/HiHat/Cymbal by GM note (keys carry no velocity: the pool's current key is loaded or baked).
   std::atomic<uint64_t> mMissNoteBits[2]{{0}, {0}};
+  std::atomic<uint64_t> mMissAccentNoteBits[2]{{0}, {0}};   // the same for accented hits (their accented set is baked on demand)
+  // A knob of a Ride / HiHat / Cymbal is being dragged: set by every setVoiceParam of these families, cleared by the commitVoiceParam at the mouse release (a watchdog ends a drag whose release never arrived).
+  // While it is set, DrainCacheMisses() bakes nothing: the preview hits of the drag run through moving knob values and every one of them is a different key; the release bakes the final values.
+  std::atomic<bool> mParamDragging{false};
+  std::atomic<int64_t> mParamEditMs{0};   // steady_clock milliseconds of the last setVoiceParam of these families
   void DrainCacheMisses();
   void TriggerGmNoteVoices(int note, double velocity01, bool accent = false);
 
