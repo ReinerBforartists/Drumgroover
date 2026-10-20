@@ -1439,7 +1439,7 @@
     });
     mxTimelineShowLoop(tlLoopStart, tlLoopEnd);
     attachMxLoopBar(bar);
-    mxTlHead = document.createElement('div'); mxTlHead.className = 'mx-tl-head'; mxTl.appendChild(mxTlHead);
+    mxTlHead = document.createElement('div'); mxTlHead.className = 'dg-playhead'; mxTl.appendChild(mxTlHead);
     mxTimelineSetPlayhead(-1);
   }
   // beatPos < 0: idle, parked where playback will start; otherwise the live position.
