@@ -1642,6 +1642,44 @@ function mixerWireKnobZoom(panel) {
   panel.addEventListener('mouseenter', () => { if (a11yOn()) setClusterZoomOrigin(panel, getClipAncestor(panel)); });
 }
 
+// Sidebar cards. The static cards (Main, Selected notes) sit outside the scrolling sidebar and zoom in place (CSS :hover); JS only sets
+// a bounds-aware origin. The cards inside #neSidebar are clipped by it, so while hovered they pop out to position:fixed (placeholder keeps
+// their spot), like the Drum Engine clusters. A re-render of the sidebar removes both the card and its placeholder.
+const neA11yOn = () => document.body.classList.contains('a11y-hover-zoom');
+document.querySelectorAll('.ne-sidebar-top').forEach(card => card.addEventListener('mouseenter', () => { if (neA11yOn()) setClusterZoomOrigin(card); }));
+let poppedSidebarSection = null;
+function popInSidebarSection(sec) {
+  if (!sec) return;
+  sec.style.position = ''; sec.style.top = ''; sec.style.left = ''; sec.style.width = ''; sec.style.margin = ''; sec.style.transformOrigin = '';
+  sec.classList.remove('a11y-zoomed');
+  if (sec._a11yPlaceholder) { sec._a11yPlaceholder.remove(); sec._a11yPlaceholder = null; }
+  if (poppedSidebarSection === sec) poppedSidebarSection = null;
+}
+function popOutSidebarSection(sec) {
+  if (poppedSidebarSection === sec) return;
+  if (poppedSidebarSection) popInSidebarSection(poppedSidebarSection);
+  const rect = sec.getBoundingClientRect();
+  const scale = currentUIScale();
+  const placeholder = document.createElement('div');
+  placeholder.className = 'de-param-cluster-placeholder';
+  placeholder.style.width = (rect.width / scale) + 'px';
+  placeholder.style.height = (rect.height / scale) + 'px';
+  sec.parentNode.insertBefore(placeholder, sec);
+  sec._a11yPlaceholder = placeholder;
+  placeFixedAt(sec, rect);
+  sec.classList.add('a11y-zoomed');
+  poppedSidebarSection = sec;
+  setClusterZoomOrigin(sec);
+  sec.addEventListener('mouseleave', () => popInSidebarSection(sec), { once: true });
+}
+document.getElementById('neSidebar')?.addEventListener('mouseover', (e) => {
+  if (!neA11yOn()) return;
+  const sec = e.target.closest && e.target.closest('.ne-section');
+  if (!sec || sec === poppedSidebarSection || sec._a11yPlaceholder) return;
+  popOutSidebarSection(sec);
+});
+document.getElementById('neSidebar')?.addEventListener('scroll', () => { if (poppedSidebarSection) popInSidebarSection(poppedSidebarSection); });
+
 // Sidebar dial rows zoom in place (CSS :hover). JS only sets a bounds-aware
 // origin, bound to .ne-sidebar's clip, so the scaled row stays inside instead of
 // being sliced. No pop-out / placeholder / lock needed -- in-place scale has no

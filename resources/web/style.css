@@ -201,6 +201,15 @@ body.a11y-hover-zoom .fx-pop .lim-knobs-inner:hover .ctrl {
   background:transparent;
 }
 
+/* Accessible hover zoom of the Note Editor sidebar cards (Main, Selected notes and the cards of the current block). The static cards zoom in
+   place; the cards inside the scrolling sidebar pop out to position:fixed while hovered (popOutSidebarSection) so the sidebar's clip does not
+   slice them. Both grow to the left and downward from the sidebar's edge. */
+body.a11y-hover-zoom .ne-sidebar-top, body.a11y-hover-zoom .ne-sidebar .ne-section { position:relative; transition:transform .12s ease; }
+body.a11y-hover-zoom .ne-sidebar-top:hover, body.a11y-hover-zoom .ne-sidebar .ne-section.a11y-zoomed {
+  transform:scale(var(--a11y-zoom-factor, 1.5)); z-index:40; background:var(--raised); box-shadow:0 6px 20px rgba(0,0,0,.55);
+}
+body.a11y-hover-zoom .ne-sidebar-top:hover .ctrl, body.a11y-hover-zoom .ne-sidebar .ne-section.a11y-zoomed .ctrl { background:transparent; }
+
 /* Placeholder reserving a popped-out cluster's spot so its siblings don't jump. */
 .de-param-cluster-placeholder { flex-shrink:0; visibility:hidden; pointer-events:none; }
 
@@ -891,7 +900,10 @@ select.ne-len-input { appearance:none; -webkit-appearance:none; } /* "Turnaround
 .ne-accent-off .ne-accent-mark { opacity:.45; }
 /* Lo-Fi has no accent: the lane stays visible (existing markers are kept for the 808 engine) but is greyed out and inert. */
 .ne-accent-disabled { opacity:.35; filter:grayscale(1); pointer-events:none; }
-.ne-vel-labels { width:170px; flex-shrink:0; display:flex; flex-direction:column; justify-content:center; gap:6px; padding:10px 8px 4px 0; }
+.ne-vel-labels { width:170px; flex-shrink:0; display:flex; flex-direction:column; justify-content:center; gap:5px; padding:3px 8px 4px 0; }
+/* Accessible hover zoom of the velocity lane's slider panel (bottom left): it grows up and to the right from its bottom left corner. */
+body.a11y-hover-zoom .ne-vel-labels { position:relative; transition:transform .12s ease; transform-origin:left bottom; }
+body.a11y-hover-zoom .ne-vel-labels:hover { transform:scale(var(--a11y-zoom-factor, 1.5)); z-index:40; background:var(--raised); border-radius:6px; box-shadow:-8px 0 0 var(--raised), 0 6px 20px rgba(0,0,0,.55); }
 .ne-vel-lane { position:relative; min-height:80px; flex:1; overflow-x:auto; overflow-y:hidden; background:var(--bg); }
 .ne-vel-handle { position:absolute; width:11px; height:11px; border-radius:50%; border:1px solid #0f172a; cursor:ns-resize; z-index:3; touch-action:none; }
 .ne-vel-line { position:absolute; bottom:0; width:1px; opacity:.6; }
