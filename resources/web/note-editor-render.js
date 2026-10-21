@@ -215,25 +215,15 @@ function renderNoteEditor() {
     if (sameSelection) for (const n of resolvedNow) { if (!neNudgeSelectedRefs.has(n)) { sameSelection = false; break; } }
     if (!sameSelection) {
       neNudgeSteps = 0;
-      const rSlider = document.getElementById('randomizeAmt');
-      if (rSlider && +rSlider.value !== 0 && !randomizeGestureItems) {
+      // A new selection starts from the notes as they are: the slider baselines are dropped and the sliders go back to neutral.
+      // (An undo/redo step that restores the baselines itself keeps them.)
+      if (!neKeepToolBaselines) {
+        randomizeGestureItems = null; swingGestureItems = null; quantizeGestureItems = null;
         suppressKnobRegen = true;
-        rSlider.value = 0;
-        rSlider.dispatchEvent(new Event('input'));
-        suppressKnobRegen = false;
-      }
-      const sSlider = document.getElementById('swingAmt');
-      if (sSlider && +sSlider.value !== 50 && !swingGestureItems) {
-        suppressKnobRegen = true;
-        sSlider.value = 50;
-        sSlider.dispatchEvent(new Event('input'));
-        suppressKnobRegen = false;
-      }
-      const qSlider = document.getElementById('quantizeAmt');
-      if (qSlider && +qSlider.value !== 0 && !quantizeGestureItems) {
-        suppressKnobRegen = true;
-        qSlider.value = 0;
-        qSlider.dispatchEvent(new Event('input'));
+        [['randomizeAmt', 0], ['swingAmt', 0], ['quantizeAmt', 0]].forEach(([id, neutral]) => {
+          const slider = document.getElementById(id);
+          if (slider && +slider.value !== neutral) { slider.value = neutral; slider.dispatchEvent(new Event('input')); }
+        });
         suppressKnobRegen = false;
       }
     }

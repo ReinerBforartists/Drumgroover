@@ -598,6 +598,8 @@ const GROUPS = { kick: 'Kick', snare: 'Snare', hihat: 'Hi-Hat', rackTom1: 'Rack 
 let expandedGroups = new Set();
 let selectedNotes = new Set();
 let neNudgeSteps = 0;
+// Set while an undo/redo step puts the selection tools' baselines back, so the render does not take the restored notes for a new selection.
+let neKeepToolBaselines = false;
 let neNudgeSelectedRefs = new Set();
 let showGmNotes = false;
 let selectedGenre = 'straight';
@@ -1206,13 +1208,13 @@ function updateGroupLockUI() {
   const rndSlider = document.getElementById('randomizeAmt');
   if (rndSlider) {
     rndSlider.disabled = noSelection;
-    rndSlider.closest('.ctrl').classList.toggle('knob-disabled', noSelection);
+    rndSlider.closest('.ne-vel-mini-ctrl').classList.toggle('knob-disabled', noSelection);
   }
   ['swingAmt', 'quantizeAmt'].forEach(id => {
     const slider = document.getElementById(id);
     if (!slider) return;
     slider.disabled = noSelection;
-    slider.closest('.ctrl').classList.toggle('knob-disabled', noSelection);
+    slider.closest('.ne-vel-mini-ctrl').classList.toggle('knob-disabled', noSelection);
   });
   const nudgeCtrl = document.getElementById('nudgeCtrl');
   if (nudgeCtrl) nudgeCtrl.classList.toggle('knob-disabled', noSelection);
@@ -1264,7 +1266,28 @@ function neSyncCustomCluster() {
 let suppressKnobRegen = false;
 const KNOB_REGEN_DEBOUNCE_MS = 120;
 const knobGestureStarters = {};
-function wireKnobGestureUndo(sliderIds, regenFn, label) {
+// Quant, Swing and Rnd keep the notes as they were when the selection was made (the gesture items) so that the slider value is the
+// whole effect. toolBaselineApi reads that baseline into a plain snapshot for the undo entry and resolves it again in the restored notes.
+function toolBaselineApi(read, write) {
+  return {
+    get() {
+      const items = read();
+      return items ? { unit: items.unit, items: items.map(({ note, ...rest }) => ({ ...rest })) } : null;
+    },
+    set(snap, block) {
+      if (!snap) { write(null); return; }
+      const items = snap.items.map(it => {
+        const note = (block.data[it.trackId] || []).find(n => n.beat === it.appliedBeat && (it.appliedVel === undefined || n.vel === it.appliedVel));
+        return note ? { ...it, note } : null;
+      });
+      if (items.some(it => !it)) { write(null); return; }
+      items.unit = snap.unit;
+      write(items);
+    },
+  };
+}
+// toolBaseline (optional): a toolBaselineApi; the undo entry then also restores the baseline and the selection.
+function wireKnobGestureUndo(sliderIds, regenFn, label, toolBaseline) {
   let gesture = null;
   let pendingRegen = null;
   const captureControls = () => sliderIds.map(id => {
@@ -1290,7 +1313,8 @@ function wireKnobGestureUndo(sliderIds, regenFn, label) {
         beforeData: JSON.stringify(block.data),
         beforeLocked: JSON.stringify(block.lockedGroups || {}),
         beforeKnobs: JSON.stringify(block.knobs || {}),
-        beforeControls: captureControls()
+        beforeControls: captureControls(),
+        beforeTool: toolBaseline ? { baseline: toolBaseline.get(), selection: [...selectedNotes] } : null
       };
     }
   };
@@ -1324,22 +1348,30 @@ function wireKnobGestureUndo(sliderIds, regenFn, label) {
       const afterLocked = JSON.stringify(block.lockedGroups || {});
       const afterKnobs = JSON.stringify(block.knobs || {});
       const afterControls = captureControls();
+      const afterTool = toolBaseline ? { baseline: toolBaseline.get(), selection: [...selectedNotes] } : null;
       const dataChanged = afterData !== g.beforeData || afterLocked !== g.beforeLocked;
       const controlsChanged = JSON.stringify(afterControls) !== JSON.stringify(g.beforeControls);
       if (!dataChanged && !controlsChanged) return;
-      const restore = (dataStr, lockedStr, knobsStr, controls) => {
+      const restore = (dataStr, lockedStr, knobsStr, controls, tool) => {
         block.data = JSON.parse(dataStr);
         block.lockedGroups = JSON.parse(lockedStr);
         block.knobs = JSON.parse(knobsStr);
         block.generated = false;
         restoreControls(controls);
+        if (tool) {
+          selectedNotes.clear();
+          tool.selection.forEach(k => selectedNotes.add(k));
+          toolBaseline.set(tool.baseline, block);
+          neKeepToolBaselines = true;
+        }
         rebuildFullFromEditedBlocks();
         renderNoteEditor();
+        neKeepToolBaselines = false;
         updateGroupLockUI();
       };
       pushUndo(label,
-        () => restore(g.beforeData, g.beforeLocked, g.beforeKnobs, g.beforeControls),
-        () => restore(afterData, afterLocked, afterKnobs, afterControls)
+        () => restore(g.beforeData, g.beforeLocked, g.beforeKnobs, g.beforeControls, g.beforeTool),
+        () => restore(afterData, afterLocked, afterKnobs, afterControls, afterTool)
       );
     });
   });
@@ -1818,7 +1850,7 @@ async function neDeleteCustomTrack(t) {
 // =========================================
 const sliderMap = {
   randomizeAmt:['randomizeAmtVal', v=>v+'%'],
-  swingAmt:['swingAmtVal', v=>v+'%'],
+  swingAmt:['swingAmtVal', v=>(v>0?'+':'')+v+'%'],
   quantizeAmt:['quantizeAmtVal', v=>v+'%'],
 };
 Object.entries(sliderMap).forEach(([id,[valId,fmt]]) => {
@@ -1833,12 +1865,13 @@ let randomizeGestureItems = null;
 function randomizeRegen() {
   const block = findBlock(activeBlockId);
   if (!block) return;
+  if (randomizeGestureItems && !sliderBaselineValid(block, randomizeGestureItems)) randomizeGestureItems = null;
   if (!randomizeGestureItems) {
     if (!selectedNotes.size) return;
     const items = neResolveSelection(block);
     if (!items.length) return;
     randomizeGestureItems = items.map(it => ({
-      trackId: it.trackId, note: it.note,
+      trackId: it.trackId, note: it.note, appliedBeat: it.note.beat, appliedVel: it.note.vel,
       origBeat: it.note.beat, origVel: it.note.vel,
       velF: Math.random() - 0.5, beatF: Math.random() - 0.5
     }));
@@ -1857,31 +1890,63 @@ function randomizeRegen() {
   selectedNotes.clear();
   randomizeGestureItems.forEach(it => selectedNotes.add(it.trackId + '|' + it.note.beat));
   touchedTracks.forEach(tid => markTrackManuallyEdited(block, tid));
+  randomizeGestureItems.forEach(it => { it.appliedBeat = it.note.beat; it.appliedVel = it.note.vel; });
   block.generated = false;
   rebuildFullFromEditedBlocks();
   renderNoteEditor();
 }
-wireKnobGestureUndo(['randomizeAmt'], randomizeRegen, 'Randomize');
-document.getElementById('randomizeAmt').addEventListener('change', () => { randomizeGestureItems = null; });
+wireKnobGestureUndo(['randomizeAmt'], randomizeRegen, 'Randomize', toolBaselineApi(() => randomizeGestureItems, v => { randomizeGestureItems = v; }));
 
-// Swing: delays every off-beat note (odd Snap step) of the selection by up to half a Snap step; 50% leaves the notes alone.
+// The selection tools (Quant, Swing, Rnd) work from the notes as they were when the selection was made, like the velocity lane's
+// sliders: the slider value is the whole effect, and Ctrl+click puts the notes back. The baseline is dropped when the selection
+// changes, or when something else moved or replaced the notes since the last slider move.
+function sliderBaselineValid(block, items) {
+  return items.every(it => (block.data[it.trackId] || []).includes(it.note)
+    && it.note.beat === it.appliedBeat && (it.appliedVel === undefined || it.note.vel === it.appliedVel));
+}
+['randomizeAmt', 'swingAmt', 'quantizeAmt'].forEach(id => {
+  const slider = document.getElementById(id);
+  slider.addEventListener('pointerdown', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    if (slider.disabled) return;
+    slider.value = 0;
+    slider.dispatchEvent(new Event('input'));
+    slider.dispatchEvent(new Event('change'));
+  });
+});
+
+// Swing: moves the off-beat notes of the selection by -50..+50% of the swing unit (positive = later); 0 leaves the notes alone.
+// The unit is the Snap step, or the first multiple of it (up to an 8th) at which the selection has notes on odd positions: with a
+// 16th Snap and hi-hats on 8ths the 8th off-beats swing, with hi-hats on 16ths the 16th off-beats do.
 let swingGestureItems = null;
 function swingRegen() {
   const block = findBlock(activeBlockId);
   if (!block) return;
+  if (swingGestureItems && !sliderBaselineValid(block, swingGestureItems)) swingGestureItems = null;
   if (!swingGestureItems) {
     if (!selectedNotes.size) return;
     const items = neResolveSelection(block);
     if (!items.length) return;
-    swingGestureItems = items.map(it => ({ trackId: it.trackId, note: it.note, origBeat: it.note.beat }));
+    const snap = readGrid().snap;
+    const onOddStep = (beat, unit) => { const step = Math.round(beat / unit); return step % 2 !== 0 && Math.abs(beat - step * unit) <= unit * 0.3; };
+    let unit = snap;
+    for (let k = 0; k < 4; k++) {
+      const candidate = snap * Math.pow(2, k);
+      if (k > 0 && candidate > 0.5 + 1e-9) break;   // swing stays at 8th level or finer
+      if (items.some(it => onOddStep(it.note.beat, candidate))) { unit = candidate; break; }
+    }
+    swingGestureItems = items.map(it => ({ trackId: it.trackId, note: it.note, origBeat: it.note.beat, appliedBeat: it.note.beat }));
+    swingGestureItems.unit = unit;
   }
   const g = readGrid();
-  const shift = g.snap * (2 * (getParamNum('swingAmt') / 100) - 1);
+  const unit = swingGestureItems.unit;
+  const shift = unit * getParamNum('swingAmt') / 100;
   const totalBeats = (block.length || 1) * g.numerator;
   const touchedTracks = new Set();
   swingGestureItems.forEach(it => {
-    const step = Math.round(it.origBeat / g.snap);
-    const offBeat = step % 2 !== 0 && Math.abs(it.origBeat - step * g.snap) <= g.snap * 0.3;
+    const step = Math.round(it.origBeat / unit);
+    const offBeat = step % 2 !== 0 && Math.abs(it.origBeat - step * unit) <= unit * 0.3;
     it.note.beat = offBeat ? Math.max(0, Math.min(totalBeats - 0.0001, it.origBeat + shift)) : it.origBeat;
     if (shift !== 0 && it.note.turnaround) delete it.note.turnaround;
     touchedTracks.add(it.trackId);
@@ -1890,12 +1955,12 @@ function swingRegen() {
   selectedNotes.clear();
   swingGestureItems.forEach(it => selectedNotes.add(it.trackId + '|' + it.note.beat));
   if (shift !== 0) touchedTracks.forEach(tid => markTrackManuallyEdited(block, tid));
+  swingGestureItems.forEach(it => { it.appliedBeat = it.note.beat; });
   block.generated = false;
   rebuildFullFromEditedBlocks();
   renderNoteEditor();
 }
-wireKnobGestureUndo(['swingAmt'], swingRegen, 'Swing');
-document.getElementById('swingAmt').addEventListener('change', () => { swingGestureItems = null; });
+wireKnobGestureUndo(['swingAmt'], swingRegen, 'Swing', toolBaselineApi(() => swingGestureItems, v => { swingGestureItems = v; }));
 
 // Quantize strength: moves each selected note from where it was toward its Snap grid position by the chosen share; 100% equals Snap to Grid.
 let quantizeGestureItems = null;
@@ -1904,12 +1969,13 @@ function quantizeRegen() {
   if (!block) return;
   const g = readGrid();
   const totalBeats = (block.length || 1) * g.numerator;
+  if (quantizeGestureItems && !sliderBaselineValid(block, quantizeGestureItems)) quantizeGestureItems = null;
   if (!quantizeGestureItems) {
     if (!selectedNotes.size) return;
     const items = neResolveSelection(block);
     if (!items.length) return;
     quantizeGestureItems = items.map(it => ({
-      trackId: it.trackId, note: it.note, origBeat: it.note.beat,
+      trackId: it.trackId, note: it.note, origBeat: it.note.beat, appliedBeat: it.note.beat,
       target: Math.max(0, Math.min(totalBeats - 0.0001, neQuantizeForTrack(it.note.beat, g, block, it.trackId)))
     }));
   }
@@ -1924,12 +1990,12 @@ function quantizeRegen() {
   selectedNotes.clear();
   quantizeGestureItems.forEach(it => selectedNotes.add(it.trackId + '|' + it.note.beat));
   if (strength > 0) touchedTracks.forEach(tid => markTrackManuallyEdited(block, tid));
+  quantizeGestureItems.forEach(it => { it.appliedBeat = it.note.beat; });
   block.generated = false;
   rebuildFullFromEditedBlocks();
   renderNoteEditor();
 }
-wireKnobGestureUndo(['quantizeAmt'], quantizeRegen, 'Quantize');
-document.getElementById('quantizeAmt').addEventListener('change', () => { quantizeGestureItems = null; });
+wireKnobGestureUndo(['quantizeAmt'], quantizeRegen, 'Quantize', toolBaselineApi(() => quantizeGestureItems, v => { quantizeGestureItems = v; }));
 ['randomizeAmt', 'swingAmt', 'quantizeAmt'].forEach(id => wireMiniSliderWheel(document.getElementById(id)));
 
 const REROLL_FNS = { kick: regenerateKickGroup, snare: regenerateSnareGroup, hihat: regenerateHihatGroup, ride: regenerateRideGroup, toms: regenerateTomsGroup, cymbals: regenerateCymbalsGroup };
@@ -2712,7 +2778,7 @@ function wireMiniSliderWheel(slider) {
 }
 
 function initKnobs() {
-  const sliders = document.querySelectorAll('input[type="range"]:not(#tlZoomSlider):not(.ne-mini-slider)');
+  const sliders = document.querySelectorAll('input[type="range"]:not(#tlZoomSlider):not(.ne-mini-slider):not(.ne-vel-mini-slider)');
   sliders.forEach(wireKnob);
 }
 

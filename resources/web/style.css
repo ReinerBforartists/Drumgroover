@@ -102,9 +102,13 @@ body { overflow:hidden; }
 .ne-editing-toolbar { padding-bottom:10px; margin-bottom:10px; border-bottom:1px solid var(--border); }
 /* Options > Show toolbar off ("hand mode"): the toolbar goes, and so do Genre, Feel and the generator sections of the sidebar. The selection tools (Rnd, Swing, Nudge) live in the sidebar and stay. */
 .ne-editing-toolbar.collapsed { display:none; }
-.ne-nudge-group { display:flex; align-items:center; gap:4px; }
-.ne-nudge-group .ne-mini-val { min-width:24px; text-align:center; }
-.ctrl.knob-disabled .ne-mini-slider, .ctrl.knob-disabled .ne-barnav-btn { opacity:.35; pointer-events:none; }
+/* Selection tools in the sidebar use the velocity lane's sliders (.ne-vel-mini-*); a wider label than the lane's three-letter ones. */
+.ne-sidebar-top .ne-vel-mini-ctrl { padding:0; gap:8px; }
+.ne-sidebar-top .ne-vel-mini-label { width:46px; text-align:left; }
+.ne-sidebar-top .ne-vel-mini-val { width:34px; line-height:16px; }
+.ne-nudge-group { display:flex; align-items:center; gap:6px; margin-left:auto; }
+.ne-nudge-group .ne-vel-mini-val { width:24px; text-align:center; }
+.ne-vel-mini-ctrl.knob-disabled .ne-vel-mini-slider, .ne-vel-mini-ctrl.knob-disabled .ne-barnav-btn { opacity:.35; pointer-events:none; }
 body.ne-hand-mode .ne-gen-only { display:none !important; }
 .panel-title { font-size:9px; letter-spacing:.1em; color:var(--muted); text-transform:uppercase; }
 .controls { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; }
