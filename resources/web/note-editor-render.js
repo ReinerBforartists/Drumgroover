@@ -1438,19 +1438,17 @@ function neBuildVelocityLane(ctx) {
   const velLabels = document.createElement('div');
   velLabels.className = 'ne-vel-labels';
 
-  // Determine scope: filter > selection > focused track > all tracks.
+  // Scope of the lane: the instrument dropdown, else the focused row, else all instruments. Selecting notes never changes it.
+  // Selected notes are editable in every instrument the dropdown allows, also outside the focused row.
   const filterTrackIds = neVelFilterTrackIds();
-  const scopeTrackIds = filterTrackIds
-    ? filterTrackIds
-    : selectedNotes.size > 0
-      ? [...new Set([...selectedNotes].map(k => k.split('|')[0]))]
-      : (focusedTrackId ? [focusedTrackId] : trackList.map(t => t.id));
+  const scopeTrackIds = filterTrackIds || (focusedTrackId ? [focusedTrackId] : trackList.map(t => t.id));
+  const selectableTrackIds = filterTrackIds || trackList.map(t => t.id);
 
   let activeItems = [];
   if (selectedNotes.size > 0) {
     const selTrackIds = new Set([...selectedNotes].map(k => k.split('|')[0]));
     selTrackIds.forEach(tid => {
-      if (!scopeTrackIds.includes(tid)) return;
+      if (!selectableTrackIds.includes(tid)) return;
       const tr = trackList.find(t => t.id === tid);
       (block.data[tid]||[]).forEach((note, ni) => {
         if (selectedNotes.has(tid+'|'+note.beat)) activeItems.push({ trackId: tid, track: tr, note, ni });
