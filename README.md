@@ -54,7 +54,7 @@ And it plays nice with your DAW. Export the song or single parts as MIDI, or dra
 - **Blocks and timeline.** Patterns live in blocks: verse, chorus, bridge, breaks, fills, intro and outro. Every block has its own length, feel (straight, swing or half-time), knob values and an optional turnaround fill every N bars. The song generator arranges your blocks into a complete structure such as 12 bar, AABA, ABAB, ABCABC or standard pop, or you drag the blocks onto the timeline yourself. Every clip shows a preview of its notes, and you can set a loop range.
 - **Playback.** The plugin follows your DAW's transport and takes the tempo from it. It also has its own Play button. Edits are picked up while it plays. MIDI notes sent to the plugin play the matching instrument, so you can play the kit from a keyboard.
 - **Two sound engines.**
-  - *808*: the drum voices are models of the TR-808 circuits, based on the [Yocto V2.0](https://github.com/e-licktronic/Yocto-V2.0), simulated in NGSpice and calibrated against recordings of the Yocto 2. Kick, snare, rim shot, claves, hand clap, maracas, toms and congas, cowbell, PC-2 percussion, hi-hat, ride and cymbals. Every instrument has the knobs of its circuit (tone, decay, level and so on), some have a morph pad that blends between four presets, and the hi-hat, ride and cymbals play several cached variants in rotation so repeated hits do not sound identical.
+  - *808*: the drum voices are models of the TR-808 circuits, based on the [Yocto V2.0](https://github.com/e-licktronic/Yocto-V2.0), simulated in NGSpice ([yocto_tr808_ngspice](https://github.com/ReinerBforartists/yocto_tr808_ngspice)) and calibrated against recordings of the Yocto 2. Kick, snare, rim shot, claves, hand clap, maracas, toms and congas, cowbell, PC-2 percussion, hi-hat, ride and cymbals. Every instrument has the knobs of its circuit (tone, decay, level and so on), some have a morph pad that blends between four presets, and the hi-hat, ride and cymbals play several cached variants in rotation so repeated hits do not sound identical.
   - *Lo-Fi*: a simpler synthesis engine without circuit controls.
 - **Mixer.** One channel per instrument with fader, pan, mute and solo, a level meter and four effect slots (EQ, compressor, saturation, transient shaper or limiter). Reverb and delay buses with a send per channel, a kit gain, and a master with EQ and look-ahead limiter. *Auto gain* plays the song and sets the faders so the peaks land on a target level. Mixer presets save the whole mixer.
 - **MIDI export.** Export the song as one `.mid` file, or every block as its own file. Or drag a clip or block from the timeline directly into your DAW's playlist.
@@ -64,7 +64,7 @@ And it plays nice with your DAW. Export the song or single parts as MIDI, or dra
 
 ## 💡 How it came about
 
-It started as a small HTML tool that randomized drum patterns for Superior Drummer. Then it became a VST plugin. Since there was a plugin anyway, I put a drum kit on top of it: a TR-808 clone based on the circuit of the Yocto V2.0. I simulated the circuit in NGSpice, tuned it against recordings of the Yocto 2, and rebuilt it in C++. Everything runs in real time except the hi-hat, ride and cymbals, which were too slow; they are rendered ahead of time and played from a cache.
+It started as a small HTML tool that randomized drum patterns for Superior Drummer. Then it became a VST plugin. Since there was a plugin anyway, I put a drum kit on top of it: a TR-808 clone based on the circuit of the Yocto V2.0. I simulated the circuit in NGSpice, tuned it against recordings of the Yocto 2, and rebuilt it in C++. The NGSpice simulation is published as its own repository, [yocto_tr808_ngspice](https://github.com/ReinerBforartists/yocto_tr808_ngspice): the full circuit as one self-contained netlist, with example renders. It is the reference the C++ voices are checked against. Everything runs in real time except the hi-hat, ride and cymbals, which were too slow; they are rendered ahead of time and played from a cache.
 
 ## 📋 Requirements
 
@@ -113,6 +113,8 @@ During development you can point the plugin to the web files on disk instead of 
 | `cmake/` | Build helper that embeds the web files into the DLL |
 | `iPlug2/` | iPlug2 framework (fetched by CMake, not part of the repository) |
 
+The NGSpice simulation of the circuit that the 808 engine is based on is not part of this repository. It lives in [yocto_tr808_ngspice](https://github.com/ReinerBforartists/yocto_tr808_ngspice) (one netlist, a script that converts the simulation output to WAV, and example renders). You do not need it to build or use the plugin; it is the physical reference for the voice models in `source/dsp/` and the place to look if you want to see or change the circuit itself.
+
 ## 🧪 Status
 
 - Windows 11 VST3: built and used. Alpha, expect rough edges.
@@ -122,6 +124,7 @@ During development you can point the plugin to the web files on disk instead of 
 ## 🙏 Credits
 
 - [Yocto V2.0](https://github.com/e-licktronic/Yocto-V2.0) by e-licktronic: the 808 engine is based on its circuit and tuned against recordings of the Yocto 2. No Yocto files are part of this repository.
+- [yocto_tr808_ngspice](https://github.com/ReinerBforartists/yocto_tr808_ngspice): the NGSpice simulation of that circuit, published as a separate repository (MIT).
 - [iPlug2](https://github.com/iPlug2/iPlug2) by Oliver Larkin and contributors: the plugin framework (WDL license / MIT, see the framework's own license files).
 - [nlohmann/json](https://github.com/nlohmann/json): JSON parsing (MIT, comes with iPlug2).
 - Microsoft Edge WebView2 SDK and WIL: the web view the user interface runs in.
