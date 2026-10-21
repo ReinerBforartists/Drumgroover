@@ -2219,7 +2219,9 @@ function applyShowToolbar() {
   document.getElementById('neEditingToolbar').classList.toggle('collapsed', !show);
   document.body.classList.toggle('ne-hand-mode', !show);
   if (!show) closePatternModePanel();
-  window.dispatchEvent(new Event('resize'));   // the note grid takes the freed room
+  window.dispatchEvent(new Event('resize'));
+  // The rows area takes the freed (or lost) height; the grid lines have to continue down to the velocity lane at the new size.
+  requestAnimationFrame(neExtendGridToBottom);
 }
 if (typeof dggOnReady === 'function') dggOnReady(applyShowToolbar); else applyShowToolbar();
 showToolbarToggle.addEventListener('change', (e) => {
