@@ -4,7 +4,7 @@
 
 **A drum groove generator and TR-808 style drum synth, as a VST3 plugin.**
 
-![Version](https://img.shields.io/badge/version-0.8%20alpha-orange.svg)
+![Version](https://img.shields.io/badge/version-0.8.1%20alpha-orange.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%2011-blue.svg)
 ![Format](https://img.shields.io/badge/format-VST3-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)

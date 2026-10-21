@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Reiner Prokein
 cmake_minimum_required(VERSION 3.16)
 
-project(DrumGroover VERSION 0.8.0 LANGUAGES CXX)
+project(DrumGroover VERSION 0.8.1 LANGUAGES CXX)
 
 set(IPLUG2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/iPlug2")
 

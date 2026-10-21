@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Reiner Prokein
 #define PLUG_NAME "DrumGroover"
 #define PLUG_MFR "Reiner Prokein"
-#define PLUG_VERSION_HEX 0x00000800
-#define PLUG_VERSION_STR "0.8.0"
+#define PLUG_VERSION_HEX 0x00000801
+#define PLUG_VERSION_STR "0.8.1"
 #define PLUG_UNIQUE_ID 'Dgg1'
 #define PLUG_MFR_ID 'Rprk'
 #define PLUG_URL_STR "https://reinerprokein.com"

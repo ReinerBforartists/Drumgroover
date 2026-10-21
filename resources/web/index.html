@@ -55,7 +55,6 @@
           <div class="add-block-menu-sep edit-menu-ne-only"></div>
           <button class="add-block-menu-item edit-menu-ne-only" id="snapToGridBtn" data-tooltip="Snap to Grid&#10;Snaps the selected note(s) back onto the current grid. A post-processing tool on your Note Editor selection — does nothing without a selection.">🧲 Snap to Grid</button>
           <div class="add-block-menu-sep edit-menu-ne-only"></div>
-          <button class="add-block-menu-item edit-menu-ne-only" id="rerollAllBlocksMenuBtn" data-tooltip="Reroll All Blocks&#10;Rerolls every unlocked instrument group across all regular blocks, using the pattern mode shown at Main (when all its groups share one). Break and Intro/Outro Fill blocks are skipped — reroll those individually.">🎲 Reroll All Blocks</button>
           <div class="add-block-menu-item has-submenu edit-menu-ne-only">
             <span>🔓 Discard</span><span class="menu-hotkey">▸</span>
             <div class="add-block-menu submenu-flyout" id="discardSubmenu">
@@ -424,8 +423,10 @@
             <div class="ne-editing-toolbar" id="neEditingToolbar">
           <div class="controls">
             <div class="knob-cluster" id="mainKnobCluster">
-              <div class="cluster-title">Main <span id="rerollAllBtn" class="group-lock-icon" style="cursor:pointer" data-tooltip="Reroll All&#10;Rerolls everything unlocked in this block — regular blocks: all six instrument groups, using the pattern mode chosen next to it. Break/Intro/Outro: Fill + Kick. Locked parts are skipped.">🎲</span><span id="mainPatternMode" class="group-lock-icon pattern-mode-icon" style="cursor:pointer">C</span></div>
+              <div class="cluster-title">Reroll <span id="mainPatternMode" class="group-lock-icon pattern-mode-icon" style="cursor:pointer">C</span></div>
               <div class="cluster-knobs">
+                <div class="ctrl"><div class="ctrl-label">Block</div><span id="rerollAllBtn" class="group-lock-icon reroll-big" style="cursor:pointer" data-tooltip="Reroll Block&#10;Rerolls this block. Locked groups are skipped.">🎲</span></div>
+                <div class="ctrl"><div class="ctrl-label">All</div><span id="rerollAllBlocksBtn" class="group-lock-icon reroll-big" style="cursor:pointer" data-tooltip="Reroll All Blocks&#10;Rerolls all blocks. Locked groups are skipped.">🎲</span></div>
               </div>
             </div>
 
@@ -701,7 +702,7 @@
   <div class="howto-head">
     <img class="howto-logo" src="drumgrooverlogo.png" alt="DrumGroover" draggable="false">
     <div class="howto-credits" id="howtoCredits">
-      <div>DrumGroover Version 0.8.0</div>
+      <div>DrumGroover Version 0.8.1</div>
       <div>Copyright &copy;2026 by Reiner Prokein</div>
       <div>This software is under MIT License</div>
       <div>Find newest versions at GitHub: <a href="https://github.com/ReinerBforartists/Drumgroover" target="_blank" rel="noopener">https://github.com/ReinerBforartists/Drumgroover</a></div>

@@ -229,6 +229,9 @@ body.a11y-hover-zoom .ne-sidebar-top:hover .ctrl, body.a11y-hover-zoom .ne-sideb
   100% { box-shadow:0 0 0 transparent; }
 }
 .group-lock-icon.dice-roll { animation:dice-roll .25s ease-out; }
+/* The Reroll panel's dice (Block, All) sit where a knob would, so they are as big as one. */
+.group-lock-icon.reroll-big { font-size:18px; line-height:20px; margin:0; }
+#mainKnobCluster { align-self:flex-start; }   /* shorter than the knob clusters: top-align its title with theirs, not bottom-align */
 .pattern-mode-icon.mode-flash { animation:mode-flash .3s ease-out; }
 .pattern-mode-icon { display:inline-block; font-weight:700; font-size:9px; line-height:12px; color:var(--text); background:var(--bg); border:1px solid var(--border2); border-radius:3px; padding:0 3px; vertical-align:middle; }
 .pattern-mode-icon::after { content:'▾'; font-size:7px; margin-left:2px; opacity:.7; }

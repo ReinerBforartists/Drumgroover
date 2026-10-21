@@ -870,7 +870,6 @@ registerToolbarMenu('editMenuBtn', 'editMenu', () => {
   document.getElementById('discardAllEditsBlockBtn').disabled = !blockLocked;
   const anyBlockLocked = blocksList.some(blockHasDiscardableEdits);
   document.getElementById('discardAllEditsGlobalBtn').disabled = !anyBlockLocked;
-  document.getElementById('rerollAllBlocksMenuBtn').disabled = !blocksList.some(b => !isFillGeneratedBlock(b));
 });
 document.getElementById('editSelectAllBtn').addEventListener('click', () => { editMenu.style.display = 'none'; if (isTimelineTabActive()) tlSelectAll(); else selectAllNotes(); });
 document.getElementById('editSelectNoneBtn').addEventListener('click', () => { editMenu.style.display = 'none'; if (isTimelineTabActive()) tlSelectNone(); else selectNoneNotes(); });
@@ -880,7 +879,6 @@ document.getElementById('editCutBtn').addEventListener('click', () => { editMenu
 document.getElementById('editPasteBtn').addEventListener('click', () => { editMenu.style.display = 'none'; doPasteClipboard(); });
 document.getElementById('discardAllEditsBlockBtn').addEventListener('click', () => { editMenu.style.display = 'none'; unlockAllGroups(); });
 document.getElementById('discardAllEditsGlobalBtn').addEventListener('click', () => { editMenu.style.display = 'none'; unlockAllGroupsGlobal(); });
-document.getElementById('rerollAllBlocksMenuBtn').addEventListener('click', () => { editMenu.style.display = 'none'; rerollAllBlocksGlobal(); });
 
 const neSettingsPanel = document.getElementById('neSettingsPanel');
 const neSettingsBtn = document.getElementById('neSettingsBtn');
@@ -2221,7 +2219,7 @@ document.querySelectorAll('.pattern-mode-icon[data-group]').forEach(icon => icon
     },
   });
 }));
-// Main letter: the method the Main dice and Reroll All Blocks reroll with. Picking it only stores the method.
+// Reroll panel letter: the method the Block and All dice reroll with. Picking it only stores the method.
 function refreshMainPatternModeIcon() {
   if (patternModePanel && patternModePanel.blockId !== activeBlockId) closePatternModePanel();
   const el = document.getElementById('mainPatternMode');
@@ -2236,7 +2234,7 @@ document.getElementById('mainPatternMode').addEventListener('click', (e) => {
   const block = findBlock(activeBlockId);
   if (!block || isFillGeneratedBlock(block)) return;
   openPatternModePanel({
-    anchor: icon, title: 'Main (reroll method)', block,
+    anchor: icon, title: 'Reroll method', block,
     getMode: () => getPatternModeName(block, 'main'),
     getFormula: () => getPatternFormula(block, 'main'),
     onApply: (m, f) => {
@@ -2298,6 +2296,7 @@ document.getElementById('customRerollBtn').addEventListener('click', async () =>
   await regenerateCustomGroup();
 });
 document.getElementById('rerollAllBtn').addEventListener('click', rerollActiveBlock);
+document.getElementById('rerollAllBlocksBtn').addEventListener('click', rerollAllBlocksGlobal);
 
 document.getElementById('playBtn').addEventListener('click', () => {
   const activeTab = document.querySelector('#mainTabBar .tab-btn.active')?.dataset.tab;

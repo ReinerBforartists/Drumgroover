@@ -767,7 +767,7 @@ function setPatternSpec(block, key, mode, formula) {
 }
 function setPatternMode(block, key, mode) { setPatternSpec(block, key, mode); }
 
-// The method chosen at Main (patternModes.main, default classic). The Main dice and Reroll All Blocks reroll with it.
+// The method chosen at Main (patternModes.main, default classic). The Block and All dice of the Reroll panel reroll with it.
 function getMainPatternMethod(block) {
   if (!block || isFillGeneratedBlock(block)) return null;
   return { mode: getPatternModeName(block, 'main'), formula: getPatternFormula(block, 'main') };
@@ -1779,7 +1779,7 @@ async function rerollAllBlocksGlobal() {
   if (shouldShowConfirmDialogs()) {
     const res = await showModal({
       title: 'Reroll every block?',
-      message: `This rerolls all unlocked instrument groups across ${targets.length} block${targets.length>1?'s':''} project-wide (${targets.map(blockDisplayName).join(', ')})${method ? ` with the ${PATTERN_MODE_INFO[method.mode].label} pattern mode` : ''}. Locked groups, and any Break/Fill blocks, are left untouched.`,
+      message: 'This rerolls all blocks. Locked groups are skipped.',
       confirmLabel: 'Reroll all',
       danger: true,
       checkbox: { label: "Don't ask again (re-enable in Note Editor Options → Show confirmation dialogs)" }
