@@ -928,7 +928,7 @@
       ctx.clearRect(0, 0, W, H);
 
       // Grid lines + dB labels (every 6 dB, 0 dB bolder)
-      ctx.font = '9px Consolas, monospace';
+      ctx.font = '10px Consolas, monospace';
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'left';
       for (let db = TOP_DB; db >= BOT_DB; db -= 6) {

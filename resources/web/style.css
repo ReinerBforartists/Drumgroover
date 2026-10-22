@@ -55,8 +55,10 @@
   --accent-strong:var(--cyan-strong);
   --value:var(--amber);            /* numeric readouts and value markers (knob pointer, fader line, slider thumb) */
   --select:var(--amber);           /* editor highlights: selected notes, loop / range markers, focused row, solo */
-  --title:var(--muted);            /* panel titles, channel names */
-  --label:var(--text-dim);         /* category labels (CIRCUIT, OUTPUT, KICK …) */
+  --title:var(--cyan);             /* panel titles (sidebar sections, FX panels, hotkeys): colored so they set the blocks apart */
+  --label:var(--amber);            /* category labels and channel names (CIRCUIT, OUTPUT, mixer strip names, hotkey names) */
+  --group-main:var(--amber);       /* generator toolbar: main instrument group titles */
+  --group-fill:var(--cyan);        /* generator toolbar: fill group titles — kept apart from the main groups */
   --pad-link:var(--cyan);          /* knob ring: parameter is controlled by the XY pad */
   --pad-link-dim:var(--cyan-dim);
   --bus:var(--cyan);               /* bus strip identity */
@@ -108,8 +110,8 @@
   /* song blocks, assigned by block position */
   --block-1:#0ea5e9; --block-2:#fbbf24; --block-3:#ec4899; --block-4:#10b981; --block-5:#f97316;
   --block-6:#a78bfa; --block-7:#f43f5e; --block-8:#22d3ee; --block-9:#84cc16; --block-10:#e879f9;
-  /* font sizes */
-  --fs-3xs:7px;  --fs-2xs:8px;  --fs-xs:9px;   --fs-sm:10px;  --fs-md:11px;  --fs-md2:11.5px;
+  /* font sizes — nothing below 10px; the 3xs/2xs/xs steps stay as names so a later size change is one edit */
+  --fs-3xs:10px; --fs-2xs:10px; --fs-xs:10px;  --fs-sm:10px;  --fs-md:11px;  --fs-md2:11.5px;
   --fs-lg:12px;  --fs-xl:13px;  --fs-2xl:14px; --fs-3xl:15px; --fs-4xl:18px;
   /* shape */
   --r:3px;
@@ -303,7 +305,7 @@ body.a11y-hover-zoom .ne-sidebar-top:hover .ctrl, body.a11y-hover-zoom .ne-sideb
 /* Placeholder reserving a popped-out cluster's spot so its siblings don't jump. */
 .de-param-cluster-placeholder { flex-shrink:0; visibility:hidden; pointer-events:none; }
 
-.cluster-title { font-size:var(--fs-xs); font-weight:600; color:var(--label); text-transform:uppercase; letter-spacing:.03em; }
+.cluster-title { font-size:var(--fs-xs); font-weight:600; color:var(--group-main); text-transform:uppercase; letter-spacing:.03em; }
 .group-lock-icon { display:inline-block; cursor:pointer; font-size:var(--fs-sm); margin-left:3px; transition:transform .08s; }
 .group-lock-icon:hover { filter:brightness(1.4); transform:scale(1.1); }
 .group-lock-icon:active { transform:translateY(1px) scale(.85); }
@@ -342,7 +344,8 @@ body.a11y-hover-zoom .ne-sidebar-top:hover .ctrl, body.a11y-hover-zoom .ne-sideb
 .pattern-mode-help { margin-top:4px; font-size:var(--fs-sm); opacity:.7; line-height:1.4; }
 .knob-cluster input:disabled { opacity:.35; cursor:not-allowed; }
 /* Fill and Fill Kick: a different kind of group than the instrument groups, so their titles carry another colour. */
-.ne-fill-cluster .cluster-title, .ne-sidebar-heading { color:var(--title); }
+.ne-fill-cluster .cluster-title { color:var(--group-fill); }
+.ne-sidebar-heading { color:var(--title); }
 .ne-sidebar-heading { font-size:var(--fs-sm); font-weight:600; letter-spacing:.03em; text-transform:uppercase; }
 .ne-fill-cluster.ne-ctl-locked .cluster-knobs { opacity:.45; cursor:not-allowed; }
 .ctrl.knob-disabled .knob-visual { opacity:.35; cursor:not-allowed; }
@@ -375,7 +378,7 @@ body.a11y-hover-zoom .ne-sidebar-top:hover .ctrl, body.a11y-hover-zoom .ne-sideb
 }
 .ctrl.active .knob-visual { border-color:var(--accent); }
 
-.ctrl-label { font-size:var(--fs-3xs); letter-spacing:.03em; color:var(--muted); text-transform:uppercase; width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ctrl-label { font-size:var(--fs-3xs); letter-spacing:.03em; color:var(--muted); width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .ctrl-label .val { color:var(--value); font-size:var(--fs-sm); }
 .ctrl select {
   width:100%;
@@ -804,7 +807,7 @@ body.knob-dragging { user-select:none; cursor:ns-resize; }
       .ne-sidebar { width:100%; }
 
 }
-.ne-ctl-label { font-size:var(--fs-2xs); letter-spacing:.1em; color:var(--muted); text-transform:uppercase; white-space:nowrap; }
+.ne-ctl-label { font-size:var(--fs-2xs); letter-spacing:.1em; color:var(--muted); white-space:nowrap; }
 .ne-len-input { font-size:var(--fs-lg); background:var(--bg); border:1px solid var(--border2); color:var(--value); padding:4px 6px; border-radius:2px; width:52px; text-align:center; }
 select.ne-len-input { appearance:none; -webkit-appearance:none; } /* "Turnaround Every" reuses this class as a <select> — strip its native arrow to match Genre/Feel */
 .ne-len-input:focus { outline:1px solid var(--accent); border-color:var(--accent); }
@@ -942,7 +945,7 @@ select.ne-len-input { appearance:none; -webkit-appearance:none; } /* "Turnaround
 .ne-note-turnaround { transform:translate(-6px,-6px) rotate(0deg); border-radius:2px; }
 .ne-note-summary { cursor:pointer; }
 .ne-vel-mini-ctrl { display:flex; align-items:center; gap:5px; padding:0 4px 0 0; }
-.ne-vel-mini-label { font-size:var(--fs-xs); color:var(--muted); text-transform:uppercase; letter-spacing:.03em; width:20px; flex-shrink:0; text-align:right; }
+.ne-vel-mini-label { font-size:var(--fs-xs); color:var(--muted); letter-spacing:.03em; width:20px; flex-shrink:0; text-align:right; }
 .ne-vel-mini-slider { flex:1; min-width:0; height:3px; -webkit-appearance:none; appearance:none; background:var(--border2); border-radius:2px; accent-color:var(--value); cursor:pointer; }
 .ne-vel-mini-slider::-webkit-slider-thumb { -webkit-appearance:none; width:9px; height:9px; border-radius:50%; background:var(--value); cursor:pointer; box-shadow:0 0 4px var(--amber-glow); }
 .ne-vel-mini-val { width:26px; flex-shrink:0; height:16px; background:transparent; border:none; color:var(--value); font-size:var(--fs-sm); padding:0; text-align:right; appearance:textfield; -moz-appearance:textfield; }
@@ -1108,7 +1111,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 .howto-credits .howto-warn { color:var(--warn); font-weight:600; margin-top:4px; }
 
 .drum-engine-panel { background:var(--panel); border:1px solid var(--border); border-radius:var(--r); padding:10px 14px; display:flex; flex-direction:column; gap:10px; flex:1; min-height:0; }
-.de-legend { display:flex; flex-wrap:wrap; gap:14px; font-size:var(--fs-xs); letter-spacing:.05em; color:var(--muted); text-transform:uppercase; }
+.de-legend { display:flex; flex-wrap:wrap; gap:14px; font-size:var(--fs-xs); letter-spacing:.05em; color:var(--muted); }
 .de-legend-item { display:flex; align-items:center; gap:5px; }
 .de-legend-swatch { width:10px; height:10px; border-radius:2px; border:1px solid var(--border2); }
 
@@ -1152,7 +1155,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 
 .de-kick-pad { position:relative; width:250px; height:250px; max-width:100%; margin:0 auto; border:1px solid var(--border); border-radius:var(--r); background:var(--bg); cursor:crosshair; touch-action:none; }
 
-.de-kick-pad-label { position:absolute; font-size:var(--fs-3xs); line-height:1.3; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); pointer-events:none; white-space:pre-line; }
+.de-kick-pad-label { position:absolute; font-size:var(--fs-3xs); line-height:1.3; letter-spacing:.05em; color:var(--muted); pointer-events:none; white-space:pre-line; }
 .de-kick-pad-label.tl { top:8px; left:8px; }
 .de-kick-pad-label.tr { top:8px; right:8px; text-align:right; }
 .de-kick-pad-label.bl { bottom:8px; left:8px; }
@@ -1385,7 +1388,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 
 .knob:hover, .knob:active { border-color:var(--accent); }
 
-.knob-label { font-size:var(--fs-3xs); color:var(--muted); text-transform:uppercase; letter-spacing:.03em; font-family:'Inter','SF Pro Text',-apple-system,system-ui,sans-serif; }
+.knob-label { font-size:var(--fs-3xs); color:var(--muted); letter-spacing:.03em; font-family:'Inter','SF Pro Text',-apple-system,system-ui,sans-serif; }
 .knob-value { font-size:var(--fs-sm); color:var(--value); min-width:26px; text-align:center; white-space:nowrap; line-height:1.1; }
 
 .knob-visual.active { border-color:var(--accent); }
@@ -1538,7 +1541,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
   font-size:var(--fs-xs);
   text-align:center;
   font-weight:700;
-  color:var(--title);
+  color:var(--label);
   font-family:'Inter','SF Pro Text',-apple-system,system-ui,sans-serif;
   letter-spacing:.03em;
   text-transform:uppercase;
@@ -1588,7 +1591,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 .eq-curve-path { fill:none; stroke:var(--accent); stroke-width:1.6; stroke-linejoin:round; }
 .eq-gains { display:flex; justify-content:center; gap:16px; padding:2px 0; }
 .eq-gain-col { display:flex; flex-direction:column; align-items:center; gap:3px; }
-.eq-band-label { font-size:var(--fs-2xs); letter-spacing:.05em; color:var(--muted); text-transform:uppercase; }
+.eq-band-label { font-size:var(--fs-2xs); letter-spacing:.05em; color:var(--muted); }
 .eq-panel .fader-wrap { height:82px; --fader-len:82px; width:26px; }
 .eq-gain-val { font-size:var(--fs-xs); color:var(--value); }
 .eq-knobs { display:flex; justify-content:center; align-items:flex-start; gap:14px; padding-top:2px; }
@@ -1636,7 +1639,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 .hotkeys-panel { position:fixed; z-index:60; width:360px; max-height:calc(88vh / var(--ui-scale, 1)); overflow-y:auto; background:var(--panel); border:1px solid var(--accent); border-radius:var(--r); padding:10px 14px 14px; box-shadow:0 8px 24px var(--black-a50); transform:scale(var(--ui-scale, 1)); transform-origin:top right; font-size:var(--fs-lg); line-height:1.55; color:var(--text); }
 .hotkeys-panel-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:2px; }
 .hotkeys-panel-title { font-size:var(--fs-sm); color:var(--title); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
-.hotkeys-panel b { color:var(--text-bright); font-weight:600; }
+.hotkeys-panel b { color:var(--label); font-weight:600; }
 .hotkeys-panel b.hk-title { color:var(--title); font-size:var(--fs-md); text-transform:uppercase; letter-spacing:.06em; margin-top:14px; padding-bottom:2px; border-bottom:1px solid var(--border); margin-bottom:3px; }
 .hotkeys-panel-body > b.hk-title:first-child { margin-top:6px; }
 .hotkeys-panel-close { width:18px; height:18px; line-height:15px; padding:0; border-radius:4px; border:1px solid var(--border2); background:var(--raised); color:var(--muted); font-size:var(--fs-lg); cursor:pointer; }
