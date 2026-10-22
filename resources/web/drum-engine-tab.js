@@ -1323,6 +1323,85 @@ function deInitFocusSidebar() {
 
 let deParamTabsBuilt = false;
 
+// The pad has no axis legend of its own: name the parameters on its X and Y axis (from DE_FAMILY_PAD_AXIS) next to it.
+function deAddPadAxisCaptions(card, family) {
+  const pad = card.querySelector('.de-kick-pad');
+  const cfg = DE_FAMILY_PAD_AXIS[family];
+  if (!pad || !cfg || card.querySelector('.de-pad-axis')) return;
+  const names = { x: [], y: [] };
+  for (const [key, c] of Object.entries(cfg)) {
+    const lab = card.querySelector('[data-param-key="' + key + '"] .ctrl-label');
+    const name = lab && lab.childNodes[0] ? lab.childNodes[0].textContent.trim() : '';
+    if (name && names[c.axis]) names[c.axis].push(name);
+  }
+  for (const ax of ['x', 'y']) {
+    if (!names[ax].length) continue;
+    const el = document.createElement('div');
+    el.className = 'de-pad-axis ' + ax;
+    el.textContent = names[ax].join(' / ');
+    pad.parentElement.appendChild(el);
+  }
+}
+
+// Master-detail: each panel shows one editor card at a time, picked from a list on the left. All cards stay in the DOM
+// (their state and wiring are untouched); CSS hides the ones that are not selected. The list follows the cards if they are rebuilt.
+function deInstallMasterDetail(panel) {
+  const cards = panel.querySelector(':scope > .de-instance-cards');
+  if (!cards || panel._deMasterDetail) return;
+  panel._deMasterDetail = true;
+  const md = document.createElement('div'); md.className = 'de-md';
+  const list = document.createElement('div'); list.className = 'de-card-list';
+  panel.insertBefore(md, cards); md.appendChild(list); md.appendChild(cards);
+  const family = panel.dataset.family;
+  // Toms and cymbals come in numbered drums with several articulations: "Rack Tom 1 Center" is listed as the group "Rack Tom 1"
+  // with the indented entry "Center".
+  const GROUPED = /^((?:Rack|Floor) Tom \d+|Cymbal \d+)\s+(.+)$/;
+  // The family name is already on the tab: "Snare Center" is listed as "Center".
+  const FLAT_PREFIX = { kick: /^Kick\s+/, snare: /^Snare\s+/, hihat: /^Hi-Hat\s+/, ride: /^Ride\s+/ };
+  const sync = () => {
+    const all = [...cards.querySelectorAll(':scope > .de-instance-card')];
+    let sel = all.findIndex(c => c.classList.contains('de-card-selected'));
+    if (sel < 0) sel = 0;
+    list.innerHTML = '';
+    const lo = DGInstrument.lightness('note-min'), hi = DGInstrument.lightness('note-max');
+    let col = null, lastGroup = null;
+    all.forEach((card, i) => {
+      card.classList.toggle('de-card-selected', i === sel);
+      deAddPadAxisCaptions(card, family);
+      const title = card.querySelector('.de-instance-card-title');
+      const text = title ? title.textContent : '';
+      const m = GROUPED.exec(text);
+      if (m) {
+        if (m[1] !== lastGroup) {
+          col = document.createElement('div'); col.className = 'de-card-col';
+          const head = document.createElement('div'); head.className = 'de-card-group'; head.textContent = m[1];
+          col.appendChild(head); list.appendChild(col);
+        }
+        lastGroup = m[1];
+      } else if (!col || lastGroup !== null) {
+        col = document.createElement('div'); col.className = 'de-card-col flat'; list.appendChild(col);
+        lastGroup = null;
+      }
+      const label = m ? m[2] : (FLAT_PREFIX[family] ? text.replace(FLAT_PREFIX[family], '') : text);
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'de-card-item' + (i === sel ? ' selected' : '');
+      item.dataset.card = i;
+      const sw = document.createElement('span'); sw.className = 'de-card-swatch';
+      const fam = family === 'hihat' ? (/open/i.test(text) ? 'hihat-open' : 'hihat-closed') : family;
+      sw.style.background = DGInstrument.css(fam, all.length > 1 ? lo + (hi - lo) * i / (all.length - 1) : (lo + hi) / 2);
+      item.appendChild(sw); item.appendChild(document.createTextNode(label));
+      item.addEventListener('click', () => {
+        all.forEach((c, k) => c.classList.toggle('de-card-selected', k === i));
+        list.querySelectorAll('.de-card-item').forEach(btn => btn.classList.toggle('selected', +btn.dataset.card === i));
+      });
+      col.appendChild(item);
+    });
+  };
+  sync();
+  new MutationObserver(sync).observe(cards, { childList: true });
+}
+
 function deInitVoiceParamTabs() {
   if (deParamTabsBuilt) return;
   deParamTabsBuilt = true;
@@ -1343,6 +1422,7 @@ function deInitVoiceParamTabs() {
   for (const inst of dggCustomInstruments()) customCards.appendChild(deBuildCustomEngineCard(inst.index));
   customPanel.appendChild(customCards);
   panelsWrap.appendChild(customPanel);
+  panelsWrap.querySelectorAll('.de-param-panel').forEach(deInstallMasterDetail);
   const savedFamily = dggGetItem(DE_FOCUS_FAMILY_KEY);
   const initialFamily = (savedFamily && DE_PARAM_SCHEMAS[savedFamily]) ? savedFamily : 'kick';
   tabBar.querySelectorAll('.de-param-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.family === initialFamily));

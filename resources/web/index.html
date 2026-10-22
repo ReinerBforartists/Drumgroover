@@ -623,10 +623,10 @@
 <div class="tab-panel drum-engine-panel" data-tab-panel="drumEngine">
   <!-- The instrument sub-tabs (Kick/Snare/...) live in the transport row (#blockPaletteWrap's .transport-group). -->
   <div class="de-body">
-    <!-- Polyphony is a kit-wide engine setting (voice stealing across the
-         whole kit), not a per-instrument detail — so it sits ABOVE the
-         articulation panels, full width. The output meter below starts at
-         the same line as the articulations, so both live in .de-lower. -->
+    <!-- Polyphony and Accent are kit-wide engine settings, not per-instrument details. They sit in the left column of .de-lower
+         (mirroring the output meter on the right) so nothing lies between the instrument tabs and the articulation selector. -->
+
+    <div class="de-lower">
     <div id="dePolyRow">
         <div class="knob-cluster de-cluster">
           <div class="cluster-knobs">
@@ -672,8 +672,6 @@
           </div>
         </div>
     </div>
-
-    <div class="de-lower">
       <div class="de-main">
         <div class="de-param-panels" id="deParamPanels"></div>
       </div>
