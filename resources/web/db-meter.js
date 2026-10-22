@@ -52,9 +52,9 @@ function dbMeterPercent(db) {
 // hardcoded in CSS, so it can't drift out of sync with the zone
 // boundaries.
 function _dbMeterGradientCss(bright) {
-  const green  = bright ? '#4ade80' : '#1f3d2a';
-  const yellow = bright ? '#facc15' : '#4a3f14';
-  const red    = bright ? '#ef4444' : '#4a1f1f';
+  const green  = DGTokens.get(bright ? '--meter-green' : '--meter-green-dim');
+  const yellow = DGTokens.get(bright ? '--meter-yellow' : '--meter-yellow-dim');
+  const red    = DGTokens.get(bright ? '--red' : '--meter-red-dim');
   const y = dbMeterPercent(DB_METER_YELLOW_AT);
   const r = dbMeterPercent(DB_METER_RED_AT);
   return `linear-gradient(to top, ${green} 0%, ${green} ${y}%, ${yellow} ${y}%, ${yellow} ${r}%, ${red} ${r}%, ${red} 100%)`;
@@ -64,9 +64,9 @@ function _dbMeterGradientCss(bright) {
 // peak marker. Same three colors/thresholds as _dbMeterGradientCss's
 // bright layer, just picking one instead of blending.
 function _dbMeterZoneColor(db) {
-  if (db >= DB_METER_RED_AT) return '#ef4444';
-  if (db >= DB_METER_YELLOW_AT) return '#facc15';
-  return '#4ade80';
+  if (db >= DB_METER_RED_AT) return DGTokens.get('--red');
+  if (db >= DB_METER_YELLOW_AT) return DGTokens.get('--meter-yellow');
+  return DGTokens.get('--meter-green');
 }
 
 // Shared updater for the optional numeric peak readout element (mixer strips,

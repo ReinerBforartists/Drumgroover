@@ -1229,7 +1229,7 @@ function neBuildVelGrayCanvas(items, pxPerBeat, velLane) {
     const ctx = canvas.getContext('2d');
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
     ctx.clearRect(0, 0, w, NE_VEL_H);
-    const color = getComputedStyle(document.documentElement).getPropertyValue('--muted').trim() || '#94a3b8';
+    const color = DGTokens.get('--muted') || DGTokens.get('--text-dim');
     const sl = velLane.scrollLeft;
     const visible = [];
     // Zoomed out, bars within the same few pixels overlap into a solid block: keep only the tallest bar of each pixel bucket.

@@ -16,7 +16,7 @@
   };
   function familyColor(fam) {
     const c = FAMILY_HSL[fam];
-    return c ? `hsl(${c.h} ${c.s}% 55%)` : '#64748b';
+    return c ? `hsl(${c.h} ${c.s}% 55%)` : DGTokens.get('--border2');
   }
 
   // Single source of truth for the mixer's default strip settings. Change a
@@ -940,10 +940,10 @@
       for (let db = TOP_DB; db >= BOT_DB; db -= 6) {
         const yy = yOf(db);
         const isZero = db === 0;
-        ctx.strokeStyle = isZero ? 'rgba(148,163,184,.22)' : 'rgba(148,163,184,.10)';
+        ctx.strokeStyle = DGTokens.get(isZero ? '--scope-grid-zero' : '--scope-grid');
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(0, yy + .5); ctx.lineTo(W, yy + .5); ctx.stroke();
-        ctx.fillStyle = 'rgba(148,163,184,.5)';
+        ctx.fillStyle = DGTokens.get('--scope-label');
         ctx.fillText((db > 0 ? '+' : '') + db, 4, yy);
       }
 
@@ -962,8 +962,8 @@
       outPts.forEach(p => ctx.lineTo(p[0], p[1]));
       ctx.lineTo(W, H); ctx.closePath();
       const g = ctx.createLinearGradient(0, 0, 0, H);
-      g.addColorStop(0, 'rgba(248,250,252,.55)');
-      g.addColorStop(1, 'rgba(248,250,252,.06)');
+      g.addColorStop(0, DGTokens.get('--scope-out-a55'));
+      g.addColorStop(1, DGTokens.get('--scope-out-a06'));
       ctx.fillStyle = g; ctx.fill();
 
       // 2) Purple input line (pre-limiter), clipped to the region above the
@@ -976,17 +976,17 @@
       ctx.clip();
       ctx.beginPath();
       inPts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
-      ctx.strokeStyle = '#c084fc'; ctx.lineWidth = 1.3;
+      ctx.strokeStyle = DGTokens.get('--violet'); ctx.lineWidth = 1.3;
       ctx.globalAlpha = .5; ctx.stroke(); ctx.globalAlpha = 1;
       ctx.restore();
 
       // 3) White output line (post-limiter, what you hear), on top of the input
       ctx.beginPath();
       outPts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
-      ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 1.6; ctx.stroke();
+      ctx.strokeStyle = DGTokens.get('--text-bright'); ctx.lineWidth = 1.6; ctx.stroke();
 
       // 4) Green ceiling line (dashed, drawn on top)
-      ctx.strokeStyle = '#10b981'; ctx.lineWidth = 1.4;
+      ctx.strokeStyle = DGTokens.get('--green'); ctx.lineWidth = 1.4;
       ctx.setLineDash([5, 3]);
       ctx.beginPath(); ctx.moveTo(0, cy + .5); ctx.lineTo(W, cy + .5); ctx.stroke();
       ctx.setLineDash([]);
@@ -1007,12 +1007,12 @@
         grPts.forEach(p => ctx.lineTo(p[0], p[1]));
         ctx.lineTo(W, yTop); ctx.closePath();
         const gg = ctx.createLinearGradient(0, yTop, 0, yOf(TOP_DB - 24));
-        gg.addColorStop(0, 'rgba(251,146,60,.50)');
-        gg.addColorStop(1, 'rgba(251,146,60,.08)');
+        gg.addColorStop(0, DGTokens.get('--gr-a50'));
+        gg.addColorStop(1, DGTokens.get('--gr-a08'));
         ctx.fillStyle = gg; ctx.fill();
         ctx.beginPath();
         grPts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
-        ctx.strokeStyle = '#fb923c'; ctx.lineWidth = 1.3; ctx.stroke();
+        ctx.strokeStyle = DGTokens.get('--gr-line'); ctx.lineWidth = 1.3; ctx.stroke();
       }
 
     }

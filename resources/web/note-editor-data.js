@@ -618,7 +618,7 @@ function neBuildCssGrid(totalBeats, pxPerBeat, snap, numerator, snapOnly) {
   el.style.left = NE_LEFT_PAD + 'px';
   el.style.width = (totalBeats * pxPerBeat + 1) + 'px';
   const line = (color) => `linear-gradient(to right, ${color} 1px, transparent 1px)`;
-  const SNAP_COLOR = 'rgba(30,64,175,.3)';
+  const SNAP_COLOR = DGTokens.get('--snap-line-a30');
   const snapPx = snap * pxPerBeat;
   const barSpan = (numerator || 1) * pxPerBeat * neGridBarStride((numerator || 1) * pxPerBeat);
   const layers = [], sizes = [];

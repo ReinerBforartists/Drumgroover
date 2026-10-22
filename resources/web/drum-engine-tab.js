@@ -1782,8 +1782,8 @@ function deInitCacheVariantControls() {
     box.className = 'app-modal-box';
     box.innerHTML = '<div class="app-modal-title">Baking Cache Variants</div>'
       + '<div class="app-modal-message"><span class="de-bake-popup-text">Starting…</span></div>'
-      + '<div style="width:100%; height:8px; background:rgba(255,255,255,0.15); border-radius:3px; overflow:hidden; margin-top:10px;">'
-      + '<div class="de-bake-popup-bar" style="height:100%; width:0%; background:var(--accent, #6ac); transition:width 0.15s linear;"></div></div>'
+      + '<div style="width:100%; height:8px; background:var(--white-a15); border-radius:3px; overflow:hidden; margin-top:10px;">'
+      + '<div class="de-bake-popup-bar" style="height:100%; width:0%; background:var(--progress-fill); transition:width 0.15s linear;"></div></div>'
       + '<div class="app-modal-actions"><button class="btn btn-sm btn-danger de-bake-popup-cancel">Cancel</button></div>';
     overlay.appendChild(box);
     document.body.appendChild(overlay);
@@ -2002,9 +2002,9 @@ function deBuildCacheDialog() {
   const activity = el('app-modal-message');
   activity.style.color = 'var(--text)';
   const barOuter = document.createElement('div');
-  barOuter.style.cssText = 'width:100%; height:6px; background:rgba(255,255,255,0.15); border-radius:3px; overflow:hidden;';
+  barOuter.style.cssText = 'width:100%; height:6px; background:var(--white-a15); border-radius:3px; overflow:hidden;';
   const bar = document.createElement('div');
-  bar.style.cssText = 'height:100%; width:0%; background:var(--accent, #6ac); transition:width 0.2s linear;';
+  bar.style.cssText = 'height:100%; width:0%; background:var(--progress-fill); transition:width 0.2s linear;';
   barOuter.appendChild(bar);
   const count = el('app-modal-message');
   count.style.margin = '6px 0 0';

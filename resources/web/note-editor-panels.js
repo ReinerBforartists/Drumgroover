@@ -89,7 +89,7 @@ function attachCheckboxGroupPaintDrag(cb, applyMutation, commit) {
 function neInstrumentCheckboxRow(container, instrumentList, getArr, setArr, commit, groupTag, disabled, title) {
   instrumentList.forEach(([val, label]) => {
     const lab = document.createElement('label');
-    lab.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);cursor:pointer;white-space:nowrap;';
+    lab.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:var(--fs-md);color:var(--text-dim);cursor:pointer;white-space:nowrap;';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.checked = getArr().includes(val);

@@ -388,7 +388,7 @@ function buildClipNotePreview(block, slot, rowTracks, clipW, h, pxPerBar) {
   rowTracks.forEach((t, row) => {
     const y = row * rowH + (rowH - noteH) / 2;
     (block.data[t.id] || []).forEach(note => {
-      ctx.fillStyle = `rgba(15,23,42,${(0.35 + 0.6 * Math.min(1, (note.vel || 100) / 127)).toFixed(2)})`;
+      ctx.fillStyle = DGTokens.withAlpha('--bg', (0.35 + 0.6 * Math.min(1, (note.vel || 100) / 127)).toFixed(2));
       for (let k = 0; k < loops; k++) ctx.fillRect((note.beat + k * blockBeats) * pxPerBeat, y, noteW, noteH);
     });
   });
