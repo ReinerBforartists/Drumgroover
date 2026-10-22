@@ -129,8 +129,19 @@ The NGSpice simulation of the circuit that the 808 engine is based on is not par
 - [nlohmann/json](https://github.com/nlohmann/json): JSON parsing (MIT, comes with iPlug2).
 - Microsoft Edge WebView2 SDK and WIL: the web view the user interface runs in.
 - Steinberg VST3 SDK (MIT).
+- [Nava](https://github.com/e-licktronic/Nava-v1.0) by e-licktronic: the TR-909 engine (in development) is based on its circuit. No Nava files are part of this repository.
 
 All third-party components keep their own licenses.
+
+### Third-party samples
+
+The TR-909 engine (in development) needs waveforms for the hi-hat, crash and ride voices, which the original machine plays from a ROM. Roland's ROM data and recordings of it are **not** used. The waveforms are replaced by recordings of ordinary cymbals and hi-hats from [Freesound](https://freesound.org), all under the [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) public domain dedication, converted to the 6-bit, 30 kHz format of the original data path.
+
+| Voice | Sound | Uploader | Licence | Source |
+| --- | --- | --- | --- | --- |
+| Closed hi-hat | "new 13 hat closed" (Freesound 112491, 12" Paiste hi-hat from the pack "John Bonham's Kit") | cdiupe | CC0 1.0 | <https://freesound.org/people/cdiupe/sounds/112491/> |
+
+This list covers the samples chosen so far; open hi-hat, crash and ride will be added here with the same information once their sources are fixed and their licences checked on the Freesound page.
 
 ## 📜 License
 

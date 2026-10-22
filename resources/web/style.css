@@ -182,6 +182,10 @@ body { overflow:hidden; }
 .btn.primary { padding:8px 14px; font-weight:600; min-width:0; justify-content:center; border-color:var(--accent); color:var(--accent); background:var(--accent-dim); }
 .btn.primary:hover:not(:disabled) { background:var(--accent-strong); }
 .btn.stop-btn { border-color:var(--red); color:var(--red); }
+.btn .tr-icon { width:14px; height:14px; flex-shrink:0; } /* Play triangle / Stop square: drawn shapes, larger than the text glyphs they replace */
+/* Auto All (Mixer tab only) is not a transport control: set it apart with a gap and a divider. */
+#mxAutoAllBtn { position:relative; margin-left:14px; }
+#mxAutoAllBtn::before { content:''; position:absolute; left:-10px; top:4px; bottom:4px; width:1px; background:var(--border); }
 .btn-refresh { border:1px solid var(--accent-dim) !important; color:var(--accent) !important; background:transparent !important; }
 .btn-refresh:hover:not(:disabled) { border-color:var(--accent) !important; background:var(--cyan-a10) !important; }
 .btn-sm { padding:4px 8px; font-size:var(--fs-xs); }
