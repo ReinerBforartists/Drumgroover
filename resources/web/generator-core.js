@@ -54,64 +54,72 @@ function engineGroupTripletSubdivision(engineGroup) {
   return engineGroupStraightSubdivision(engineGroup) * 1.5;
 }
 
-// Kit tracks: label, colour and note-editor grouping of every track by its id. The roster itself (which tracks exist, in which order, with which
+// Kit tracks: label, instrument family (colour comes from DGInstrument) and note-editor grouping of every track by its id. The roster itself (which tracks exist, in which order, with which
 // GM note) is the instrument table's (bridge.js INSTRUMENT_TABLE); trackList is built from both once the table has arrived.
 const TRACK_LAYOUT = {
-  kick: { label:'Kick', color:'#0ea5e9', group:'kick', groupLabel:'High Stack' },
-  kickOpen: { label:'Open', color:'#38bdf8', group:'kick', groupLabel:'Open' },
-  snare: { label:'Snare', color:'#fbbf24', group:'snare', groupLabel:'Center' },
-  snareOffCenter: { label:'Off Center', color:'#fcd34d', group:'snare', groupLabel:'Off Center' },
-  snareEdge: { label:'Edge', color:'#fde68a', group:'snare', groupLabel:'Edge' },
-  snareRimShot: { label:'Rim Shot', color:'#fb923c', group:'snare', groupLabel:'Rimshot' },
-  rim: { label:'Rim', color:'#f472b6', group:'snare', groupLabel:'Sidestick' },
-  snareRimOnly: { label:'Rim Only', color:'#fdba74', group:'snare', groupLabel:'Rim Only' },
-  chh: { label:'Closed Edge', color:'#10b981', group:'hihat', groupLabel:'Closed Edge' },
-  hihatTightEdge: { label:'Tight Edge', color:'#34d399', group:'hihat', groupLabel:'Tight Edge' },
-  ohh: { label:'Open Edge 0', color:'#6ee7b7', group:'hihat', groupLabel:'Open Edge 0' },
-  hihatOpenEdge4: { label:'Open Edge 4', color:'#0d9488', group:'hihat', groupLabel:'Open Edge 4' },
-  hihatClosedTip: { label:'Closed Tip', color:'#99f6e4', group:'hihat', groupLabel:'Closed Tip' },
-  hihatTightTip: { label:'Tight Tip', color:'#ccfbf1', group:'hihat', groupLabel:'Tight Tip' },
-  tomHi: { label:'Center', color:'#fb7185', group:'rackTom1', groupLabel:'Center' },
-  rackTom1RimShot: { label:'Rimshot', color:'#fda4af', group:'rackTom1', groupLabel:'Rimshot' },
-  rackTom1RimOnly: { label:'Rim Only', color:'#fecdd3', group:'rackTom1', groupLabel:'Rim Only' },
-  rackTom2Center: { label:'Center', color:'#f87171', group:'rackTom2', groupLabel:'Center' },
-  rackTom2RimShot: { label:'Rimshot', color:'#fca5a5', group:'rackTom2', groupLabel:'Rimshot' },
-  rackTom2RimOnly: { label:'Rim Only', color:'#fecaca', group:'rackTom2', groupLabel:'Rim Only' },
-  tomMid: { label:'Center', color:'#ef4444', group:'rackTom3', groupLabel:'Center' },
-  rackTom3RimShot: { label:'Rimshot', color:'#f87171', group:'rackTom3', groupLabel:'Rimshot' },
-  rackTom3RimOnly: { label:'Rim Only', color:'#fca5a5', group:'rackTom3', groupLabel:'Rim Only' },
-  floorTom1Center: { label:'Center', color:'#dc2626', group:'floorTom1', groupLabel:'Center' },
-  floorTom1RimShot: { label:'Rimshot', color:'#ef4444', group:'floorTom1', groupLabel:'Rimshot' },
-  floorTom1RimOnly: { label:'Rim Only', color:'#f87171', group:'floorTom1', groupLabel:'Rim Only' },
-  tomLow: { label:'Center', color:'#b91c1c', group:'floorTom2', groupLabel:'Center' },
-  floorTom2RimShot: { label:'Rimshot', color:'#dc2626', group:'floorTom2', groupLabel:'Rimshot' },
-  floorTom2RimOnly: { label:'Rim Only', color:'#ef4444', group:'floorTom2', groupLabel:'Rim Only' },
-  cymbal1Crash: { label:'Crash', color:'#f8fafc', group:'cymbal1', groupLabel:'Crash' },
-  cymbal1MuteHit: { label:'Mute Hit', color:'#e2e8f0', group:'cymbal1', groupLabel:'Mute Hit' },
-  crash1: { label:'Crash', color:'#f1f5f9', group:'cymbal2', groupLabel:'Crash' },
-  cymbal2MuteHit: { label:'Mute Hit', color:'#e2e8f0', group:'cymbal2', groupLabel:'Mute Hit' },
-  cymbal3Crash: { label:'Crash', color:'#f8fafc', group:'cymbal3', groupLabel:'Crash' },
-  cymbal3MuteHit: { label:'Mute Hit', color:'#e2e8f0', group:'cymbal3', groupLabel:'Mute Hit' },
-  ride: { label:'Bow Tip', color:'#22d3ee', group:'ride', groupLabel:'Bow Tip' },
-  rideBowShank: { label:'Bow Shank', color:'#67e8f9', group:'ride', groupLabel:'Bow Shank' },
-  rideBellTip: { label:'Bell Tip', color:'#a5f3fc', group:'ride', groupLabel:'Bell Tip' },
-  rideBell: { label:'Bell Shank', color:'#cffafe', group:'ride', groupLabel:'Bell Shank' },
-  rideEdge: { label:'Edge', color:'#06b6d4', group:'ride', groupLabel:'Edge' },
-  rideMuteHit: { label:'Mute Hit', color:'#0e7490', group:'ride', groupLabel:'Mute Hit' },
-  crash2: { label:'Crash', color:'#cbd5e1', group:'cymbal4', groupLabel:'Crash' },
-  cymbal4MuteHit: { label:'Mute Hit', color:'#e2e8f0', group:'cymbal4', groupLabel:'Mute Hit' },
-  cymbal5Crash: { label:'Crash', color:'#f8fafc', group:'cymbal5', groupLabel:'Crash' },
-  cymbal5MuteHit: { label:'Mute Hit', color:'#e2e8f0', group:'cymbal5', groupLabel:'Mute Hit' },
+  kick: { label:'Kick', family:'kick', group:'kick', groupLabel:'High Stack' },
+  kickOpen: { label:'Open', family:'kick', group:'kick', groupLabel:'Open' },
+  snare: { label:'Snare', family:'snare', group:'snare', groupLabel:'Center' },
+  snareOffCenter: { label:'Off Center', family:'snare', group:'snare', groupLabel:'Off Center' },
+  snareEdge: { label:'Edge', family:'snare', group:'snare', groupLabel:'Edge' },
+  snareRimShot: { label:'Rim Shot', family:'snare', group:'snare', groupLabel:'Rimshot' },
+  rim: { label:'Rim', family:'snare', group:'snare', groupLabel:'Sidestick' },
+  snareRimOnly: { label:'Rim Only', family:'snare', group:'snare', groupLabel:'Rim Only' },
+  chh: { label:'Closed Edge', family:'hihat-closed', group:'hihat', groupLabel:'Closed Edge' },
+  hihatTightEdge: { label:'Tight Edge', family:'hihat-closed', group:'hihat', groupLabel:'Tight Edge' },
+  ohh: { label:'Open Edge 0', family:'hihat-open', group:'hihat', groupLabel:'Open Edge 0' },
+  hihatOpenEdge4: { label:'Open Edge 4', family:'hihat-open', group:'hihat', groupLabel:'Open Edge 4' },
+  hihatClosedTip: { label:'Closed Tip', family:'hihat-closed', group:'hihat', groupLabel:'Closed Tip' },
+  hihatTightTip: { label:'Tight Tip', family:'hihat-closed', group:'hihat', groupLabel:'Tight Tip' },
+  tomHi: { label:'Center', family:'tom', group:'rackTom1', groupLabel:'Center' },
+  rackTom1RimShot: { label:'Rimshot', family:'tom', group:'rackTom1', groupLabel:'Rimshot' },
+  rackTom1RimOnly: { label:'Rim Only', family:'tom', group:'rackTom1', groupLabel:'Rim Only' },
+  rackTom2Center: { label:'Center', family:'tom', group:'rackTom2', groupLabel:'Center' },
+  rackTom2RimShot: { label:'Rimshot', family:'tom', group:'rackTom2', groupLabel:'Rimshot' },
+  rackTom2RimOnly: { label:'Rim Only', family:'tom', group:'rackTom2', groupLabel:'Rim Only' },
+  tomMid: { label:'Center', family:'tom', group:'rackTom3', groupLabel:'Center' },
+  rackTom3RimShot: { label:'Rimshot', family:'tom', group:'rackTom3', groupLabel:'Rimshot' },
+  rackTom3RimOnly: { label:'Rim Only', family:'tom', group:'rackTom3', groupLabel:'Rim Only' },
+  floorTom1Center: { label:'Center', family:'tom', group:'floorTom1', groupLabel:'Center' },
+  floorTom1RimShot: { label:'Rimshot', family:'tom', group:'floorTom1', groupLabel:'Rimshot' },
+  floorTom1RimOnly: { label:'Rim Only', family:'tom', group:'floorTom1', groupLabel:'Rim Only' },
+  tomLow: { label:'Center', family:'tom', group:'floorTom2', groupLabel:'Center' },
+  floorTom2RimShot: { label:'Rimshot', family:'tom', group:'floorTom2', groupLabel:'Rimshot' },
+  floorTom2RimOnly: { label:'Rim Only', family:'tom', group:'floorTom2', groupLabel:'Rim Only' },
+  cymbal1Crash: { label:'Crash', family:'cymbal', group:'cymbal1', groupLabel:'Crash' },
+  cymbal1MuteHit: { label:'Mute Hit', family:'cymbal', group:'cymbal1', groupLabel:'Mute Hit' },
+  crash1: { label:'Crash', family:'cymbal', group:'cymbal2', groupLabel:'Crash' },
+  cymbal2MuteHit: { label:'Mute Hit', family:'cymbal', group:'cymbal2', groupLabel:'Mute Hit' },
+  cymbal3Crash: { label:'Crash', family:'cymbal', group:'cymbal3', groupLabel:'Crash' },
+  cymbal3MuteHit: { label:'Mute Hit', family:'cymbal', group:'cymbal3', groupLabel:'Mute Hit' },
+  ride: { label:'Bow Tip', family:'ride', group:'ride', groupLabel:'Bow Tip' },
+  rideBowShank: { label:'Bow Shank', family:'ride', group:'ride', groupLabel:'Bow Shank' },
+  rideBellTip: { label:'Bell Tip', family:'ride', group:'ride', groupLabel:'Bell Tip' },
+  rideBell: { label:'Bell Shank', family:'ride', group:'ride', groupLabel:'Bell Shank' },
+  rideEdge: { label:'Edge', family:'ride', group:'ride', groupLabel:'Edge' },
+  rideMuteHit: { label:'Mute Hit', family:'ride', group:'ride', groupLabel:'Mute Hit' },
+  crash2: { label:'Crash', family:'cymbal', group:'cymbal4', groupLabel:'Crash' },
+  cymbal4MuteHit: { label:'Mute Hit', family:'cymbal', group:'cymbal4', groupLabel:'Mute Hit' },
+  cymbal5Crash: { label:'Crash', family:'cymbal', group:'cymbal5', groupLabel:'Crash' },
+  cymbal5MuteHit: { label:'Mute Hit', family:'cymbal', group:'cymbal5', groupLabel:'Mute Hit' },
 };
 let trackList = [];
 function buildTrackListFromTable() {
   if (trackList.length || !INSTRUMENT_TABLE) return;
+  const rows = [];
   for (const r of INSTRUMENT_TABLE.instruments) {
     if (r.gm === null) continue;   // custom instruments get their tracks from the Add Track dialog
     const l = TRACK_LAYOUT[r.id];
     if (!l) { console.error('instrument table row without track layout: ' + r.id); continue; }
-    trackList.push({ id: r.id, label: l.label, color: l.color, gm: r.gm, role: r.id, group: l.group, groupLabel: l.groupLabel });
+    rows.push({ r, l });
   }
+  // articulations of one group share the family hue and step through its light range
+  const groupSize = {}, groupSeen = {};
+  rows.forEach(({ l }) => { groupSize[l.group] = (groupSize[l.group] || 0) + 1; });
+  rows.forEach(({ r, l }) => {
+    const i = groupSeen[l.group] = (groupSeen[l.group] ?? -1) + 1;
+    trackList.push({ id: r.id, label: l.label, color: DGInstrument.trackHex(l.family, i, groupSize[l.group]), gm: r.gm, role: r.id, group: l.group, groupLabel: l.groupLabel });
+  });
 }
 dggOnInstrumentTable(buildTrackListFromTable);
 
@@ -281,8 +289,8 @@ class SongEngine {
 const songEngine = new SongEngine();
 
 let selectedSegmentIdx = null;
-const BLOCK_PALETTE = ['#0ea5e9','#fbbf24','#ec4899','#10b981','#f97316','#a78bfa','#f43f5e','#22d3ee','#84cc16','#e879f9'];
-function blockColor(blockId) { const idx = blocksList.findIndex(b => b.id === blockId); return BLOCK_PALETTE[Math.max(0,idx) % BLOCK_PALETTE.length]; }
+const BLOCK_PALETTE_SIZE = 10;   // --block-1 … --block-10 in style.css
+function blockColor(blockId) { const idx = blocksList.findIndex(b => b.id === blockId); return DGTokens.get('--block-' + (Math.max(0,idx) % BLOCK_PALETTE_SIZE + 1)); }
 
 let fullPattern = null;
 

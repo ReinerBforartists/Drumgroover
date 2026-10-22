@@ -79,6 +79,24 @@
   --snap-line-a30:rgba(30,64,175,.3);
   --white-a15:rgba(255,255,255,.15);
   --progress-fill:#66aacc;
+  /* instrument families: hue, saturation (%) and lightness per use — see DGInstrument in tokens.js */
+  --inst-kick-h:4;          --inst-kick-s:70;
+  --inst-snare-h:32;        --inst-snare-s:68;
+  --inst-hihat-closed-h:48; --inst-hihat-closed-s:72;
+  --inst-hihat-open-h:48;   --inst-hihat-open-s:32;
+  --inst-tom-h:130;         --inst-tom-s:45;
+  --inst-cymbal-h:205;      --inst-cymbal-s:62;
+  --inst-ride-h:275;        --inst-ride-s:48;
+  --inst-custom-h:330;      --inst-custom-s:70;
+  --inst-none-h:220;        --inst-none-s:6;
+  --inst-l-mixer:55;  --inst-l-legend:68;
+  --inst-l-white-min:55; --inst-l-white-max:84;
+  --inst-l-black-min:20; --inst-l-black-max:42;
+  --inst-l-note-min:60;  --inst-l-note-max:88;
+  --inst-note-hue-spread:10;   /* articulations of one group drift by up to ±this many degrees */
+  /* song blocks, assigned by block position */
+  --block-1:#0ea5e9; --block-2:#fbbf24; --block-3:#ec4899; --block-4:#10b981; --block-5:#f97316;
+  --block-6:#a78bfa; --block-7:#f43f5e; --block-8:#22d3ee; --block-9:#84cc16; --block-10:#e879f9;
   /* font sizes */
   --fs-3xs:7px;  --fs-2xs:8px;  --fs-xs:9px;   --fs-sm:10px;  --fs-md:11px;  --fs-md2:11.5px;
   --fs-lg:12px;  --fs-xl:13px;  --fs-2xl:14px; --fs-3xl:15px; --fs-4xl:18px;

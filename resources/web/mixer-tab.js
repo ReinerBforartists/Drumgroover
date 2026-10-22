@@ -6,17 +6,11 @@
 // collide with the rest of the app.
 // =========================================
 (() => {
-  const FAMILY_HSL = {
-    kick: { h:4, s:70 }, snare: { h:32, s:68 }, hihat: { h:48, s:72 },
-    tom: { h:130, s:45 }, cymbal: { h:205, s:62 }, ride: { h:275, s:48 },
-    // 'custom' = the catch-all slot for every user-added track (role 'custom',
-    // added via the visible "+ Add Track" button above the track list); they act as its articulations. Pink, matching
-    // the custom track color in generator-core.js trackList.
-    custom: { h:330, s:70 },
-  };
+  // 'custom' = the catch-all slot for every user-added track (role 'custom', added via the visible "+ Add Track"
+  // button above the track list); they act as its articulations.
+  const MIXER_FAMILIES = new Set(['kick', 'snare', 'hihat', 'tom', 'cymbal', 'ride', 'custom']);
   function familyColor(fam) {
-    const c = FAMILY_HSL[fam];
-    return c ? `hsl(${c.h} ${c.s}% 55%)` : DGTokens.get('--border2');
+    return MIXER_FAMILIES.has(fam) ? DGInstrument.css(fam, DGInstrument.lightness('mixer')) : DGTokens.get('--border2');
   }
 
   // Single source of truth for the mixer's default strip settings. Change a

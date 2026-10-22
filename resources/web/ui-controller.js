@@ -1809,7 +1809,7 @@ async function neAddTrack() {
   const gm = parseInt(gmStr);
   const id = 'custom_' + label.toLowerCase().replace(/[^a-z0-9]/g,'_') + '_' + Date.now();
   withTracksUndo(`Add track (${label})`, () => {
-    trackList.push({ id, label, color:'#ec4899', gm: isNaN(gm) ? findUnusedGmNote() : gm, role:'custom', customInstrument: instrumentId });
+    trackList.push({ id, label, color: DGInstrument.trackHex('custom', 0, 1), gm: isNaN(gm) ? findUnusedGmNote() : gm, role:'custom', customInstrument: instrumentId });
     blocksList.forEach(b => { b.data[id] = []; });
     focusedTrackId = id;
     neSetActiveCustomTrack(id);   // the new track is what we set up next — cluster selects it

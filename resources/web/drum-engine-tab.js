@@ -18,20 +18,7 @@ const DE_LEGEND_ITEMS = [
   { family: 'ride',         label: 'Ride' },
 ];
 
-// Color coding: hue identifies family, lightness varies per articulation.
-const DE_FAMILY_HSL = {
-  kick:           { h: 4,   s: 70 },
-  snare:          { h: 32,  s: 68 },
-  'hihat-closed': { h: 48,  s: 72 },
-  'hihat-open':   { h: 48,  s: 32 },
-  tom:            { h: 130, s: 45 },
-  cymbal:         { h: 205, s: 62 },
-  ride:           { h: 275, s: 48 },
-};
-const DE_WHITE_L_MIN = 55, DE_WHITE_L_MAX = 84;
-const DE_BLACK_L_MIN = 20, DE_BLACK_L_MAX = 42;
-const DE_LEGEND_L = 68;
-const DE_UNIMPLEMENTED_HSL = { h: 220, s: 6 };
+// Color coding: hue identifies family (DGInstrument, --inst-* tokens), lightness varies per articulation.
 
 function deAssignFamilyIndices() {
   const totals = {};
@@ -98,21 +85,15 @@ function deApplyInstrumentTable() {
 }
 
 function deArticulationColor(entry, black) {
-  if (entry.implemented === false) {
-    const l = black ? (DE_BLACK_L_MIN + DE_BLACK_L_MAX) / 2 : (DE_WHITE_L_MIN + DE_WHITE_L_MAX) / 2;
-    return `hsl(${DE_UNIMPLEMENTED_HSL.h}, ${DE_UNIMPLEMENTED_HSL.s}%, ${l}%)`;
-  }
-  const base = DE_FAMILY_HSL[entry.family] || DE_UNIMPLEMENTED_HSL;
+  const lMin = DGInstrument.lightness(black ? 'black-min' : 'white-min');
+  const lMax = DGInstrument.lightness(black ? 'black-max' : 'white-max');
+  if (entry.implemented === false) return DGInstrument.css('none', (lMin + lMax) / 2);
   const t = entry.familyTotal > 1 ? entry.artIndex / (entry.familyTotal - 1) : 0.5;
-  const lMin = black ? DE_BLACK_L_MIN : DE_WHITE_L_MIN;
-  const lMax = black ? DE_BLACK_L_MAX : DE_WHITE_L_MAX;
-  const l = lMin + (lMax - lMin) * t;
-  return `hsl(${base.h}, ${base.s}%, ${l.toFixed(1)}%)`;
+  return DGInstrument.css(entry.family, lMin + (lMax - lMin) * t);
 }
 
 function deFamilyLegendColor(family) {
-  const base = DE_FAMILY_HSL[family] || DE_UNIMPLEMENTED_HSL;
-  return `hsl(${base.h}, ${base.s}%, ${DE_LEGEND_L}%)`;
+  return DGInstrument.css(family, DGInstrument.lightness('legend'));
 }
 
 const DE_BLACK_KEY_RATIO = 16 / 26;
