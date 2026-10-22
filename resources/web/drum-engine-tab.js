@@ -1007,12 +1007,6 @@ function deBuildInstancePadUnit(cfg) {
   const pad = document.createElement('div');
   pad.className = 'de-kick-pad';
   pad.dataset.tooltip = 'Morph Pad\nDrag to blend the sound between the four corner presets. Keeps retriggering while held.\nA hollow dot means a knob below was changed by hand and no longer matches — drag again to resync.';
-  for (const [cls, text] of [['tl', 'low\nshort'], ['tr', 'high\nshort'], ['bl', 'low\nlong'], ['br', 'high\nlong']]) {
-    const l = document.createElement('div');
-    l.className = 'de-kick-pad-label ' + cls;
-    l.textContent = text;
-    pad.appendChild(l);
-  }
   const dot = document.createElement('div');
   dot.className = 'de-kick-pad-dot';
   pad.appendChild(dot);
@@ -1323,22 +1317,29 @@ function deInitFocusSidebar() {
 
 let deParamTabsBuilt = false;
 
-// The pad has no axis legend of its own: name the parameters on its X and Y axis (from DE_FAMILY_PAD_AXIS) next to it.
+// The pad's axis legends come from DE_FAMILY_PAD_AXIS: the parameter name between a "-" and a "+" end, under the pad (X) and left of it (Y).
+// An inverted axis (see dePadCornerValue) has its "-" at the far end: Y with invert has "-" at the top.
 function deAddPadAxisCaptions(card, family) {
   const pad = card.querySelector('.de-kick-pad');
   const cfg = DE_FAMILY_PAD_AXIS[family];
   if (!pad || !cfg || card.querySelector('.de-pad-axis')) return;
-  const names = { x: [], y: [] };
+  const axes = { x: { names: [], invert: false }, y: { names: [], invert: false } };
   for (const [key, c] of Object.entries(cfg)) {
     const lab = card.querySelector('[data-param-key="' + key + '"] .ctrl-label');
     const name = lab && lab.childNodes[0] ? lab.childNodes[0].textContent.trim() : '';
-    if (name && names[c.axis]) names[c.axis].push(name);
+    if (name && axes[c.axis]) { axes[c.axis].names.push(name); axes[c.axis].invert = axes[c.axis].invert || !!c.invert; }
   }
   for (const ax of ['x', 'y']) {
-    if (!names[ax].length) continue;
+    const a = axes[ax];
+    if (!a.names.length) continue;
+    // x: low end left, high end right; y: low end at the bottom, high end at the top; an inverted axis swaps them
+    const first = (ax === 'x') !== a.invert ? '\u2212' : '+';
+    const last = first === '+' ? '\u2212' : '+';
     const el = document.createElement('div');
     el.className = 'de-pad-axis ' + ax;
-    el.textContent = names[ax].join(' / ');
+    for (const [cls, text] of [['sign', ax === 'x' ? first : (a.invert ? '\u2212' : '+')], ['name', a.names.join(' / ')], ['sign', ax === 'x' ? last : (a.invert ? '+' : '\u2212')]]) {
+      const s = document.createElement('span'); s.className = cls; s.textContent = text; el.appendChild(s);
+    }
     pad.parentElement.appendChild(el);
   }
 }
@@ -1368,6 +1369,7 @@ function deInstallMasterDetail(panel) {
     all.forEach((card, i) => {
       card.classList.toggle('de-card-selected', i === sel);
       deAddPadAxisCaptions(card, family);
+      deWireCardZoom(card);
       const title = card.querySelector('.de-instance-card-title');
       const text = title ? title.textContent : '';
       const m = GROUPED.exec(text);

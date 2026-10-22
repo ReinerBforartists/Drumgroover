@@ -1618,13 +1618,43 @@ function popOutParamCluster(cluster) {
 function popInParamCluster(cluster) {
   if (!cluster) return;
   cluster.style.position = ''; cluster.style.top = ''; cluster.style.left = ''; cluster.style.width = ''; cluster.style.margin = '';
+  cluster.style.removeProperty('--a11y-zoom-factor');
   cluster.classList.remove('a11y-zoomed');
   if (cluster._a11yPlaceholder) { cluster._a11yPlaceholder.remove(); cluster._a11yPlaceholder = null; }
   if (poppedParamCluster === cluster) poppedParamCluster = null;
 }
 function deWireClusterZoom(cluster) {
-  cluster.addEventListener('mouseenter', () => popOutParamCluster(cluster));
+  // inside an editor card the whole card zooms (deWireCardZoom), not its single clusters
+  cluster.addEventListener('mouseenter', () => { if (!cluster.closest('.de-instance-card')) popOutParamCluster(cluster); });
   cluster.addEventListener('mouseleave', () => popInParamCluster(cluster));
+}
+// Drum Engine editor card: knobs, Volume and pad zoom together as one unit, so the pad never covers the knobs it drives.
+// While zoomed the card is an overlay (it may cover the selector and the keyboard); the factor is capped to what fits into the window.
+function setCardZoomOrigin(card) {
+  const factor = parseFloat(document.documentElement.style.getPropertyValue('--a11y-zoom-factor')) || 1.5;
+  const bounds = card.closest('.app') || card.parentElement;
+  const prevTransform = card.style.transform, prevTransition = card.style.transition;
+  card.style.transition = 'none';
+  card.style.transform = 'none';
+  void card.offsetHeight;
+  const cRect = card.getBoundingClientRect();
+  const bRect = bounds.getBoundingClientRect();
+  card.style.transform = prevTransform;
+  card.style.transition = prevTransition;
+  const eff = Math.max(1, Math.min(factor, bRect.height / cRect.height, bRect.width / cRect.width));
+  card.style.setProperty('--a11y-zoom-factor', String(eff));
+  const grow = eff - 1;
+  if (grow <= 0) { card.style.transformOrigin = '50% 50%'; return; }
+  const originX = clampedOrigin(Math.max(0, cRect.left - bRect.left), Math.max(0, bRect.right - cRect.right), cRect.width, grow);
+  const originY = clampedOrigin(Math.max(0, cRect.top - bRect.top), Math.max(0, bRect.bottom - cRect.bottom), cRect.height, grow);
+  const scale = currentUIScale();
+  card.style.transformOrigin = `${originX / scale}px ${originY / scale}px`;
+}
+function deWireCardZoom(card) {
+  if (card._cardZoomWired) return;
+  card._cardZoomWired = true;
+  card.addEventListener('mouseenter', () => { popOutParamCluster(card); setCardZoomOrigin(card); });
+  card.addEventListener('mouseleave', () => popInParamCluster(card));
 }
 document.getElementById('deParamPanels')?.addEventListener('scroll', () => { if (poppedParamCluster) popInParamCluster(poppedParamCluster); });
 
