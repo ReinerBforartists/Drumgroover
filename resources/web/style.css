@@ -110,6 +110,9 @@
   /* song blocks, assigned by block position */
   --block-1:#0ea5e9; --block-2:#fbbf24; --block-3:#ec4899; --block-4:#10b981; --block-5:#f97316;
   --block-6:#a78bfa; --block-7:#f43f5e; --block-8:#22d3ee; --block-9:#84cc16; --block-10:#e879f9;
+  /* value readouts: larger and bolder than their labels */
+  --fs-value:11px;
+  --fw-value:600;
   /* font sizes — nothing below 10px; the 3xs/2xs/xs steps stay as names so a later size change is one edit */
   --fs-3xs:10px; --fs-2xs:10px; --fs-xs:10px;  --fs-sm:10px;  --fs-md:11px;  --fs-md2:11.5px;
   --fs-lg:12px;  --fs-xl:13px;  --fs-2xl:14px; --fs-3xl:15px; --fs-4xl:18px;
@@ -379,7 +382,7 @@ body.a11y-hover-zoom .ne-sidebar-top:hover .ctrl, body.a11y-hover-zoom .ne-sideb
 .ctrl.active .knob-visual { border-color:var(--accent); }
 
 .ctrl-label { font-size:var(--fs-3xs); letter-spacing:.03em; color:var(--muted); width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.ctrl-label .val { color:var(--value); font-size:var(--fs-sm); }
+.ctrl-label .val { color:var(--value); font-size:var(--fs-value); font-weight:var(--fw-value); }
 .ctrl select {
   width:100%;
   font-size:var(--fs-md);
@@ -443,7 +446,7 @@ body.a11y-hover-zoom .ne-sidebar-top:hover .ctrl, body.a11y-hover-zoom .ne-sideb
   outline:none;
   border-radius:2px;
 }
-.ctrl .val { color:var(--value); font-size:var(--fs-sm); display:block; margin-top:2px; cursor:pointer; text-align:center; min-width:30px; margin-left:auto; margin-right:auto; }
+.ctrl .val { color:var(--value); font-size:var(--fs-value); font-weight:var(--fw-value); display:block; margin-top:2px; cursor:pointer; text-align:center; min-width:30px; margin-left:auto; margin-right:auto; }
 .ctrl select:focus, .ctrl input:focus { outline:1px solid var(--accent); border-color:var(--accent); }
 .custom-select-open { outline:1px solid var(--accent); border-color:var(--accent); } /* mirrors :focus above while the popup is open */
 
@@ -828,7 +831,7 @@ select.ne-len-input { appearance:none; -webkit-appearance:none; } /* "Turnaround
 }
 .ne-select:focus { outline:1px solid var(--accent); border-color:var(--accent); }
 .ne-mini-slider { width:80px; height:3px; -webkit-appearance:none; appearance:none; background:var(--border2); border-radius:2px; accent-color:var(--value); cursor:pointer; }
-.ne-mini-val { font-size:var(--fs-sm); color:var(--value); min-width:32px; text-align:right; }
+.ne-mini-val { font-size:var(--fs-value); font-weight:var(--fw-value); color:var(--value); min-width:32px; text-align:right; }
 /* Dial rows (Turnaround, Break, Fill panels): small rotary dials side by side (neCreateDial/neDialRow in note-editor-panels.js). */
 .ne-dial-row-items { display:flex; flex-direction:row; gap:5px; align-items:flex-start; flex-wrap:wrap; }
 .ne-dial-row .ctrl { min-width:0; padding:2px 1px; }
@@ -948,7 +951,7 @@ select.ne-len-input { appearance:none; -webkit-appearance:none; } /* "Turnaround
 .ne-vel-mini-label { font-size:var(--fs-xs); color:var(--muted); letter-spacing:.03em; width:20px; flex-shrink:0; text-align:right; }
 .ne-vel-mini-slider { flex:1; min-width:0; height:3px; -webkit-appearance:none; appearance:none; background:var(--border2); border-radius:2px; accent-color:var(--value); cursor:pointer; }
 .ne-vel-mini-slider::-webkit-slider-thumb { -webkit-appearance:none; width:9px; height:9px; border-radius:50%; background:var(--value); cursor:pointer; box-shadow:0 0 4px var(--amber-glow); }
-.ne-vel-mini-val { width:26px; flex-shrink:0; height:16px; background:transparent; border:none; color:var(--value); font-size:var(--fs-sm); padding:0; text-align:right; appearance:textfield; -moz-appearance:textfield; }
+.ne-vel-mini-val { width:26px; flex-shrink:0; height:16px; background:transparent; border:none; color:var(--value); font-size:var(--fs-value); font-weight:var(--fw-value); padding:0; text-align:right; appearance:textfield; -moz-appearance:textfield; }
 .ne-vel-mini-val::-webkit-outer-spin-button, .ne-vel-mini-val::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
 .ne-vel-mini-val:hover, .ne-vel-mini-val:focus { background:var(--bg); border-radius:2px; }
 .ne-vel-labels input:disabled { opacity:.35; cursor:not-allowed; }
@@ -1389,7 +1392,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 .knob:hover, .knob:active { border-color:var(--accent); }
 
 .knob-label { font-size:var(--fs-3xs); color:var(--muted); letter-spacing:.03em; font-family:'Inter','SF Pro Text',-apple-system,system-ui,sans-serif; }
-.knob-value { font-size:var(--fs-sm); color:var(--value); min-width:26px; text-align:center; white-space:nowrap; line-height:1.1; }
+.knob-value { font-size:var(--fs-value); font-weight:var(--fw-value); color:var(--value); min-width:26px; text-align:center; white-space:nowrap; line-height:1.1; }
 
 .knob-visual.active { border-color:var(--accent); }
 
@@ -1411,7 +1414,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 
 .knob-tooltip.show { opacity:1; }
 
-.strip-db { position:relative; width:28px; flex:0 0 auto; font-size:var(--fs-xs); text-align:center; color:var(--value); font-variant-numeric:tabular-nums; height:18px; line-height:18px; cursor:pointer; white-space:nowrap; }
+.strip-db { position:relative; width:28px; flex:0 0 auto; font-size:var(--fs-value); text-align:center; color:var(--value); font-weight:var(--fw-value); font-variant-numeric:tabular-nums; height:18px; line-height:18px; cursor:pointer; white-space:nowrap; }
 .strip-db-input {
   display:none;
   position:absolute;
@@ -1439,7 +1442,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 .auto-btn:hover:not(:disabled) { border-color:var(--accent); color:var(--text); }
 .auto-btn.active { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
 .auto-btn:disabled { opacity:.35; cursor:default; }
-.auto-target { position:relative; font-size:var(--fs-xs); color:var(--value); font-variant-numeric:tabular-nums; cursor:pointer; white-space:nowrap; }
+.auto-target { position:relative; font-size:var(--fs-value); font-weight:var(--fw-value); color:var(--value); font-variant-numeric:tabular-nums; cursor:pointer; white-space:nowrap; }
 .fader:disabled { opacity:.5; }
 #mxAutoAllBtn.active { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
 #mxAutoAllBtn:disabled { opacity:.35; cursor:default; }
@@ -1593,7 +1596,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 .eq-gain-col { display:flex; flex-direction:column; align-items:center; gap:3px; }
 .eq-band-label { font-size:var(--fs-2xs); letter-spacing:.05em; color:var(--muted); }
 .eq-panel .fader-wrap { height:82px; --fader-len:82px; width:26px; }
-.eq-gain-val { font-size:var(--fs-xs); color:var(--value); }
+.eq-gain-val { font-size:var(--fs-value); font-weight:var(--fw-value); color:var(--value); }
 .eq-knobs { display:flex; justify-content:center; align-items:flex-start; gap:14px; padding-top:2px; }
 .eq-band-col { display:flex; flex-direction:column; align-items:center; gap:7px; }
 .eq-knobs .ctrl-label { display:none; } /* keine Text-Labels — nur der Wert */
