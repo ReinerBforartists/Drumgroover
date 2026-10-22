@@ -79,6 +79,7 @@
   --bg-a35:rgba(15,23,42,.35);
   /* mixer / keyboard hardware parts */
   --fader-edge:#0a0d12;
+  --fader-tint:45%;   /* share of the instrument color in the fader cap (instrument strips only) */
   --fader-cap-1:#454c5c; --fader-cap-2:#626a7c; --fader-cap-3:#87909f;
   --key-white:#e8e8ec;
   --key-black:#20232a;
@@ -1499,7 +1500,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
     box-shadow:0 2px 6px var(--black-a65), inset 0 1px 0 var(--white-a25);
     background-image:
       linear-gradient(90deg, transparent calc(50% - 1px), var(--value) calc(50% - 1px), var(--value) calc(50% + 1px), transparent calc(50% + 1px)),
-      linear-gradient(90deg, var(--fader-cap-1) 0%, var(--fader-cap-2) 50%, var(--fader-cap-3) 100%);
+      linear-gradient(90deg, color-mix(in srgb, var(--strip-color, var(--fader-cap-1)) var(--fader-tint), var(--fader-cap-1)) 0%, color-mix(in srgb, var(--strip-color, var(--fader-cap-2)) var(--fader-tint), var(--fader-cap-2)) 50%, color-mix(in srgb, var(--strip-color, var(--fader-cap-3)) var(--fader-tint), var(--fader-cap-3)) 100%);
   }
 .fader-wrap input[type=range]::-moz-range-thumb {
     width:18px; height:22px; border-radius:3px;
@@ -1508,7 +1509,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
     box-shadow:0 2px 6px var(--black-a65), inset 0 1px 0 var(--white-a25);
     background-image:
       linear-gradient(90deg, transparent calc(50% - 1px), var(--value) calc(50% - 1px), var(--value) calc(50% + 1px), transparent calc(50% + 1px)),
-      linear-gradient(90deg, var(--fader-cap-1) 0%, var(--fader-cap-2) 50%, var(--fader-cap-3) 100%);
+      linear-gradient(90deg, color-mix(in srgb, var(--strip-color, var(--fader-cap-1)) var(--fader-tint), var(--fader-cap-1)) 0%, color-mix(in srgb, var(--strip-color, var(--fader-cap-2)) var(--fader-tint), var(--fader-cap-2)) 50%, color-mix(in srgb, var(--strip-color, var(--fader-cap-3)) var(--fader-tint), var(--fader-cap-3)) 100%);
   }
 .fader-wrap input[type=range]:hover::-webkit-slider-thumb,
 .fader-wrap input[type=range]:active::-webkit-slider-thumb {
