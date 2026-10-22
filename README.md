@@ -23,7 +23,7 @@ It is a drum VST. The 808 engine is a TR-808 clone based on the circuit of the [
 
 And it plays nice with your DAW. Export the song or single parts as MIDI, or drag them straight into your project.
 
-> ⚠️ **Alpha (first public release).** It works and I use it, but expect rough edges. Windows 11, 64 bit, VST3 only for now. The macOS code paths exist but have never been built or run; see [Status](#-status).
+ ⚠️ **Alpha (first public release).** It works and I use it, but expect rough edges. Windows 11, 64 bit, VST3 only for now. The macOS code paths exist but have never been built or run; see [Status](#-status).
 
 ## 📸 Preview
 
