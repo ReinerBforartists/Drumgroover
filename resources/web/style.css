@@ -1131,12 +1131,8 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 
 .de-engine-select-wrap { display:flex; align-items:center; gap:8px; flex-shrink:0; }
 .de-engine-select-label { font-size:var(--fs-md); font-weight:600; color:var(--text-bright); white-space:nowrap; }
-.de-engine-select { background:var(--panel); border:1px solid var(--border2); border-radius:var(--r); color:var(--text); font-size:var(--fs-md); padding:5px 8px; }
+.de-engine-select { min-width:64px; padding:5px 8px; } /* look comes from .ne-select, same as Genre / Feel */
 .de-engine-select option:disabled { color:var(--muted); }
-.de-param-tab-btn { padding:6px 14px; border:1px solid var(--border); border-radius:var(--r) var(--r) 0 0; background:var(--panel); color:var(--text); cursor:pointer; font-size:var(--fs-lg); }
-.de-param-tab-btn.active { background:var(--panel); color:var(--accent); border:1px solid var(--accent); font-weight:600; }
-.de-param-tab-btn:hover:not(.active) { background:var(--panel); color:var(--text-bright); border-color:var(--border2); }
-.de-param-tab-btn.active:hover { box-shadow:0 0 8px var(--accent); }
 
 /* The scroll area fills the space left in .de-main, leaving the 10px panel gap between articulations and keyboard at any window size or UI scale. */
 .de-param-panels { padding:4px 0; flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; }
@@ -1627,11 +1623,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 .lim-knobs-inner { display:flex; gap:24px; justify-content:center; }
 
 /* Instrument sub-tabs in the transport row, centered, as a compact segmented control. */
-#blockPaletteWrap .de-inline-tabs { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); flex-wrap:nowrap; gap:0; display:inline-flex; border:1px solid var(--border2); border-radius:var(--r); overflow:hidden; }
-#blockPaletteWrap .de-inline-tabs .de-param-tab-btn { padding:5px 10px; margin:0; border:none; border-right:1px solid var(--border2); border-radius:0; background:transparent; color:var(--text); font-size:var(--fs-lg); line-height:1; }
-#blockPaletteWrap .de-inline-tabs .de-param-tab-btn:last-child { border-right:none; }
-#blockPaletteWrap .de-inline-tabs .de-param-tab-btn:hover { background:var(--cyan-a10); color:var(--text-bright); }
-#blockPaletteWrap .de-inline-tabs .de-param-tab-btn.active { background:var(--cyan-a18); color:var(--accent); font-weight:600; box-shadow:none; }
+#blockPaletteWrap .de-inline-tabs { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); flex-wrap:nowrap; gap:6px; display:inline-flex; } /* buttons are .tab-btn, same as the main navigation */
 
 /* Visible "+ Add Track" button in the toolbar corner above the track list */
 .ne-toolbar-corner .ne-add-track-btn { font-size:var(--fs-sm); padding:4px 9px; white-space:nowrap; }

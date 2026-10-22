@@ -1888,6 +1888,7 @@ function deInitEngineModeControls() {
   const select = document.getElementById('deEngineSelect');
   if (!select) return;
 
+  wireCustomSelect(select);   // same popup as the other dropdowns
   select.addEventListener('change', () => {
     deEngineMode = select.value;
     // The values in these histories belong to the previous engine; undoing them would write them into the new one.

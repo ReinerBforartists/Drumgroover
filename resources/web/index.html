@@ -378,7 +378,7 @@
       <div class="dot"></div><span id="statusText">ready</span><span id="muteMarquee" aria-hidden="true"><span class="mute-marquee-track" id="muteMarqueeTrack"></span></span>
       <div class="de-engine-select-wrap">
         <div class="de-engine-select-label">Engine</div>
-        <select id="deEngineSelect" class="de-engine-select" data-tooltip="Engine&#10;Selects the sound engine for the whole kit — 808: models of the TR-808 circuits, Lo-Fi: simple synthesized sounds without adjustable parameters. Each engine starts with its own default mixer.">
+        <select id="deEngineSelect" class="ne-select de-engine-select" data-tooltip="Engine&#10;Selects the sound engine for the whole kit — 808: models of the TR-808 circuits, Lo-Fi: simple synthesized sounds without adjustable parameters. Each engine starts with its own default mixer.">
           <option value="internal">808</option>
           <option value="lofi">Lo-Fi</option>
         </select>
@@ -399,13 +399,13 @@
     <!-- Instrument sub-tabs live in the transport row (centered) to save a vertical row.
          Only shown on the Drum Engine tab (see switchToTab). -->
     <div class="de-inline-tabs de-param-tabs" id="deParamTabs" style="display:none;">
-      <button class="de-param-tab-btn active" data-family="kick">Kick</button>
-      <button class="de-param-tab-btn" data-family="snare">Snare</button>
-      <button class="de-param-tab-btn" data-family="hihat">Hi-Hat</button>
-      <button class="de-param-tab-btn" data-family="tom">Tom</button>
-      <button class="de-param-tab-btn" data-family="cymbal">Cymbal</button>
-      <button class="de-param-tab-btn" data-family="ride">Ride</button>
-      <button class="de-param-tab-btn" data-family="custom" data-tooltip="Custom&#10;Extra 808 percussion: High Conga, Claves, Hand Clap, Maracas, Cowbell, PC-2. An instrument plays once you add it as a track with + Add Track in the Note Editor.">Custom</button>
+      <button class="tab-btn de-param-tab-btn active" data-family="kick">Kick</button>
+      <button class="tab-btn de-param-tab-btn" data-family="snare">Snare</button>
+      <button class="tab-btn de-param-tab-btn" data-family="hihat">Hi-Hat</button>
+      <button class="tab-btn de-param-tab-btn" data-family="tom">Tom</button>
+      <button class="tab-btn de-param-tab-btn" data-family="cymbal">Cymbal</button>
+      <button class="tab-btn de-param-tab-btn" data-family="ride">Ride</button>
+      <button class="tab-btn de-param-tab-btn" data-family="custom" data-tooltip="Custom&#10;Extra 808 percussion: High Conga, Claves, Hand Clap, Maracas, Cowbell, PC-2. An instrument plays once you add it as a track with + Add Track in the Note Editor.">Custom</button>
     </div>
     <div class="toolbar-sep"></div>
     <div id="blockPalette"></div>
