@@ -587,7 +587,7 @@
      ============================================ -->
 <div class="panel-row seq-panel tab-panel" data-tab-panel="timeline">
   <div class="tl-header">
-    <div class="panel-title">Song Generator — this plays/exports back to back. Drag a block from the row above to insert it anywhere; drag a clip to reorder it, hold Shift while dragging to duplicate it instead. <span id="tlSongTypeLabel"></span></div>
+    <div class="panel-title tl-title" data-tooltip="Plays and exports the blocks back to back.&#10;Drag a block from the row above to insert it anywhere.&#10;Drag a clip to reorder it — hold Shift while dragging to duplicate it instead.&#10;Double-click a clip or a row in the list below to open it in the Note Editor.">Song Generator <span id="tlSongTypeLabel"></span></div>
     <div class="ne-ctl-group">
       <span class="ne-ctl-label">Zoom</span>
       <input type="range" id="tlZoomSlider" class="ne-mini-slider" min="0.25" max="4" step="0.05" value="1" data-tooltip="Zoom&#10;Zooms the Song Generator. Ctrl+scroll over it does the same.">
@@ -603,6 +603,14 @@
     </div>
   </div>
   <div class="tl-resize-handle" id="tlResizeHandle" data-tooltip="Height&#10;Drag to make the clips taller or shorter. Double-click resets it."></div>
+  <!-- Block overview: fills the space under the clips. Click a row to select its clip, double-click to open the block. -->
+  <div class="tl-blocks" id="tlBlocks">
+    <div class="tl-blocks-head">
+      <span class="tl-blocks-title">Blocks</span>
+      <span class="tl-blocks-cols"><span class="c-idx">#</span><span class="c-name">Name</span><span class="c-bars">Bars</span><span class="c-notes">Notes</span></span>
+    </div>
+    <div class="tl-blocks-list" id="tlBlocksList"></div>
+  </div>
 </div>
 
 <!-- ============================================

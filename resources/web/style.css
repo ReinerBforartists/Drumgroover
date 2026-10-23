@@ -718,6 +718,25 @@ body.knob-dragging { user-select:none; cursor:ns-resize; }
 }
 .tl-clip.silence { background:transparent !important; border:2px dashed var(--border2); color:var(--muted); }
 
+/* Block overview under the clips: takes the panel's remaining height so the tab has no dead space. */
+.tl-blocks { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; background:var(--bg); border:1px solid var(--border); border-radius:var(--r); overflow:hidden; }
+.tl-blocks-head { display:flex; flex-direction:column; gap:4px; padding:6px 10px; border-bottom:1px solid var(--border); background:var(--panel); }
+.tl-blocks-title { font-size:var(--fs-xs); letter-spacing:.1em; text-transform:uppercase; color:var(--title); font-weight:600; }
+.tl-blocks-cols { display:flex; align-items:center; gap:10px; font-size:var(--fs-xs); letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+.tl-blocks-list { flex:1 1 auto; min-height:0; overflow-y:auto; padding:2px 0; }
+.tl-block-row { display:flex; align-items:center; gap:10px; padding:4px 10px; cursor:pointer; border-bottom:1px solid var(--row-line); font-size:var(--fs-sm); color:var(--text); }
+.tl-block-row:last-child { border-bottom:none; }
+.tl-block-row:hover { background:var(--cyan-a10); }
+.tl-block-row.selected { background:var(--amber-a12); box-shadow:inset 2px 0 0 var(--select); }
+.tl-block-row .c-idx { flex:0 0 auto; width:22px; text-align:center; color:var(--muted); font-variant-numeric:tabular-nums; }
+.tl-block-row .c-name { flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tl-block-row .c-name::before { content:''; display:inline-block; width:8px; height:8px; border-radius:2px; background:var(--row-accent, var(--border2)); margin-right:7px; vertical-align:middle; }
+.tl-block-row .c-bars, .tl-block-row .c-notes { flex:0 0 auto; width:44px; text-align:right; font-variant-numeric:tabular-nums; }
+.tl-blocks-cols .c-idx { width:22px; text-align:center; }
+.tl-blocks-cols .c-name { flex:1 1 auto; min-width:0; }
+.tl-blocks-cols .c-bars, .tl-blocks-cols .c-notes { width:44px; text-align:right; }
+.tl-blocks-empty { padding:14px 12px; font-size:var(--fs-sm); color:var(--muted); font-style:italic; }
+
 .grid-section { background:var(--panel); border:1px solid var(--border); border-radius:var(--r); padding:12px; display:flex; flex-direction:column; gap:8px; }
 .stat-pills { display:flex; flex-wrap:wrap; }
 .pill { font-size:var(--fs-sm); color:var(--muted); }

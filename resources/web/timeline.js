@@ -13,7 +13,7 @@ const TL_ZOOM_MIN = 0.25, TL_ZOOM_MAX = 4; // Same range as Note Editor.
 const TL_LEAD_IN_BARS = 1;
 
 // Height of the clip lane; the user resizes it with the handle under the timeline.
-const TL_TRACK_H_MIN = 44, TL_TRACK_H_MAX = 400, TL_TRACK_H_DEFAULT = 80;
+const TL_TRACK_H_MIN = 44, TL_TRACK_H_MAX = 400, TL_TRACK_H_DEFAULT = 160;
 const TL_CLIP_NAME_H = 16;   // keep in sync with .tl-clip-name
 const TL_CLIP_VPAD = 12;     // .tl-track top/bottom inset (4+4) + clip border (2+2)
 let tlTrackH = TL_TRACK_H_DEFAULT;
@@ -361,8 +361,101 @@ function renderTimeline() {
   attachLassoSelectOnce();
   attachPaintDeleteOnce();
 
+  renderBlockOverview();
+
   if (window.renderMixerTimeline) window.renderMixerTimeline();
   requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
+}
+
+// Total notes in a block across all of its tracks.
+function blockNoteCount(block) {
+  if (!block || !block.data) return 0;
+  let n = 0;
+  for (const tid in block.data) n += (block.data[tid] || []).length;
+  return n;
+}
+
+// Block overview under the clips: playback order, one row per clip with name, length in bars and note count.
+function renderBlockOverview() {
+  const list = document.getElementById('tlBlocksList');
+  if (!list) return;
+  list.innerHTML = '';
+  const seq = songEngine.songSequence;
+  if (!seq.length) {
+    const empty = document.createElement('div');
+    empty.className = 'tl-blocks-empty';
+    empty.textContent = 'No blocks yet — generate a song, or drag blocks from the palette above.';
+    list.appendChild(empty);
+    return;
+  }
+  const rows = seq
+    .map((slot, idx) => ({ slot, idx, block: findBlock(slot.blockId) }))
+    .sort((a, b) => a.slot.startBar - b.slot.startBar || a.idx - b.idx);
+  rows.forEach(({ slot, idx, block }) => {
+    const bars = songEngine.slotSpanBars(slot);
+    const notes = block ? blockNoteCount(block) : 0;
+    const row = document.createElement('div');
+    row.className = 'tl-block-row' + (tlSelectedIndices.has(idx) ? ' selected' : '');
+    row.dataset.idx = idx;
+    row.dataset.tooltip = (block ? blockDisplayName(block) : '?') + '\n' + bars + ' bars · ' + notes + ' note' + (notes === 1 ? '' : 's') + '\nClick to select, double-click to open in the Note Editor.';
+
+    const idxCell = document.createElement('span');
+    idxCell.className = 'c-idx';
+    idxCell.textContent = String(idx + 1);
+
+    const nameCell = document.createElement('span');
+    nameCell.className = 'c-name';
+    nameCell.textContent = block ? blockDisplayName(block) : '?';
+    if (block) nameCell.style.setProperty('--row-accent', blockColor(slot.blockId));
+
+    const barsCell = document.createElement('span');
+    barsCell.className = 'c-bars';
+    barsCell.textContent = String(bars);
+
+    const notesCell = document.createElement('span');
+    notesCell.className = 'c-notes';
+    notesCell.textContent = String(notes);
+
+    row.append(idxCell, nameCell, barsCell, notesCell);
+
+    // Click: select the clip (lightweight, no re-render so double-click still fires). Double-click: open the block.
+    row.addEventListener('click', () => {
+      tlSetSelection([idx]);
+      tlSelectAnchorIdx = idx;
+      syncSelectionClasses();
+      scrollTimelineToClip(idx);
+    });
+    row.addEventListener('dblclick', () => {
+      if (!block) return;
+      activeBlockId = block.id;
+      tlSetSelection([idx]);
+      tlSelectAnchorIdx = idx;
+      syncKnobsToBlock(block);
+      renderBlockTabs(); renderNoteEditor(); renderTimeline();
+    });
+    list.appendChild(row);
+  });
+}
+
+// Keep the selected highlight in sync on both the timeline clips and the overview rows without a full re-render.
+function syncSelectionClasses() {
+  document.querySelectorAll('#tlTrack .tl-clip').forEach(el => {
+    el.classList.toggle('selected', tlSelectedIndices.has(parseInt(el.dataset.idx, 10)));
+  });
+  document.querySelectorAll('#tlBlocksList .tl-block-row').forEach(el => {
+    el.classList.toggle('selected', tlSelectedIndices.has(parseInt(el.dataset.idx, 10)));
+  });
+}
+
+// Scroll the timeline so the given clip sits about a quarter in from the left edge.
+function scrollTimelineToClip(idx) {
+  const tlMain = document.getElementById('tlMain');
+  const track = document.getElementById('tlTrack');
+  if (!tlMain || !track) return;
+  const clip = track.querySelector('.tl-clip[data-idx="' + idx + '"]');
+  if (!clip) return;
+  const clipLeft = parseFloat(clip.style.left) || 0;
+  tlMain.scrollLeft = Math.max(0, clipLeft - tlMain.clientWidth * 0.25);
 }
 
 // Note overview of one clip (like FL Studio's playlist): one row per used instrument, one tick per note,
