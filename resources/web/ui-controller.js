@@ -1624,12 +1624,12 @@ function popInParamCluster(cluster) {
   if (poppedParamCluster === cluster) poppedParamCluster = null;
 }
 function deWireClusterZoom(cluster) {
-  // inside an editor card the whole card zooms (deWireCardZoom), not its single clusters
+  // inside an editor card the controls block zooms (deWireCardZoom), not its single clusters; the pad cluster does not zoom
   cluster.addEventListener('mouseenter', () => { if (!cluster.closest('.de-instance-card')) popOutParamCluster(cluster); });
   cluster.addEventListener('mouseleave', () => popInParamCluster(cluster));
 }
-// Drum Engine editor card: knobs, Volume and pad zoom together as one unit, so the pad never covers the knobs it drives.
-// While zoomed the card is an overlay (it may cover the selector and the keyboard); the factor is capped to what fits into the window.
+// Drum Engine editor: the knob groups and Volume zoom together as one block (.de-instance-card-ctrls); the pad does not zoom.
+// While zoomed the block is an overlay; the factor is capped to what fits into the window.
 function setCardZoomOrigin(card) {
   const factor = parseFloat(document.documentElement.style.getPropertyValue('--a11y-zoom-factor')) || 1.5;
   const bounds = card.closest('.app') || card.parentElement;

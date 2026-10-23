@@ -313,10 +313,10 @@ body.a11y-hover-zoom .ne-sidebar-top:hover .ctrl, body.a11y-hover-zoom .ne-sideb
 /* Polyphony / Accent sit in the left column at the window edge: zoom grows to the right and downward from the cluster's top-left corner, not out of the window. */
 body.a11y-hover-zoom #dePolyRow .knob-cluster { transform-origin:top left; }
 
-/* Drum Engine editor card: knobs, Volume and pad zoom as one unit (deWireCardZoom). The factor is capped in JS so the card fits the panel area. */
-body.a11y-hover-zoom #deParamPanels .de-instance-card { position:relative; transition:transform .12s ease; }
-body.a11y-hover-zoom #deParamPanels .de-instance-card.a11y-zoomed { transform:scale(var(--a11y-zoom-factor, 1.5)); z-index:40; background:var(--raised); border-radius:6px; box-shadow:0 6px 20px var(--black-a55); }
-body.a11y-hover-zoom #deParamPanels .de-instance-card.a11y-zoomed .ctrl { background:transparent; }
+/* Drum Engine editor: knob groups and Volume zoom as one block (deGroupCardControls / deWireCardZoom); the pad does not zoom. */
+body.a11y-hover-zoom #deParamPanels .de-instance-card-ctrls { padding:4px; margin:-4px; transition:transform .12s ease; }
+body.a11y-hover-zoom #deParamPanels .de-instance-card-ctrls.a11y-zoomed { transform:scale(var(--a11y-zoom-factor, 1.5)); z-index:40; background:var(--raised); border-radius:6px; box-shadow:0 6px 20px var(--black-a55); }
+body.a11y-hover-zoom #deParamPanels .de-instance-card-ctrls.a11y-zoomed .ctrl { background:transparent; }
 
 /* Placeholder reserving a popped-out cluster's spot so its siblings don't jump. */
 .de-param-cluster-placeholder { flex-shrink:0; visibility:hidden; pointer-events:none; }
@@ -1193,11 +1193,11 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 .de-md > .de-instance-cards { flex:1 1 auto; align-items:center; }
 .de-instance-cards > .de-instance-card:not(.de-card-selected) { display:none; }
 /* The editor is centered: title and Reset on top, the knob groups with Volume in one row (Volume on the knobs' baseline), the pad below. */
-.de-md .de-instance-card { border:none; background:transparent; width:fit-content; max-width:100%; flex:0 0 auto; display:grid; grid-template-columns:auto auto; grid-template-areas:"title title" "knobs vol" "pad pad"; justify-content:center; align-content:start; column-gap:24px; row-gap:14px; padding:10px 20px; }
+.de-md .de-instance-card { border:none; background:transparent; width:fit-content; max-width:100%; flex:0 0 auto; display:grid; grid-template-columns:auto; grid-template-areas:"title" "ctrls" "pad"; justify-content:center; justify-items:center; align-content:start; column-gap:24px; row-gap:14px; padding:10px 20px; }
 .de-md .de-instance-card-main { display:contents; }
 .de-md .de-instance-card-title-row { grid-area:title; justify-self:center; justify-content:center; gap:14px; }
-.de-md .de-instance-card-knobs { grid-area:knobs; }
-.de-md .de-instance-card-vol { grid-area:vol; align-self:end; flex-direction:column; }
+.de-md .de-instance-card-ctrls { grid-area:ctrls; display:flex; align-items:flex-end; gap:24px; position:relative; }
+.de-md .de-instance-card-vol { flex-direction:column; }
 .de-md .de-instance-card-vol::before { content:'Volume'; font-size:var(--fs-xs); font-weight:600; color:var(--label); text-transform:uppercase; letter-spacing:.03em; margin-bottom:2px; } /* heading like Circuit / Output / Pitch */
 .de-md .de-instance-card-pad-zoom { grid-area:pad; justify-self:center; margin:0; display:grid; grid-template-columns:auto auto; grid-template-areas:"y pad" ". x"; align-items:stretch; }
 .de-md .de-instance-card-pad-zoom > .de-kick-pad { grid-area:pad; }

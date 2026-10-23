@@ -1317,6 +1317,20 @@ function deInitFocusSidebar() {
 
 let deParamTabsBuilt = false;
 
+// Knob groups and Volume of an editor card form one block, and that block is the accessible zoom unit (the pad stays out of it).
+function deGroupCardControls(card) {
+  if (card.querySelector('.de-instance-card-ctrls')) return;
+  const knobs = card.querySelector('.de-instance-card-knobs');
+  const vol = card.querySelector('.de-instance-card-vol');
+  if (!knobs || !vol) return;
+  const block = document.createElement('div');
+  block.className = 'de-instance-card-ctrls';
+  card.insertBefore(block, vol);
+  block.appendChild(knobs);
+  block.appendChild(vol);
+  deWireCardZoom(block);
+}
+
 // The pad's axis legends come from DE_FAMILY_PAD_AXIS: the parameter name between a "-" and a "+" end, under the pad (X) and left of it (Y).
 // An inverted axis (see dePadCornerValue) has its "-" at the far end: Y with invert has "-" at the top.
 function deAddPadAxisCaptions(card, family) {
@@ -1369,7 +1383,7 @@ function deInstallMasterDetail(panel) {
     all.forEach((card, i) => {
       card.classList.toggle('de-card-selected', i === sel);
       deAddPadAxisCaptions(card, family);
-      deWireCardZoom(card);
+      deGroupCardControls(card);
       const title = card.querySelector('.de-instance-card-title');
       const text = title ? title.textContent : '';
       const m = GROUPED.exec(text);
