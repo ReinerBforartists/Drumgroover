@@ -1199,7 +1199,7 @@ body.plugin-muted #statusText { display:none; }   /* the marquee takes its place
 .de-md .de-instance-card-ctrls { grid-area:ctrls; display:flex; align-items:flex-end; gap:24px; position:relative; }
 .de-md .de-instance-card-vol { flex-direction:column; }
 .de-md .de-instance-card-vol::before { content:'Volume'; font-size:var(--fs-xs); font-weight:600; color:var(--label); text-transform:uppercase; letter-spacing:.03em; margin-bottom:2px; } /* heading like Circuit / Output / Pitch */
-.de-md .de-instance-card-pad-zoom { grid-area:pad; justify-self:center; margin:0; display:grid; grid-template-columns:auto auto; grid-template-areas:"y pad" ". x"; align-items:stretch; }
+.de-md .de-instance-card-pad-zoom { grid-area:pad; justify-self:center; margin:0; display:grid; grid-template-columns:22px auto 22px; grid-template-areas:"y pad ." ". x ."; align-items:stretch; } /* equal side columns: the pad itself is centered, the Y legend sits in the left one */
 .de-md .de-instance-card-pad-zoom > .de-kick-pad { grid-area:pad; }
 .de-md .de-instance-card-pad-zoom .de-kick-pad { width:var(--de-pad-size); height:var(--de-pad-size); }
 .de-pad-axis { font-size:var(--fs-sm); color:var(--label); white-space:nowrap; display:flex; align-items:center; justify-content:space-between; }

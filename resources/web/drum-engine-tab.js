@@ -133,7 +133,7 @@ function deSendMidi(type, note) {
 // same Metal-Bank Pitch as Ride/Cymbal (digital transpose, no schematic component).
 const HIHAT_PAD_AXIS = {
   level:       { axis: 'x', type: 'linear', spread: 0.5 },
-  decayKnob01: { axis: 'y', type: 'linear', spread: 0.5, invert: true },
+  decayKnob01: { axis: 'y', type: 'linear', spread: 0.5 },
 };
 
 
@@ -150,7 +150,7 @@ function deHiHatInstanceDefaults(index) {
 // x=Tone/y=Decay, same schema as RIDE_PAD_AXIS below. Pitch is a Metal-Bank transpose knob, not a pad parameter.
 const CYMBAL_PAD_AXIS = {
   toneKnob:    { axis: 'x', type: 'linear', spread: 0.5 },
-  decayKnob01: { axis: 'y', type: 'linear', spread: 0.5, invert: true },
+  decayKnob01: { axis: 'y', type: 'linear', spread: 0.5 },
 };
 const CYMBAL_PAD_LOG_PARAMS = new Set(
   Object.keys(CYMBAL_PAD_AXIS).filter((k) => CYMBAL_PAD_AXIS[k].type === 'log')
@@ -159,7 +159,7 @@ const deCymbalPadCornersCache = new Map();
 
 const RIDE_PAD_AXIS = {
   toneKnob:    { axis: 'x', type: 'linear', spread: 0.5 },
-  decayKnob01: { axis: 'y', type: 'linear', spread: 0.5, invert: true },
+  decayKnob01: { axis: 'y', type: 'linear', spread: 0.5 },
 };
 const RIDE_PAD_LOG_PARAMS = new Set(
   Object.keys(RIDE_PAD_AXIS).filter((k) => RIDE_PAD_AXIS[k].type === 'log')
@@ -953,7 +953,7 @@ function dePadFracForParam(logParams, corners, axisConfig, param, val) {
 
 const KICK_PAD_AXIS = {
   toneKnob:    { axis: 'x', type: 'linear', spread: 0.5 },
-  decayKnob01: { axis: 'y', type: 'linear', spread: 0.5, invert: true },
+  decayKnob01: { axis: 'y', type: 'linear', spread: 0.5 },
 };
 
 const KICK_PAD_LOG_PARAMS = new Set(
@@ -1239,7 +1239,7 @@ function deBuildInstanceCard(family, inst, padCfg) {
 
 const SNARE_PAD_AXIS = {
   toneKnob:   { axis: 'x', type: 'linear', spread: 0.5 },
-  snappyKnob: { axis: 'y', type: 'linear', spread: 0.5, invert: true },
+  snappyKnob: { axis: 'y', type: 'linear', spread: 0.5 },
 };
 
 const SNARE_PAD_LOG_PARAMS = new Set(
