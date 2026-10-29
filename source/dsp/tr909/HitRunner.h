@@ -29,19 +29,19 @@ struct HitTuning
   int knotSpan = 1;          // a step may span this many noise knots (1: every knot ends a step)
 };
 
-// Settings per voice. `fast20` selects the tolerances validated for the 20 us noise source (tools handoff R162, R165); otherwise the settings of the
+// Settings per voice. `fast20` selects the tolerances validated for the 20 us noise source (tools handoff R206); otherwise the settings of the
 // 5 us reference source (tools `acc_sweep/cfg.sh`).
 inline HitTuning HitTuningFor(Tr909Voice v, bool fast20)
 {
   HitTuning t;
   switch (v)
   {
-    case Tr909Voice::Lt: t.ytol = fast20 ? 1e-1 : 2e-3; t.yfloor = 1.0; t.ytailT = 0.1; t.ytailMul = 4.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
-    case Tr909Voice::Mt: t.ytol = fast20 ? 1e-2 : 1.5e-3; t.yfloor = 0.7; t.ytailT = 0.1; t.ytailMul = 1.6; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
-    case Tr909Voice::Ht: t.ytol = fast20 ? 1e-2 : 7e-4; t.yfloor = 0.4; t.ytailT = 0.1; t.ytailMul = 4.0; t.ytail2T = 0.02; t.ytail2Mul = 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
+    case Tr909Voice::Lt: t.ytol = fast20 ? 1e-2 : 2e-3; t.yfloor = 1.0; t.ytailT = 0.1; t.ytailMul = 4.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
+    case Tr909Voice::Mt: t.ytol = fast20 ? 3e-3 : 1.5e-3; t.yfloor = 0.7; t.ytailT = 0.1; t.ytailMul = 1.6; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
+    case Tr909Voice::Ht: t.ytol = fast20 ? 3e-3 : 7e-4; t.yfloor = 0.4; t.ytailT = 0.1; t.ytailMul = 4.0; t.ytail2T = 0.02; t.ytail2Mul = 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Sd: t.ytol = fast20 ? 3e-2 : 2e-3; t.yfloor = 0.7; t.ytailT = 0.2; t.ytailMul = 6.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
-    case Tr909Voice::Bd: t.ytol = fast20 ? 1e-1 : 2e-3; t.yfloor = 0.7; break;
-    case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 2e-3; t.yfloor = 0.4; t.zohW = 0.1; break;
+    case Tr909Voice::Bd: t.ytol = fast20 ? 1e-2 : 2e-3; t.yfloor = 0.7; break;
+    case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 1e-3; t.yfloor = 0.4; t.zohW = 0.1; break;
     default: break;
   }
   return t;
