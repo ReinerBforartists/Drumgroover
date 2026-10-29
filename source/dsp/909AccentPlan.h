@@ -88,7 +88,7 @@ enum class Tr909NoisePath : int { Reference5us = 0, Fast20us = 1 };
 
 // Version of the 909 fast models, the noise sources and the blend rule. It is part of every set name (like the "_m<N>" of the other cache sets):
 // changing a model invalidates the files baked with the old one. Increase it with every change of a header, tolerance or noise source.
-constexpr int kTr909ModelVersion = 1;
+constexpr int kTr909ModelVersion = 2;
 
 struct Tr909SetKey
 {
