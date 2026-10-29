@@ -6,6 +6,9 @@
 #include "dsp/RhythmEngine.h"
 #include "dsp/808VariantPoolBaker.h"
 #include "dsp/808FactoryDefaults.h"
+#include "dsp/909Playback.h"
+#include "dsp/909FactoryDefaults.h"
+#include "dsp/909ModelRunner.h"
 
 #include <fstream>
 #include <filesystem>
@@ -180,7 +183,9 @@ std::filesystem::path GetSettingsPath()
 }
 
 // Mixer presets: one JSON file per preset in %APPDATA%\DrumGroover\MixerPresets\<engine>\ ({"name": ..., "mixer": <mixer state>}).
-std::string MixerPresetEngineName(int engineMode) { return engineMode == static_cast<int>(EngineMode::LoFi) ? "lofi" : "808"; }
+std::string MixerPresetEngineName(int engineMode) { return engineMode == static_cast<int>(EngineMode::LoFi) ? "lofi" : "808"; }   // the 909 mode shares the 808 mixer presets
+const char* EngineModeName(int engineMode) { return engineMode == static_cast<int>(EngineMode::LoFi) ? "lofi" : engineMode == static_cast<int>(EngineMode::Tr909) ? "tr909" : "internal"; }
+int EngineModeFromName(const std::string& name) { return name == "lofi" ? static_cast<int>(EngineMode::LoFi) : name == "tr909" ? static_cast<int>(EngineMode::Tr909) : static_cast<int>(EngineMode::Internal); }
 
 std::filesystem::path GetMixerPresetDir(const std::string& engine)
 {
@@ -1007,6 +1012,7 @@ DrumGroover::DrumGroover(const InstanceInfo& info)
   });
   for (auto& p : mRidePools)        p.SetSampleRate(GetSampleRate());
   for (auto& pool : mTomPools)  pool.SetSampleRate(GetSampleRate());
+  Setup909Pools(GetSampleRate());
   for (auto& pool : mCustomPools) pool.SetSampleRate(GetSampleRate());
   for (auto& pool : mCustomRmPools) pool.SetSampleRate(GetSampleRate());
   for (auto& pool : mCustomHcPools) pool.SetSampleRate(GetSampleRate());
@@ -1452,7 +1458,7 @@ void DrumGroover::PushEngineAndProjectStateToUI()
   SendBridgeMessage("accentAmount", { {"value", mAccentAmount.load(std::memory_order_relaxed)} });
 
   SendBridgeMessage("engineModeState", {
-    {"engine", mEngineMode.load(std::memory_order_relaxed) == static_cast<int>(EngineMode::LoFi) ? "lofi" : "internal"},
+    {"engine", EngineModeName(mEngineMode.load(std::memory_order_relaxed))},
   });
 
   SendBridgeMessage("mutedState", {
@@ -2474,7 +2480,7 @@ void DrumGroover::HandleSetPolyphony(const nlohmann::json& payload)
 void DrumGroover::HandleSetEngineMode(const nlohmann::json& payload)
 {
   const std::string engine = payload.value("engine", "internal");
-  const int mode = (engine == "lofi") ? static_cast<int>(EngineMode::LoFi) : static_cast<int>(EngineMode::Internal);
+  const int mode = EngineModeFromName(engine);
   mEngineMode.store(mode, std::memory_order_relaxed);
 
   DGG_Log("HandleSetEngineMode: engine='" + engine + "' (global, whole kit)");
@@ -2664,7 +2670,7 @@ void DrumGroover::ApplyDefaultMixerForEngine(int engineMode)
 {
   dgg::MixerState st;
   st.ApplyDefaults();   // per-engine defaults go below
-  if (engineMode == static_cast<int>(EngineMode::Internal))   // 808: kit gain and the channel faders (dB)
+  if (engineMode != static_cast<int>(EngineMode::LoFi))   // 808 (and the 909 mode, whose other instruments are 808 voices): kit gain and the channel faders (dB)
   {
     st.kitGainDb = 0.0;
     auto fader = [&st](dgg::MixerChannel c, double db) { st.channels[static_cast<int>(c)].gainDb = db; };
@@ -2903,6 +2909,8 @@ void DrumGroover::HandleCommitVoiceParam(const nlohmann::json& payload)
   }
 }
 
+namespace { void Enqueue909FactoryDefaults(double sr, int target); }   // defined with the other bake queues below
+
 void DrumGroover::HandleSetCacheVariantCount(const nlohmann::json& payload)
 {
   const int value = std::clamp(payload.value("value", 7), 1, 20);
@@ -2958,11 +2966,13 @@ void DrumGroover::HandleClearCache(const nlohmann::json& payload)
     // re-enqueue below (default sets come straight back from disk).
     dgg::TR808RideVariantPool::Instance().ClearForTest();
     dgg::TR808HiHatVariantPool::Instance().ClearForTest();
+    dgg::Tr909VariantPool::Instance().ClearForTest();
     const uintmax_t freed = deleteSets(false);
 
     for (int i = 0; i < dgg::CountInstruments("ride"); i++)  EnqueueRideVariantBake(i);
     for (int i = 0; i < dgg::CountInstruments("hihat"); i++)  EnqueueHiHatVariantBake(i);
     for (int i = 0; i < dgg::CountInstruments("cymbal"); i++) EnqueueCrashVariantBake(i);
+    Enqueue909FactoryDefaults(GetSampleRate(), mCacheVariantCount.load(std::memory_order_relaxed));
 
     DGG_Log("HandleClearCache[cache]: freed " + std::to_string(freed) + " bytes");
     SendBridgeMessage("cacheCleared", { {"tier", "cache"}, {"bytesFreed", (double)freed} });
@@ -3225,6 +3235,86 @@ void EnqueueHiHatSet(const dgg::TR808VariantKey128& key, int target, bool loadIf
   EnqueueMissingVariants("hihat", dgg::TR808HiHatVariantPool::Instance(), key, baseName, target, loadIfComplete, render, rebakeAll);
 }
 
+// TR-909 fast voices: the variants of a set are separate bake jobs like the 808 sets. Variant k is rendered with the noise seed k (909BakeHost.h),
+// so a bake can be repeated and the variants of a set differ only in the noise. A set whose accent is not validated is never baked. Each baker
+// thread keeps its own model runner, so the propagators of a model are built once per thread.
+void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete, bool rebakeAll = false)
+{
+  dgg::Tr909AccentRun runs[2];
+  if (dgg::Tr909AccentRuns(key.voice, key.accentCode, runs) == 0)
+  {
+    DGG_Log("Enqueue909Set: " + dgg::Tr909SetBaseName(key) + " not validated, not baked");
+    return;
+  }
+  const std::string baseName = dgg::Tr909SetBaseName(key);
+  dgg::Tr909VariantPool& pool = dgg::Tr909VariantPool::Instance();
+  pool.SetTargetVariantCount(target);
+  std::vector<int> missing;
+  if (rebakeAll)
+  {
+    for (int k = 1; k <= target; k++) missing.push_back(k);
+    pool.ClearKey(key);
+  }
+  else
+  {
+    missing = MissingVariantSlots(baseName, target);
+    if (missing.empty() && !loadIfComplete) return;
+    LoadExistingVariantsIntoPool(pool, key, baseName);
+  }
+  missing.erase(std::remove_if(missing.begin(), missing.end(),
+    [&](int k) { return !TryMarkSlotInFlight(baseName, k); }), missing.end());
+  if (missing.empty()) return;
+
+  DGG_Log("EnqueueVariantBake: " + baseName + " missing=" + std::to_string(missing.size()) + "/" + std::to_string(target));
+
+  const int total = (int)missing.size();
+  dgg::TR808VariantPoolBaker::Instance().PlanUnits(total);
+  const int immediate = std::max(1, std::min(total, std::max(2, dgg::TR808VariantPoolBaker::Instance().FreeThreads())));
+  auto remainingImmediate = std::make_shared<std::atomic<int>>(immediate);
+  const uint64_t cancelGen = dgg::TR808VariantPoolBaker::Instance().CancelGeneration();
+
+  auto bakeSlot = [=](int slot) {
+    return [=](const dgg::TR808VariantPoolBaker::ProgressFn& report) {
+      const int k = missing[slot];
+      MarkSlotStarted(baseName, k);
+      thread_local dgg::Tr909FullModelRunner runner;
+      std::vector<float> tap;
+      const auto t0 = std::chrono::steady_clock::now();
+      const dgg::Tr909BakeResult res = dgg::Tr909BakeVariant(key, k, runner, tap);
+      const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+      dgg::TR808VariantPoolBaker::Instance().RecordBake(ms);
+      const auto path = VariantFilePath(baseName, k);
+      if (res == dgg::Tr909BakeResult::Ok && (rebakeAll || !VariantFileValid(path)) && !tap.empty())
+      {
+        if (SaveVariantToDisk(path, tap)) dgg::Tr909VariantPool::Instance().AddVariant(key, std::vector<float>(tap));
+        EvictCacheIfOverBudget();
+      }
+      DGG_Log("BakeTiming: " + baseName + " v" + std::to_string(k) + " took " + std::to_string(ms) + "ms ("
+        + std::to_string(tap.size()) + " samples, result=" + std::to_string(static_cast<int>(res)) + ")");
+      report(1, 1);
+      dgg::TR808VariantPoolBaker::Instance().FinishUnits(1);
+      UnmarkSlotInFlight(baseName, k);
+    };
+  };
+
+  for (int s = 0; s < immediate; s++)
+  {
+    auto job = bakeSlot(s);
+    dgg::TR808VariantPoolBaker::Instance().Enqueue("tr909",
+      [=](const dgg::TR808VariantPoolBaker::ProgressFn& report) {
+        job(report);
+        if (remainingImmediate->fetch_sub(1) == 1 && dgg::TR808VariantPoolBaker::Instance().CancelGeneration() == cancelGen)
+          for (int j = immediate; j < total; j++)
+            dgg::TR808VariantPoolBaker::Instance().Enqueue("tr909", bakeSlot(j));
+      });
+  }
+}
+
+void Enqueue909FactoryDefaults(double sr, int target)
+{
+  for (const dgg::Tr909SetKey& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(sr)))) Enqueue909Set(k, target, /*loadIfComplete=*/true);
+}
+
 // The factory-default entries of the instrument table's Ride, HiHat and Cymbal rows, in bake order (ride, hi-hat, cymbal).
 std::vector<dgg::FactoryDefaultEntry> FactoryDefaultEntries()
 {
@@ -3266,6 +3356,7 @@ void DrumGroover::ApplyFactoryDefaults()
 
   std::set<std::string> names;
   for (const auto& e : entries) names.insert(dgg::FactoryDefaultBaseName(e, sr));
+  for (const auto& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(sr)))) names.insert(dgg::Tr909SetBaseName(k));
 
   if (names.empty()) return;
   if (!std::filesystem::exists(GetCacheDir() / "default.index")) gFirstRunBake.store(true);
@@ -3274,6 +3365,7 @@ void DrumGroover::ApplyFactoryDefaults()
 
   std::thread([entries, sr, target]() {
     for (const auto& e : entries) EnqueueFactoryDefaultSet(e, sr, target);
+    Enqueue909FactoryDefaults(sr, target);
   }).detach();
 }
 
@@ -3303,6 +3395,11 @@ std::vector<dgg::VariantBakeTarget> DrumGroover::CurrentBakeTargets()
   {
     auto& voices = mCymbalPools[i].Voices();
     if (!voices.empty()) add(2, dgg::RideVoiceKey(dgg::CymbalArticulationForPool(i), voices[0], sr));
+  }
+  for (const dgg::Tr909SetKey& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(sr))))
+  {
+    const std::string name = dgg::Tr909SetBaseName(k);
+    if (seen.insert(name).second) targets.push_back({ 12, {}, name, k });
   }
 
   return targets;
@@ -3341,6 +3438,7 @@ void EnqueueTargets(const std::vector<dgg::VariantBakeTarget>& targets, int valu
     switch (t.kind)
     {
       case 1: EnqueueHiHatSet(t.key, value, /*loadIfComplete=*/true); break;
+      case 12: Enqueue909Set(t.key909, value, /*loadIfComplete=*/true); break;
       default: EnqueueRideSet(t.kind == 0 ? "ride" : "cymbal", t.key, value, /*loadIfComplete=*/true); break;
     }
   }
@@ -3550,6 +3648,12 @@ void DrumGroover::EnqueueCrashVariantBake(int poolIndex, bool rebakeAll, int acc
 
 void DrumGroover::DrainCacheMisses()
 {
+  dgg::Tr909SetKey miss909;   // sets that a TR-909 hit found missing (no knob state is involved, the drag guard below does not apply)
+  while (dgg::Tr909MissQueue::Instance().Pop(miss909))
+  {
+    DGG_Log("CacheMiss909: " + dgg::Tr909SetBaseName(miss909));
+    Enqueue909Set(miss909, mCacheVariantCount.load(std::memory_order_relaxed), /*loadIfComplete=*/true);
+  }
   if (mParamDragging.load(std::memory_order_relaxed))
   {
     constexpr int64_t kDragWatchdogMs = 3000;   // no setVoiceParam for this long: the release was lost, the drag is over
@@ -3831,7 +3935,31 @@ void DrumGroover::TriggerGmNoteVoices(int note, double velocity01, bool accent)
   for (int k = 0; k < dgg::kNumCustomInstruments && customK < 0; k++)
     if (note >= 0 && note == mCustomNote[k].load(std::memory_order_relaxed)) customK = k;
   if (customK >= 0) TriggerCustom(customK, std::min(1.0, velocity01), gain, accent);
-  else if (const dgg::InstrumentDef* inst = dgg::FindInstrumentByNote(note)) TriggerInstrument(*inst, std::min(1.0, velocity01), gain, accent);
+  else if (const dgg::InstrumentDef* inst = dgg::FindInstrumentByNote(note))
+  {
+    dgg::Tr909Voice voice909;
+    if (engineMode == static_cast<int>(EngineMode::Tr909) && dgg::Tr909VoiceForInstrument(*inst, voice909)) Trigger909(*inst, std::min(1.0, velocity01), gain);
+    else TriggerInstrument(*inst, std::min(1.0, velocity01), gain, accent);
+  }
+}
+
+void DrumGroover::Setup909Pools(double sampleRate)
+{
+  for (int i = 0; i < dgg::kNumInstruments; ++i)
+  {
+    dgg::Tr909Voice v;
+    if (dgg::Tr909VoiceForInstrument(dgg::kInstruments[i], v)) for (auto& voice : m909Pools[i].Voices()) voice.SetVoice(v);
+    m909Pools[i].SetSampleRate(sampleRate);
+  }
+}
+
+// The accent of a 909 hit comes from the velocity alone (the MIDI path of the Nava firmware: velocity = DAC code), spread over the validated codes of the voice.
+void DrumGroover::Trigger909(const dgg::InstrumentDef& inst, double velocity01, double gain)
+{
+  const int i = static_cast<int>(&inst - dgg::kInstruments);
+  if (i < 0 || i >= dgg::kNumInstruments) return;
+  m909Pools[i].SetNextGain(gain);
+  m909Pools[i].Trigger(velocity01);
 }
 
 void DrumGroover::ProcessMidiMsg(const IMidiMsg& msg)
@@ -3866,6 +3994,7 @@ void DrumGroover::OnReset()
   for (auto& p : mCymbalPools) p.SetSampleRate(sr);
   for (auto& p : mRidePools) p.SetSampleRate(sr);
   for (auto& pool : mTomPools) pool.SetSampleRate(sr);
+  Setup909Pools(sr);
   for (auto& pool : mCustomPools) pool.SetSampleRate(sr);
   for (auto& pool : mCustomRmPools) pool.SetSampleRate(sr);
   for (auto& pool : mCustomHcPools) pool.SetSampleRate(sr);
@@ -3899,7 +4028,7 @@ bool DrumGroover::SerializeState(IByteChunk& chunk) const
   }
 
   nlohmann::json engine;
-  engine["engineMode"] = (mEngineMode.load(std::memory_order_relaxed) == static_cast<int>(EngineMode::LoFi)) ? "lofi" : "internal";
+  engine["engineMode"] = EngineModeName(mEngineMode.load(std::memory_order_relaxed));
   engine["muted"] = mUserMuted.load(std::memory_order_relaxed);
   engine["polyphony"] = {
     {"kick",  mKickPools[0].GetPolyphony()},
@@ -3985,7 +4114,7 @@ int DrumGroover::UnserializeState(const IByteChunk& chunk, int startPos)
     if (engine.contains("engineMode"))
     {
       const std::string engineStr = engine.value("engineMode", "internal");
-      const int mode = (engineStr == "lofi") ? static_cast<int>(EngineMode::LoFi) : static_cast<int>(EngineMode::Internal);
+      const int mode = EngineModeFromName(engineStr);
       mEngineMode.store(mode, std::memory_order_relaxed);
     }
     if (engine.contains("muted")) HandleSetMuted({ {"muted", engine.value("muted", false)} });
@@ -4170,6 +4299,9 @@ void DrumGroover::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
           for (auto& pool : mCustomCbPools) pool.Process(chanBuf[static_cast<int>(dgg::MixerChannel::Custom)].data() + pos, segLen);
           for (auto& pool : mCustomPc2Pools) pool.Process(chanBuf[static_cast<int>(dgg::MixerChannel::Custom)].data() + pos, segLen);
         }
+
+        for (int i = 0; i < dgg::kNumInstruments; ++i)   // TR-909 voices play into the mixer channel of their row
+          m909Pools[i].Process(chanBuf[static_cast<int>(dgg::kInstruments[i].channel)].data() + pos, segLen);
 
         ForEachCymbalPool([&](const dgg::InstrumentDef& d, auto& pool) {
           pool.Process(chanBuf[static_cast<int>(d.channel)].data() + pos, segLen);

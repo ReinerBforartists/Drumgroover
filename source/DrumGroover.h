@@ -15,6 +15,8 @@
 #include "dsp/808HiHatVoice.h"
 #include "dsp/808TomVoice.h"
 #include "dsp/808InstrumentTable.h"
+#include "dsp/909AccentPlan.h"
+#include "dsp/909Kit.h"
 #include "dsp/808RmVoice.h"
 #include "dsp/808HcVoice.h"
 #include "dsp/808CbVoice.h"
@@ -45,12 +47,12 @@ enum EParams
 
 // Global routing switch: Internal -> native 808 voices, LoFi -> placeholder synthesis (see LoFiVoice.h).
 // Affects all families; it is a routing choice, not a per‑family sound selection.
-enum class EngineMode : int { Internal = 0, LoFi = 1 };
+enum class EngineMode : int { Internal = 0, LoFi = 1, Tr909 = 2 };   // Tr909: kick, SD, toms and hand clap play the TR-909 fast voices, the rest the 808 voices
 
 namespace dgg
 {
-// One cache set that a bake order covers. kind: 0=ride, 1=hihat, 2=cymbal, 3=(unused: the kick is synthesised directly), 4=snare, 5=tom/conga, 6=rim shot, 7=claves, 8=hand clap, 9=maracas, 10=(unused: the cowbell is synthesised directly), 11=pc2.
-struct VariantBakeTarget { int kind; TR808VariantKey128 key; std::string baseName; };
+// One cache set that a bake order covers. kind: 0=ride, 1=hihat, 2=cymbal, 3=(unused: the kick is synthesised directly), 4=snare, 5=tom/conga, 6=rim shot, 7=claves, 8=hand clap, 9=maracas, 10=(unused: the cowbell is synthesised directly), 11=pc2, 12=TR-909 fast voice.
+struct VariantBakeTarget { int kind; TR808VariantKey128 key; std::string baseName; Tr909SetKey key909 = {}; };   // kind 12: a TR-909 fast-voice set (key909)
 }
 
 class DrumGroover final : public Plugin
@@ -359,6 +361,8 @@ private:
   template <typename F> void ForEachSnarePool(F&& f);
   template <typename F> void ForEachSnarePool(F&& f) const;
   void TriggerInstrument(const dgg::InstrumentDef& inst, double velocity01, double gain = 1.0, bool accent = false);
+  void Setup909Pools(double sampleRate);                 // voice identity and sample rate of the TR-909 pools
+  void Trigger909(const dgg::InstrumentDef& inst, double velocity01, double gain);   // TR-909 mode: the row plays its 909 voice
 
   // One voice pool per Hi‑Hat instance (dsp/808InstrumentTable.h, family "hihat": Closed Edge, Tight Edge, Open Edge 0/4, Closed Tip,
   // Tight Tip); pool index = poolSlot = paramIndex. Choke: a hit of the Closed circuit chokes the pools of the Open circuit.
@@ -371,6 +375,7 @@ private:
   // Rack Tom 2 (MT) 47/80/79, Rack Tom 3 (LT) 45/78/77, Floor Tom 1 (MC, conga position) 43/75/74, Floor Tom 2 (LC) 41/73/72.
   // The HT conga is the Custom-tab conga (no pool yet).
   std::array<dgg::VoicePool<dgg::TR808TomVoice, 6>, dgg::CountInstruments("tom")> mTomPools;
+  std::array<dgg::VoicePool<dgg::Tr909CachedVoice, 4>, dgg::kNumInstruments> m909Pools;   // TR-909 mode: one pool per table row (only the rows of Tr909VoiceForInstrument are used), played into the row's mixer channel
   // Calls f(instrumentRow, pool) for every tom instance, in table order (pool index = poolSlot = paramIndex).
   template <typename F> void ForEachTomPool(F&& f);
   template <typename F> void ForEachTomPool(F&& f) const;
