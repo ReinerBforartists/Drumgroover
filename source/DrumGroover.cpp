@@ -9,8 +9,10 @@
 #include "dsp/909Playback.h"
 #include "dsp/909FactoryDefaults.h"
 #include "dsp/909ModelRunner.h"
+#include "dsp/909HcPackages.h"
 
 #include <fstream>
+#include <mutex>
 #include <filesystem>
 #include <chrono>
 #include <ctime>
@@ -164,6 +166,44 @@ std::filesystem::path GetCacheDir()
   std::filesystem::create_directories(dir, ec);
   return dir;
 }
+
+// Always-on application log (Release builds too): %APPDATA%\DrumGroover\DrumGroover.log, one line per event, about 1 MB at most (the previous file becomes DrumGroover.log.old).
+// DGG_Log() above is the developer log that exists only with -DDGG_DEBUG_LOG=1. This one carries what is needed to diagnose an installation: model versions,
+// whether the HC model packages were found, the first-start decision and the result of every 909 bake.
+void DggAppLog(const std::string& msg)
+{
+  static std::mutex mu;
+  try
+  {
+    std::lock_guard<std::mutex> lk(mu);
+    const std::filesystem::path path = GetCacheDir().parent_path() / "DrumGroover.log";
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec) && std::filesystem::file_size(path, ec) > (1u << 20))
+      std::filesystem::rename(path, std::filesystem::path(path.string() + ".old"), ec);
+    std::ofstream f(path, std::ios::app);
+    if (!f) return;
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t t = std::chrono::system_clock::to_time_t(now);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
+    std::tm tmBuf;
+    localtime_s(&tmBuf, &t);
+    char timeBuf[40];
+    sprintf_s(timeBuf, "%04d-%02d-%02d %02d:%02d:%02d.%03lld", tmBuf.tm_year + 1900, tmBuf.tm_mon + 1, tmBuf.tm_mday, tmBuf.tm_hour, tmBuf.tm_min, tmBuf.tm_sec, (long long)ms);
+    f << "[" << timeBuf << "] " << msg << "\n";
+  }
+  catch (...) { /* logging must never crash the plugin */ }
+}
+
+constexpr bool DggHcEmbedded()
+{
+#if defined(DGG_HC_EMBEDDED)
+  return true;
+#else
+  return false;
+#endif
+}
+
+bool VariantFileValid(const std::filesystem::path& path);   // defined with the other cache helpers below (used by OnWebContentLoaded)
 
 std::filesystem::path GetSettingsPath()
 {
@@ -1422,7 +1462,26 @@ void DrumGroover::OnWebContentLoaded()
   // First-start latch: no default.index on disk means the factory-default sets are not baked yet. Set it here, before any bake
   // path runs (the pattern sync during UI load can already enqueue bakes), so the dialog shows "Preparing the sound cache"
   // from its first frame. Cleared in OnIdle once that bake has finished and the index exists.
-  if (!std::filesystem::exists(GetCacheDir() / "default.index")) gFirstRunBake.store(true);
+  const bool noIndex = !std::filesystem::exists(GetCacheDir() / "default.index");
+  if (noIndex) gFirstRunBake.store(true);
+  // A new model version (kTr909ModelVersion) gives the 909 default sets new names, while default.index of an earlier start still exists: without this the sounds
+  // would be recalculated silently and stay missing for minutes. So the dialog also shows when a 909 default set of the current version is not complete on disk.
+  std::string missingSet;
+  {
+    const int target909 = mCacheVariantCount.load(std::memory_order_relaxed);
+    for (const dgg::Tr909SetKey& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(GetSampleRate()))))
+    {
+      const std::string base = dgg::Tr909SetBaseName(k);
+      for (int v = 1; v <= target909 && missingSet.empty(); ++v)
+        if (!VariantFileValid(VariantFilePath(base, v))) missingSet = base + " v" + std::to_string(v);
+      if (!missingSet.empty()) break;
+    }
+    if (!missingSet.empty()) gFirstRunBake.store(true);
+  }
+  DggAppLog(std::string("UI loaded: 909 model version ") + std::to_string(dgg::kTr909ModelVersion) + ", HC model " + dgg::hch::kModelVer + (DggHcEmbedded() ? " (embedded)" : " (Models folder)")
+    + ", sample rate " + std::to_string(static_cast<int>(std::lround(GetSampleRate()))) + ", cache " + GetCacheDir().string()
+    + "; default.index " + (noIndex ? "missing" : "present") + ", first-start dialog " + (gFirstRunBake.load() ? "ON" : "off")
+    + (missingSet.empty() ? "" : "; 909 default set incomplete: " + missingSet));
 
   // Before the instance id: the UI's dggOnReady callbacks run on the id and may already need the table.
   SendBridgeMessage("instrumentTable", dgg::InstrumentTableToJson());
@@ -3278,6 +3337,17 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
       const int k = missing[slot];
       MarkSlotStarted(baseName, k);
       thread_local dgg::Tr909FullModelRunner runner;
+      thread_local const bool runnerHcInit = [&] {
+        dgg::Tr909HcPackageStore::Instance().SetDirectory(GetCacheDir().parent_path() / "Models");
+        runner.SetHcPackages(dgg::Tr909HcPackageStore::Instance().Provider());
+        static std::once_flag logged;
+        std::call_once(logged, [] {
+          std::string st;
+          for (int a : dgg::kTr909Anchors) st += " a" + std::to_string(a) + (dgg::Tr909HcPackageStore::Instance().Get(a) ? "=ok" : "=MISSING");
+          DggAppLog(std::string("HC hybrid packages (model ") + dgg::hch::kModelVer + (DggHcEmbedded() ? ", embedded in the plugin" : ", from the Models folder") + "):" + st);
+        });
+        return true; }();
+        (void)runnerHcInit;
       std::vector<float> tap;
       const auto t0 = std::chrono::steady_clock::now();
       const dgg::Tr909BakeResult res = dgg::Tr909BakeVariant(key, k, runner, tap);
@@ -3291,6 +3361,8 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
       }
       DGG_Log("BakeTiming: " + baseName + " v" + std::to_string(k) + " took " + std::to_string(ms) + "ms ("
         + std::to_string(tap.size()) + " samples, result=" + std::to_string(static_cast<int>(res)) + ")");
+      DggAppLog("909 bake " + baseName + " v" + std::to_string(k) + ": " + (res == dgg::Tr909BakeResult::Ok ? "Ok" : res == dgg::Tr909BakeResult::AccentNotValidated ? "AccentNotValidated" : "RunFailed")
+        + ", " + std::to_string(tap.size()) + " samples, " + std::to_string(static_cast<int>(ms)) + " ms");
       report(1, 1);
       dgg::TR808VariantPoolBaker::Instance().FinishUnits(1);
       UnmarkSlotInFlight(baseName, k);
@@ -3362,6 +3434,7 @@ void DrumGroover::ApplyFactoryDefaults()
   if (!std::filesystem::exists(GetCacheDir() / "default.index")) gFirstRunBake.store(true);
   WriteDefaultIndex(names);
   DGG_Log("ApplyFactoryDefaults: " + std::to_string(names.size()) + " default sets, sr=" + std::to_string(sr));
+  DggAppLog("ApplyFactoryDefaults: " + std::to_string(names.size()) + " default sets (808 and 909), sr=" + std::to_string(sr) + ", variants per set " + std::to_string(target));
 
   std::thread([entries, sr, target]() {
     for (const auto& e : entries) EnqueueFactoryDefaultSet(e, sr, target);

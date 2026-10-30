@@ -92,6 +92,13 @@ if(WIN32)
   set(DGG_WEB_BUNDLE_CPP "${CMAKE_BINARY_DIR}/dgg_web_bundle.cpp")
   dgg_embed_web_resources("${DGG_WEB_BUNDLE_CPP}" "${CMAKE_CURRENT_SOURCE_DIR}/resources/web")
   list(APPEND DGG_PLATFORM_SOURCES "${DGG_WEB_BUNDLE_CPP}")
+
+  # The HC hybrid model tables (resources/models/hc_a<anchor>.hcpk) are compiled into the DLL as resources (source/dsp/909HcPackages.h reads them in place).
+  include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DggEmbedHcModels.cmake")
+  set(DGG_HC_MODELS_RC "${CMAKE_BINARY_DIR}/dgg_hc_models.rc")
+  dgg_embed_hc_models("${DGG_HC_MODELS_RC}" "${CMAKE_CURRENT_SOURCE_DIR}/resources/models")
+  list(APPEND DGG_PLATFORM_SOURCES "${DGG_HC_MODELS_RC}")
+  add_compile_definitions(DGG_HC_EMBEDDED=1)
 endif()
 
 # Windows: use our own WebView2 backend (source/platform/DggWebView_win.cpp) instead of the one in

@@ -197,6 +197,7 @@ public:
   double idle() const { return m_->yIdle; }
   long steps() const { return m_->steps; }
   long unrecovered() const { return m_->fails; }
+  auto& ModelState() { return *m_; }   // read access to the integrator state for the hybrid reduced model (HcHybrid.h) at its hand-over
 
 private:
   static constexpr double kH0 = 1e-5 / 64.0;

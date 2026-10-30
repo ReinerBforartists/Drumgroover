@@ -4,3 +4,4 @@ out/
 *.user
 *.vcxproj.user
 iPlug2/
+resources/models/*.hcpk
