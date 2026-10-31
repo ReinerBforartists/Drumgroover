@@ -17,6 +17,7 @@
 #include "dsp/808InstrumentTable.h"
 #include "dsp/909AccentPlan.h"
 #include "dsp/909Kit.h"
+#include "dsp/CustomInstrumentRegistry.h"
 #include "dsp/808RmVoice.h"
 #include "dsp/808HcVoice.h"
 #include "dsp/808CbVoice.h"
@@ -383,13 +384,14 @@ private:
   template <typename F> void ForEachTomPool(F&& f);
   template <typename F> void ForEachTomPool(F&& f) const;
 
-  // Custom instruments (Drum Engine > Custom tab, rows of family "custom" in dsp/808InstrumentTable.h): one pool each, played into the Custom channel.
+  // Custom instruments (Drum Engine > Custom tab, dsp/CustomInstrumentRegistry.h): one pool per implementation kind and registry index, played into the Custom channel.
   // The track a custom instrument is assigned to (Add Track dialog) gives its GM note and track id (setCustomInstruments).
   std::array<dgg::VoicePool<dgg::TR808TomVoice, 6>, dgg::kNumCustomInstruments> mCustomPools;      // the instruments of kind Tom
   std::array<dgg::VoicePool<dgg::TR808RmVoice, 6>, dgg::kNumCustomInstruments> mCustomRmPools;     // the instruments of kind RmClaves (RM sheet); the pool of the other kind stays idle
   std::array<dgg::VoicePool<dgg::TR808HcVoice, 6>, dgg::kNumCustomInstruments> mCustomHcPools;     // the instruments of kind HcClap / HcMaracas (HC sheet); the pools of the other kinds stay idle
   std::array<dgg::VoicePool<dgg::TR808Pc2Voice, 6>, dgg::kNumCustomInstruments> mCustomPc2Pools;   // the instrument of kind Pc2 (PC-2 sheet); the pools of the other kinds stay idle
   std::array<dgg::VoicePool<dgg::TR808CbVoice, 6>, dgg::kNumCustomInstruments> mCustomCbPools;     // the instrument of kind Cowbell (CB sheet); the pools of the other kinds stay idle
+  std::array<dgg::VoicePool<dgg::Tr909CachedVoice, 4>, dgg::kNumCustomInstruments> m909CustomPools;   // the instruments of kind Tr909 (909 voice from the baked sets); the pools of the other kinds stay idle
   std::atomic<int> mCustomNote[dgg::kNumCustomInstruments];   // GM note of the assigned track, -1: none
   std::atomic<bool> mUiPreviewAccent{false};   // Drum Engine "Preview with accent" switch, set with each UI preview note
   std::atomic<double> mCustomPreviewGain[dgg::kNumCustomInstruments];   // volume knob of a card without a track: scales the preview velocity (unity = 1)

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Reiner Prokein
 #pragma once
-// The instrument table: one row per instrument instance (every articulation is its own instance) with the metadata the host and
+// The kit instrument table (the instruments the engine mode switches: kick, snare, toms, hi-hat, cymbals, ride): one row per instrument instance (every articulation is its own instance) with the metadata the host and
 // the UI share -- identity, GM note, engine kind and arguments, mixer channel, knob schema and default values. The host reads its
 // pools, triggers, bakes and default cache sets from it; the UI receives it once as the 'instrumentTable' bridge message and builds
 // its cards, knobs and defaults from it. Engine implementation (keys, pools, bake, choke) is not part of the table.
 //
 // The JSON of InstrumentTableToJson() is the exact shape the UI consumes.
-#include "Mixer.h"
+#include "InstrumentSchema.h"
 #include <array>
 #if __has_include(<nlohmann/json.hpp>)
 #include <nlohmann/json.hpp>
@@ -17,12 +17,7 @@
 
 namespace dgg {
 
-enum class EngineKind { Kick, SnareSd, RmRim, RmClaves, HcClap, HcMaracas, Tom, HiHat, Ride, Cymbal, Cowbell, Pc2 };
-
-// One knob of a card: group = the title of the knob group it sits in, in the order of the array.
-struct ControlDef { const char* key; const char* label; const char* group; const char* tooltip; double min, max, step; };
-
-struct DefaultValue { const char* key; double value; };
+enum class EngineKind { Kick, SnareSd, RmRim, Tom, HiHat, Ride, Cymbal };
 
 struct InstrumentDef
 {
@@ -173,26 +168,6 @@ constexpr DefaultValue kRideDefaults5[] = {
   {"toneKnob", 0.8}, {"levelKnob", 0.4}, {"pitchRatio", 1.0}, {"vca1BiasOhm", 2000000.0}, {"vca2BiasOhm", 2000000.0}, {"vca3BiasOhm", 2000000.0}, {"level", 0.53}, {"decayKnob01", 0.1}
 };
 
-// Custom instruments carry a "volume": the default of their Volume knob in the Drum Engine tab (a linear gain after the voice, 1.0 = unity).
-constexpr DefaultValue kClavesDefaults[] = { {"levelKnob", 0.7}, {"pitchRatio", 1.0}, {"volume", 1.0} };
-// Hand Clap / Maracas (HC sheet): the level pot VR17 (deck default 0.75) and the digital transpose.
-constexpr DefaultValue kHcDefaults[] = { {"levelKnob", 0.5}, {"pitchRatio", 1.0}, {"volume", 1.0} };
-constexpr DefaultValue kMaracasDefaults[] = { {"levelKnob", 0.7}, {"pitchRatio", 1.0}, {"volume", 1.0} };
-constexpr DefaultValue kCongaDefaults[] = { {"tuningKnob", 0.5}, {"levelKnob", 0.7}, {"pitchRatio", 1.0}, {"volume", 1.0} };
-constexpr DefaultValue kCbDefaults[] = { {"levelKnob", 0.7}, {"pitchRatio", 1.0}, {"volume", 1.0} };
-// PC-2 (sheet PC-2): the six pots and the two switches of the sheet. The defaults give about 330 Hz with a light square-wave LFO and a long decay. The pot centre (all pots at 0.5, both switches in throw O) stalls the oscillator in one LFO state (57 Hz).
-constexpr ControlDef kPc2Controls[] = {
-  {"pitchKnob", "Pitch", "Oscillator", "Pitch of the oscillator (VR18).", 0.0, 1.0, 0.01},
-  {"vcoWaveKnob", "Wave", "Oscillator", "Oscillator waveform (SW3): 1 triangle, 0 square.", 0.0, 1.0, 1.0},
-  {"sweepKnob", "Sweep", "Oscillator", "Pitch sweep after the trigger (VR20), centre = none.", 0.0, 1.0, 0.01},
-  {"decayKnob", "Decay", "Envelope", "Decay of the sound (VR19).", 0.0, 1.0, 0.01},
-  {"lfoRateKnob", "Rate", "LFO", "LFO rate (VR2).", 0.0, 1.0, 0.01},
-  {"lfoDepthKnob", "Depth", "LFO", "LFO depth (VR3).", 0.0, 1.0, 0.01},
-  {"lfoWaveKnob", "Wave", "LFO", "LFO waveform (SW2): 1 square, 0 triangle.", 0.0, 1.0, 1.0},
-  {"levelKnob", "Level", "Output", "Output level (VR1).", 0.0, 1.0, 0.01},
-};
-constexpr DefaultValue kPc2Defaults[] = { {"levelKnob", 0.7}, {"lfoRateKnob", 0.2}, {"lfoDepthKnob", 0.16}, {"pitchKnob", 0.49}, {"decayKnob", 0.97}, {"sweepKnob", 0.5}, {"lfoWaveKnob", 1.0}, {"vcoWaveKnob", 0.0}, {"volume", 1.0} };
-
 inline constexpr InstrumentDef kInstruments[] = {
   {"kick", "Kick High Stack", "Kick", "kick", 0, "kick", 36, EngineKind::Kick, 0, false, nullptr, nullptr, 0, 0, false, MixerChannel::Kick, 0,
    kKickControls, (int)(sizeof(kKickControls) / sizeof(ControlDef)), kKickDefaults0, (int)(sizeof(kKickDefaults0) / sizeof(DefaultValue))},
@@ -284,27 +259,9 @@ inline constexpr InstrumentDef kInstruments[] = {
    kCymbalControls, (int)(sizeof(kCymbalControls) / sizeof(ControlDef)), kCymbalDefaults8, (int)(sizeof(kCymbalDefaults8) / sizeof(DefaultValue))},
   {"cymbal5MuteHit", "Cymbal 5 Mute Hit", "Cymbal 5 Mute Hit", "cymbal", 9, "cymbal", 54, EngineKind::Cymbal, 0, false, "Mute", nullptr, 0, 4, true, MixerChannel::Cymbal5, 9,
    kCymbalControls, (int)(sizeof(kCymbalControls) / sizeof(ControlDef)), kCymbalDefaults9, (int)(sizeof(kCymbalDefaults9) / sizeof(DefaultValue))},
-  {"highConga808", "High Conga 808", nullptr, "custom", 0, "custom", -1, EngineKind::Tom, 2, true, "Center", nullptr, 0, 0, false, MixerChannel::Custom, 0,
-   kTomControls, (int)(sizeof(kTomControls) / sizeof(ControlDef)), kCongaDefaults, (int)(sizeof(kCongaDefaults) / sizeof(DefaultValue))},
-  {"claves808", "Claves 808", nullptr, "custom", 1, "custom", -1, EngineKind::RmClaves, 0, false, nullptr, nullptr, 0, 0, false, MixerChannel::Custom, 1,
-   kSnareRmControls, (int)(sizeof(kSnareRmControls) / sizeof(ControlDef)), kClavesDefaults, (int)(sizeof(kClavesDefaults) / sizeof(DefaultValue))},
-  {"handClap808", "Hand Clap 808", nullptr, "custom", 2, "custom", -1, EngineKind::HcClap, 0, false, nullptr, nullptr, 0, 0, false, MixerChannel::Custom, 2,
-   kSnareRmControls, (int)(sizeof(kSnareRmControls) / sizeof(ControlDef)), kHcDefaults, (int)(sizeof(kHcDefaults) / sizeof(DefaultValue))},
-  {"maracas808", "Maracas 808", nullptr, "custom", 3, "custom", -1, EngineKind::HcMaracas, 0, false, nullptr, nullptr, 0, 0, false, MixerChannel::Custom, 3,
-   kSnareRmControls, (int)(sizeof(kSnareRmControls) / sizeof(ControlDef)), kMaracasDefaults, (int)(sizeof(kMaracasDefaults) / sizeof(DefaultValue))},
-  {"cowbell808", "Cowbell 808", nullptr, "custom", 4, "custom", -1, EngineKind::Cowbell, 0, false, nullptr, nullptr, 0, 0, false, MixerChannel::Custom, 4,
-   kSnareRmControls, (int)(sizeof(kSnareRmControls) / sizeof(ControlDef)), kCbDefaults, (int)(sizeof(kCbDefaults) / sizeof(DefaultValue))},
-  {"pc2808", "PC-2 808", nullptr, "custom", 5, "custom", -1, EngineKind::Pc2, 0, false, nullptr, nullptr, 0, 0, false, MixerChannel::Custom, 5,
-   kPc2Controls, (int)(sizeof(kPc2Controls) / sizeof(ControlDef)), kPc2Defaults, (int)(sizeof(kPc2Defaults) / sizeof(DefaultValue))},
 };
 
 inline constexpr int kNumInstruments = (int)(sizeof(kInstruments) / sizeof(kInstruments[0]));
-
-constexpr bool StrEq(const char* a, const char* b)
-{
-  while (*a && *a == *b) { ++a; ++b; }
-  return *a == *b;
-}
 
 constexpr int CountInstruments(const char* family)
 {
@@ -329,16 +286,7 @@ inline const InstrumentDef* FindInstrumentByNote(int note)
 }
 
 // The default value of a control of a row (fallback when the row has none for that key).
-inline double DefaultOf(const InstrumentDef& d, const char* key, double fallback = 0.0)
-{
-  for (int i = 0; i < d.numDefaults; ++i) if (StrEq(d.defaults[i].key, key)) return d.defaults[i].value;
-  return fallback;
-}
-
-// Custom instruments (Drum Engine > Custom tab): the rows of family "custom", indexed by their paramIndex. A custom instrument is a circuit
-// of the common 808 engine played on a track the user assigns it to (Add Track dialog); it has no fixed GM note. Each has its own voice
-// pool (mCustomPools for kind Tom, mCustomRmPools for kind RmClaves, mCustomHcPools for kind HcClap / HcMaracas, mCustomCbPools for kind Cowbell, mCustomPc2Pools for kind Pc2; the pools of the other kinds stay idle), default cache set and card.
-inline constexpr int kNumCustomInstruments = CountInstruments("custom");
+inline double DefaultOf(const InstrumentDef& d, const char* key, double fallback = 0.0) { return DefaultOfValues(d.defaults, d.numDefaults, key, fallback); }
 
 inline const InstrumentDef* FindInstrument(const char* family, int paramIndex)
 {
@@ -354,24 +302,12 @@ inline const char* EngineKindName(EngineKind k)
     case EngineKind::Kick: return "Kick";
     case EngineKind::SnareSd: return "SnareSd";
     case EngineKind::RmRim: return "RmRim";
-    case EngineKind::RmClaves: return "RmClaves";
-    case EngineKind::HcClap: return "HcClap";
-    case EngineKind::HcMaracas: return "HcMaracas";
     case EngineKind::Tom: return "Tom";
     case EngineKind::HiHat: return "HiHat";
     case EngineKind::Ride: return "Ride";
     case EngineKind::Cymbal: return "Cymbal";
-    case EngineKind::Cowbell: return "Cowbell";
-    case EngineKind::Pc2: return "Pc2";
   }
   return "";
-}
-
-inline const char* MixerChannelName(MixerChannel c)
-{
-  static const char* kNames[] = {"Kick", "Snare", "HiHat", "RackTom1", "RackTom2", "RackTom3", "FloorTom1", "FloorTom2",
-                                 "Cymbal1", "Cymbal2", "Cymbal3", "Cymbal4", "Cymbal5", "Ride", "Custom"};
-  return kNames[static_cast<int>(c)];
 }
 
 inline nlohmann::json InstrumentToJson(const InstrumentDef& d)
@@ -396,9 +332,6 @@ inline nlohmann::json InstrumentToJson(const InstrumentDef& d)
     case EngineKind::Ride: e["articulation"] = d.articulation; break;
     case EngineKind::Cymbal: e["cymbalPos"] = d.cymbalPos; e["isMute"] = d.isMute; e["articulation"] = d.articulation; break;
     case EngineKind::RmRim: e["claves"] = false; break;
-    case EngineKind::RmClaves: e["claves"] = true; break;
-    case EngineKind::HcClap: e["clap"] = true; break;
-    case EngineKind::HcMaracas: e["clap"] = false; break;
     default: break;
   }
   j["engine"] = e;
@@ -425,14 +358,6 @@ inline nlohmann::json InstrumentTableToJson()
   nlohmann::json instruments = nlohmann::json::array();
   for (const InstrumentDef& d : kInstruments) instruments.push_back(InstrumentToJson(d));
   return { {"instruments", instruments} };
-}
-
-inline const InstrumentDef& CustomInstrument(int k) { return *FindInstrument("custom", k); }
-
-inline int CustomInstrumentIndex(const char* id)
-{
-  for (const InstrumentDef& d : kInstruments) if (StrEq(d.family, "custom") && StrEq(d.id, id)) return d.paramIndex;
-  return -1;
 }
 
 }  // namespace dgg

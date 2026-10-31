@@ -760,7 +760,7 @@ void SetHcVoiceParam(dgg::TR808HcVoice& v, const std::string& p, double val)
   if (p == "levelKnob")           v.levelKnob = val;
   else if (p == "pitchRatio")     v.pitchRatio = val;
 }
-bool IsHcKind(dgg::EngineKind k) { return k == dgg::EngineKind::HcClap || k == dgg::EngineKind::HcMaracas; }
+bool IsHcKind(dgg::CustomKind k) { return k == dgg::CustomKind::HandClap || k == dgg::CustomKind::Maracas; }
 nlohmann::json CbVoiceParamsToJson(const dgg::TR808CbVoice& v)
 {
   return { {"levelKnob", v.levelKnob}, {"pitchRatio", v.pitchRatio} };
@@ -770,7 +770,7 @@ void SetCbVoiceParam(dgg::TR808CbVoice& v, const std::string& p, double val)
   if (p == "levelKnob")           v.levelKnob = val;
   else if (p == "pitchRatio")     v.pitchRatio = val;
 }
-bool IsCbKind(dgg::EngineKind k) { return k == dgg::EngineKind::Cowbell; }
+bool IsCbKind(dgg::CustomKind k) { return k == dgg::CustomKind::Cowbell; }
 nlohmann::json Pc2VoiceParamsToJson(const dgg::TR808Pc2Voice& v)
 {
   return { {"levelKnob", v.levelKnob}, {"lfoRateKnob", v.lfoRateKnob}, {"lfoDepthKnob", v.lfoDepthKnob}, {"pitchKnob", v.pitchKnob},
@@ -787,7 +787,16 @@ void SetPc2VoiceParam(dgg::TR808Pc2Voice& v, const std::string& p, double val)
   else if (p == "lfoWaveKnob")    v.lfoWaveKnob = val;
   else if (p == "vcoWaveKnob")    v.vcoWaveKnob = val;
 }
-bool IsPc2Kind(dgg::EngineKind k) { return k == dgg::EngineKind::Pc2; }
+bool IsPc2Kind(dgg::CustomKind k) { return k == dgg::CustomKind::Pc2; }
+nlohmann::json Tr909CustomParamsToJson(const dgg::Tr909CachedVoice& v)
+{
+  return { {"levelKnob", v.levelKnob}, {"pitchRatio", v.pitchRatio} };
+}
+void SetTr909CustomParam(dgg::Tr909CachedVoice& v, const std::string& p, double val)
+{
+  if (p == "levelKnob") v.levelKnob = val;
+  else if (p == "pitchRatio") v.pitchRatio = val;
+}
 nlohmann::json TomVoiceParamsToJson(const dgg::TR808TomVoice& v)
 {
   return { {"tuningKnob", v.tuningKnob}, {"levelKnob", v.levelKnob}, {"pitchRatio", v.pitchRatio} };
@@ -1091,14 +1100,16 @@ DrumGroover::DrumGroover(const InstanceInfo& info)
     {
       mCustomNote[k].store(-1, std::memory_order_relaxed);
       mCustomPreviewGain[k].store(dgg::DefaultOf(dgg::CustomInstrument(k), "volume", 1.0), std::memory_order_relaxed);   // the Volume default of the instrument
-      const dgg::InstrumentDef& row = dgg::CustomInstrument(k);
-      for (auto& v : mCustomPools[k].Voices()) { v.sheet = row.sheet; v.conga = row.conga; v.articulation = TomArticulationOf(row.articulation ? row.articulation : "Center"); }
-      for (auto& v : mCustomRmPools[k].Voices()) v.claves = row.kind == dgg::EngineKind::RmClaves;
-      for (auto& v : mCustomHcPools[k].Voices()) v.clap = row.kind == dgg::EngineKind::HcClap;
-      // the circuit's start values: the row's defaults, on the pool of its kind
-      for (int i = 0; i < row.numDefaults; ++i)
+      const dgg::CustomInstrumentDef& row = dgg::CustomInstrument(k);
+      for (auto& v : mCustomPools[k].Voices()) { v.sheet = row.arg; v.conga = true; v.articulation = TomArticulationOf("Center"); }
+      for (auto& v : mCustomRmPools[k].Voices()) v.claves = row.kind == dgg::CustomKind::Claves;
+      for (auto& v : mCustomHcPools[k].Voices()) v.clap = row.kind == dgg::CustomKind::HandClap;
+      // the circuit's start values: the instrument's defaults, on the pool of its kind (a 909 instrument has no circuit knobs)
+      if (row.kind == dgg::CustomKind::Tr909)
+        for (int i = 0; i < row.numDefaults; ++i) for (auto& v : m909CustomPools[k].Voices()) SetTr909CustomParam(v, row.defaults[i].key, row.defaults[i].value);
+      for (int i = 0; i < row.numDefaults && row.kind != dgg::CustomKind::Tr909; ++i)
       {
-        if (row.kind == dgg::EngineKind::Tom) { for (auto& v : mCustomPools[k].Voices()) SetParamOn(v, row.defaults[i].key, row.defaults[i].value); }
+        if (row.kind == dgg::CustomKind::Conga) { for (auto& v : mCustomPools[k].Voices()) SetParamOn(v, row.defaults[i].key, row.defaults[i].value); }
         else if (IsHcKind(row.kind)) { for (auto& v : mCustomHcPools[k].Voices()) SetParamOn(v, row.defaults[i].key, row.defaults[i].value); }
         else if (IsCbKind(row.kind)) { for (auto& v : mCustomCbPools[k].Voices()) SetParamOn(v, row.defaults[i].key, row.defaults[i].value); }
         else if (IsPc2Kind(row.kind)) { for (auto& v : mCustomPc2Pools[k].Voices()) SetParamOn(v, row.defaults[i].key, row.defaults[i].value); }
@@ -1505,7 +1516,7 @@ void DrumGroover::OnWebContentLoaded()
     + (missingSet.empty() ? "" : "; 909 default set incomplete: " + missingSet));
 
   // Before the instance id: the UI's dggOnReady callbacks run on the id and may already need the table.
-  SendBridgeMessage("instrumentTable", dgg::InstrumentTableToJson());
+  SendBridgeMessage("instrumentTable", dgg::InstrumentTableWithCustomsToJson());
   SendBridgeMessage("instanceId", { {"id", mInstanceId} });
 
   PushEngineAndProjectStateToUI();
@@ -1587,7 +1598,9 @@ nlohmann::json DrumGroover::BuildVoiceParamsJson() const
   });
   for (int k = 0; k < dgg::kNumCustomInstruments; k++)
   {
-    if (dgg::CustomInstrument(k).kind == dgg::EngineKind::Tom)
+    if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909)
+      for (auto& v : m909CustomPools[k].Voices()) { voiceParams["custom:" + std::to_string(k)] = Tr909CustomParamsToJson(v); break; }
+    else if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Conga)
       for (auto& v : mCustomPools[k].Voices()) { voiceParams["custom:" + std::to_string(k)] = TomVoiceParamsToJson(v); break; }
     else if (IsHcKind(dgg::CustomInstrument(k).kind))
       for (auto& v : mCustomHcPools[k].Voices()) { voiceParams["custom:" + std::to_string(k)] = HcVoiceParamsToJson(v); break; }
@@ -2930,7 +2943,8 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
     for (int k = 0; k < dgg::kNumCustomInstruments; k++)
     {
       if (index >= 0 && index != k) continue;
-      if (dgg::CustomInstrument(k).kind == dgg::EngineKind::Tom) { for (auto& v : mCustomPools[k].Voices()) SetTomVoiceParam(v, param, value); }
+      if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909) { for (auto& v : m909CustomPools[k].Voices()) SetTr909CustomParam(v, param, value); continue; }
+      if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Conga) { for (auto& v : mCustomPools[k].Voices()) SetTomVoiceParam(v, param, value); }
       else if (IsHcKind(dgg::CustomInstrument(k).kind)) { for (auto& v : mCustomHcPools[k].Voices()) SetHcVoiceParam(v, param, value); }
       else if (IsCbKind(dgg::CustomInstrument(k).kind)) { for (auto& v : mCustomCbPools[k].Voices()) SetCbVoiceParam(v, param, value); }
       else if (IsPc2Kind(dgg::CustomInstrument(k).kind)) { for (auto& v : mCustomPc2Pools[k].Voices()) SetPc2VoiceParam(v, param, value); }
@@ -3959,6 +3973,13 @@ double DrumGroover::AccentFor(bool accent) const
 
 void DrumGroover::TriggerCustom(int k, double velocity01, double gain, bool accent)
 {
+  if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909)   // a 909 instrument: its accent comes from the velocity alone
+  {
+    auto& pool = m909CustomPools[k];
+    pool.SetNextGain(gain);
+    pool.Trigger(velocity01);
+    return;
+  }
   const double accent01 = AccentFor(accent);
   if (IsPc2Kind(dgg::CustomInstrument(k).kind))
   {
@@ -3981,7 +4002,7 @@ void DrumGroover::TriggerCustom(int k, double velocity01, double gain, bool acce
     mCustomHcPools[k].Trigger(velocity01);
     return;
   }
-  if (dgg::CustomInstrument(k).kind != dgg::EngineKind::Tom)
+  if (dgg::CustomInstrument(k).kind != dgg::CustomKind::Conga)
   {
     mCustomRmPools[k].SetNextGain(gain);
     mCustomRmPools[k].SetNextAccent(accent01);
@@ -4125,6 +4146,12 @@ void DrumGroover::Setup909Pools(double sampleRate)
     dgg::Tr909Voice v;
     if (dgg::Tr909VoiceForInstrument(dgg::kInstruments[i], v)) for (auto& voice : m909Pools[i].Voices()) voice.SetVoice(v);
     m909Pools[i].SetSampleRate(sampleRate);
+  }
+  for (int k = 0; k < dgg::kNumCustomInstruments; ++k)
+  {
+    if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909)
+      for (auto& voice : m909CustomPools[k].Voices()) voice.SetVoice(static_cast<dgg::Tr909Voice>(dgg::CustomInstrument(k).arg));
+    m909CustomPools[k].SetSampleRate(sampleRate);
   }
 }
 
@@ -4477,6 +4504,8 @@ void DrumGroover::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 
         for (int i = 0; i < dgg::kNumInstruments; ++i)   // TR-909 voices play into the mixer channel of their row
           m909Pools[i].Process(chanBuf[static_cast<int>(dgg::kInstruments[i].channel)].data() + pos, segLen);
+        for (int k = 0; k < dgg::kNumCustomInstruments; ++k)   // the 909 custom instruments play into their channel in every engine mode
+          m909CustomPools[k].Process(chanBuf[static_cast<int>(dgg::CustomInstrument(k).channel)].data() + pos, segLen);
 
         ForEachCymbalPool([&](const dgg::InstrumentDef& d, auto& pool) {
           pool.Process(chanBuf[static_cast<int>(d.channel)].data() + pos, segLen);

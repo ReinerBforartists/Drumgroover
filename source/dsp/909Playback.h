@@ -9,7 +9,9 @@
 #include "909AccentPlan.h"
 #include "808VariantPoolCache.h"
 #include "DrumVoice.h"
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <memory>
 
 namespace dgg {
@@ -87,23 +89,48 @@ public:
   {
     Tr909SetKey k; k.voice = mVoice; k.params = 0; k.noise = mNoise; k.sampleRateHz = static_cast<int>(std::lround(mSampleRate));
     k.accentCode = Tr909CodeForVelocity(mVoice, velocity01);
-    mBuf = Tr909VariantPool::Instance().GetRandom(k); mPos = 0;
+    mBuf = Tr909VariantPool::Instance().GetRandom(k); mPos = 0; mFrac = 0.0;
+    mRate = std::clamp(pitchRatio, 0.25, 4.0);
+    mLevelGain = std::clamp(levelKnob, 0.0, 1.0) / kLevelKnobBaked;
     if (!mBuf) { ++mMisses; Tr909MissQueue::Instance().Push(k); }
   }
   void Process(double* out, int nFrames) override
   {
     if (!mBuf) return;
     const std::vector<float>& b = *mBuf; const size_t n = b.size();
-    for (int i = 0; i < nFrames && mPos < n; ++i, ++mPos) out[i] += kTr909VoltToSample * static_cast<double>(b[mPos]);
+    if (std::fabs(mRate - 1.0) < 1e-12)
+    {
+      for (int i = 0; i < nFrames && mPos < n; ++i, ++mPos) out[i] += kTr909VoltToSample * mLevelGain * static_cast<double>(b[mPos]);
+    }
+    else
+    {
+      // transposition: the baked set is read at pitchRatio samples per output sample (Catmull-Rom between the neighbours)
+      auto at = [&](long j) { return (j < 0 || j >= static_cast<long>(n)) ? 0.0 : static_cast<double>(b[static_cast<size_t>(j)]); };
+      for (int i = 0; i < nFrames && mPos < n; ++i)
+      {
+        const long j = static_cast<long>(mPos); const double t = mFrac;
+        const double y0 = at(j - 1), y1 = at(j), y2 = at(j + 1), y3 = at(j + 2);
+        out[i] += kTr909VoltToSample * mLevelGain * (y1 + 0.5 * t * (y2 - y0 + t * (2.0 * y0 - 5.0 * y1 + 4.0 * y2 - y3 + t * (3.0 * (y1 - y2) + y3 - y0))));
+        mFrac += mRate;
+        const size_t adv = static_cast<size_t>(mFrac); mPos += adv; mFrac -= static_cast<double>(adv);
+      }
+    }
     if (mPos >= n) mBuf.reset();
   }
   bool IsActive() const override { return mBuf != nullptr; }
   void Choke() { mBuf.reset(); }
   unsigned misses() const { return mMisses; }
 
+  double pitchRatio = 1.0;   // digital transpose of the baked set (not a circuit knob)
+  // Output level pot of the voice (0..1). The sets are baked at kLevelKnobBaked; the pot is the feedback resistor of the output op-amp, which scales the output
+  // exactly (Hand Clap: engine at 0.25 / 0.5 / 1.0 gives gains 0.500 / 1 / 2.001, no clipping), so the level is a gain on the baked set.
+  double levelKnob = 0.5;
+  static constexpr double kLevelKnobBaked = 0.5;
+
 private:
   Tr909Voice mVoice; Tr909NoisePath mNoise = Tr909NoisePath::Reference5us;
   std::shared_ptr<const std::vector<float>> mBuf; size_t mPos = 0; unsigned mMisses = 0;
+  double mFrac = 0.0, mRate = 1.0, mLevelGain = 1.0;
 };
 
 }  // namespace dgg

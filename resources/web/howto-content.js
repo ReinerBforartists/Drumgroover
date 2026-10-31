@@ -57,7 +57,7 @@ howtoSet('howto-generator', `
   <b style="display:block;margin-top:12px">The Main cluster</b>
   The <b>Selected notes</b> block in the sidebar works on the notes you have selected, and does nothing without a selection: <b>Quant</b> pulls their timing toward the Snap grid by the chosen strength (100% = Snap to Grid), <b>Rnd</b> jitters their timing and velocity by the chosen amount, <b>Swing</b> moves the off-beat notes by up to half a step (the Snap step, or the first multiple of it where your selection has off-beat notes, so 8th hi-hats swing on the 8th off-beats even with a 16th Snap): 0 is straight, positive values delay them, negative values push them ahead, +50% is a hard 3:1 swing, and the <b>◀ ▶</b> buttons of <b>Nudge</b> shift them back or forward by an eighth of a Snap step per click — fine timing feel, not quantized. The sliders apply when you let go and always work from the notes as they were when you selected them, so the slider value is the whole effect; <b>Ctrl+click</b> on a slider puts it (and the notes) back to neutral.<br>
   <b style="display:block;margin-top:12px">Custom tracks</b>
-  <b>+ Add Track</b> adds an extra percussion instrument (High Conga, Claves, Hand Clap, Maracas, Cowbell, PC-2). Pick the instrument and its MIDI note number in the dialog; each instrument can be used once. Its knobs are in the Custom cluster, its sound in the Drum Engine tab (Custom).
+  <b>+ Add Track</b> adds an extra percussion instrument (High Conga, Claves, Hand Clap, Maracas, Cowbell, PC-2, Hand Clap 909). Pick the instrument and its MIDI note number in the dialog; each instrument can be used once. Its knobs are in the Custom cluster, its sound in the Drum Engine tab (Custom).
 `);
 
 howtoSet('howto-ne-edit', `
@@ -119,7 +119,7 @@ howtoSet('howto-engine', `
   <b>Polyphony.</b> The row at the top sets how many hits of a group can sound at the same time before the oldest is cut off (Kick, Snare, all Toms together, Ride).<br>
   <b>Keyboard.</b> The keys at the bottom play the instruments with their current settings; keys are colored by instrument family. <b>Options → Preview sound on knob turn</b> plays the instrument while you turn one of its knobs. The meter on the right shows the peak level of the engine output.<br>
   <b>Engine.</b> The <b>Engine</b> selector (top right) switches the whole kit between <b>808</b> and <b>Lo-Fi</b>. The Lo-Fi engine is simpler: its cards only keep the name, Reset and volume, because it has no adjustable circuit parameters. Each engine starts with its own default mixer, so switching loads that engine's default mixer settings (unsaved mixer changes are lost; the plugin asks first).<br>
-  <b>Custom.</b> The Custom tab holds the extra percussion: High Conga, Claves, Hand Clap, Maracas, Cowbell and PC-2. An instrument plays in a pattern once you add it as a track with <b>+ Add Track</b> in the Note Editor; all custom tracks use the Mixer's Custom channel.
+  <b>Custom.</b> The Custom tab holds the extra percussion: High Conga, Claves, Hand Clap, Maracas, Cowbell and PC-2 (808), and Hand Clap 909 (the TR-909 circuit, in every engine mode). An instrument plays in a pattern once you add it as a track with <b>+ Add Track</b> in the Note Editor; all custom tracks use the Mixer's Custom channel.
 `);
 
 howtoSet('howto-cache', `
