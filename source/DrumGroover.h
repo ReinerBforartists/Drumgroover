@@ -226,6 +226,9 @@ private:
   void HandleQueryCacheBakeEstimate(const nlohmann::json& payload);
   void HandleApplyCacheVariantCount(const nlohmann::json& payload);
   void HandleCancelCacheBake(const nlohmann::json& payload);
+  void HandleAbortCacheBake(const nlohmann::json& payload);   // "Close" of the paused bake dialog
+  void HandleResumeCacheBake(const nlohmann::json& payload);   // continues the factory-default bake after a pause
+  void EnqueueFactoryDefaultBakes();
 
   // Cache size limit (machine-wide, Cache panel): SendCacheInfo() reports
   // { usedBytes, files, limitGiB, rebakeOnChange }; HandleSetCacheLimit()

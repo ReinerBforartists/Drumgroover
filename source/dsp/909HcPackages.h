@@ -1,4 +1,4 @@
-// Table packages of the closed hi-hat hybrid model (tr909/HcHybrid.h): one file per accent anchor, "hc_a<anchor>.hcpk", read once and shared by all bake threads.
+// Table packages of the hand clap (HC) hybrid model (tr909/HcHybrid.h): one file per accent anchor, "hc_a<anchor>.hcpk", read once and shared by all bake threads.
 // The packages are part of the model: Tr909FullModelRunner renders the HC at the 5 us noise path only from a package (a missing or unreadable package makes the run fail,
 // so that no set baked without it is stored under the model version that means "HC on the hybrid model"; see kTr909ModelVersion).
 #pragma once

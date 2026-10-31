@@ -10,6 +10,7 @@
 #include "dsp/909FactoryDefaults.h"
 #include "dsp/909ModelRunner.h"
 #include "dsp/909HcPackages.h"
+#include "dsp/BakeAbort.h"
 
 #include <fstream>
 #include <mutex>
@@ -167,7 +168,7 @@ std::filesystem::path GetCacheDir()
   return dir;
 }
 
-// Always-on application log (Release builds too): %APPDATA%\DrumGroover\DrumGroover.log, one line per event, about 1 MB at most (the previous file becomes DrumGroover.log.old).
+// Always-on application log (Release builds too): <temp>\DrumGroover.log (next to DrumGroover_debug.log), one line per event, about 1 MB at most (the previous file becomes DrumGroover.log.old).
 // DGG_Log() above is the developer log that exists only with -DDGG_DEBUG_LOG=1. This one carries what is needed to diagnose an installation: model versions,
 // whether the HC model packages were found, the first-start decision and the result of every 909 bake.
 void DggAppLog(const std::string& msg)
@@ -176,8 +177,10 @@ void DggAppLog(const std::string& msg)
   try
   {
     std::lock_guard<std::mutex> lk(mu);
-    const std::filesystem::path path = GetCacheDir().parent_path() / "DrumGroover.log";
     std::error_code ec;
+    std::filesystem::path path = std::filesystem::temp_directory_path(ec) / "DrumGroover.log";
+    if (ec) path = GetCacheDir().parent_path() / "DrumGroover.log";
+    ec.clear();
     if (std::filesystem::exists(path, ec) && std::filesystem::file_size(path, ec) > (1u << 20))
       std::filesystem::rename(path, std::filesystem::path(path.string() + ".old"), ec);
     std::ofstream f(path, std::ios::app);
@@ -204,6 +207,7 @@ constexpr bool DggHcEmbedded()
 }
 
 bool VariantFileValid(const std::filesystem::path& path);   // defined with the other cache helpers below (used by OnWebContentLoaded)
+void CountFactoryDefaultFiles(double sr, int target, int& ready, int& total);   // defined behind FactoryDefaultEntries()
 
 std::filesystem::path GetSettingsPath()
 {
@@ -354,7 +358,7 @@ void WriteDefaultIndex(const std::set<std::string>& names)
 // never holds a truncated file; the existence of the final file is the validity proof.
 bool SaveVariantToDisk(const std::filesystem::path& path, const std::vector<float>& buf)
 {
-  const auto tmp = path.string() + ".tmp";
+  const auto tmp = path.string() + "." + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + ".tmp";   // per thread: a stopped job and a resumed one never share a temporary file
   {
     std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
     if (!f) return false;
@@ -677,6 +681,9 @@ int NoteToChannel(int note)
 
 // True from the moment the factory-default sets are (re)created (no default.index yet) until all baking is done.
 std::atomic<bool> gFirstRunBake{false};
+// > 0 while EnqueueFactoryDefaultBakes() is still queuing sets: until its first job exists the baker looks idle, and OnIdle would end the first-start state (and with it
+// the dialog) right after Resume.
+std::atomic<int> gDefaultEnqueueRunning{0};
 
 // Voice parameter setters.
 void SetKickVoiceParam(dgg::TR808KickVoice& v, const std::string& p, double val)
@@ -1376,14 +1383,28 @@ void DrumGroover::OnIdle()
     DrainCacheMisses();
     // The first-run flag is latched in OnWebContentLoaded and must stay until the bake has actually finished; clearing it on a
     // merely idle baker would let the dialog show "Updating" instead of "Preparing" for the bakes running while the UI loads.
-    if (gFirstRunBake.load() && snap.pendingJobs == 0
+    if (gFirstRunBake.load() && snap.pendingJobs == 0 && gDefaultEnqueueRunning.load() == 0
       && std::filesystem::exists(GetCacheDir() / "default.index"))
       gFirstRunBake.store(false);
     // Only send when the progress changed (plus a slow refresh): a message on every idle tick queues up in the WebView
     // while the bake keeps the CPU busy and arrives as a burst.
+    // Sounds of the factory-default sets that exist on disk / that there are: the numbers of the first-start dialog. They only ever grow, so Pause and Resume
+    // (which reset and re-plan the baker's units) do not move them. Counted at most every 400 ms (about 500 file checks), also once after the last job ended.
+    static int sDefReady = 0, sDefTotal = 0, sLastPending = 0;
+    static auto sDefCounted = std::chrono::steady_clock::time_point{};
+    {
+      const auto t = std::chrono::steady_clock::now();
+      if ((snap.pendingJobs > 0 || sLastPending > 0 || gFirstRunBake.load() || gDefaultEnqueueRunning.load() > 0) && t - sDefCounted > std::chrono::milliseconds(400))
+      {
+        CountFactoryDefaultFiles(GetSampleRate(), mCacheVariantCount.load(std::memory_order_relaxed), sDefReady, sDefTotal);
+        sDefCounted = t;
+      }
+      sLastPending = snap.pendingJobs;
+    }
     const nlohmann::json progress = {
       {"active", snap.active}, {"done", snap.done}, {"total", snap.total}, {"label", snap.label},
       {"pendingJobs", snap.pendingJobs}, {"unitsDone", snap.unitsDone}, {"unitsTotal", snap.unitsPlanned}, {"labels", snap.labels},
+      {"defaultsReady", sDefReady}, {"defaultsTotal", sDefTotal},
       {"firstRun", gFirstRunBake.load()}, {"preview", false}
     };
     static nlohmann::json sLastProgress;
@@ -1719,6 +1740,8 @@ bool DrumGroover::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* p
     else if (type == "queryCacheBakeEstimate") HandleQueryCacheBakeEstimate(payload);
     else if (type == "applyCacheVariantCount") HandleApplyCacheVariantCount(payload);
     else if (type == "cancelCacheBake") HandleCancelCacheBake(payload);
+    else if (type == "resumeCacheBake") HandleResumeCacheBake(payload);
+    else if (type == "abortCacheBake") HandleAbortCacheBake(payload);
     else if (type == "queryCacheInfo") SendCacheInfo();
     else if (type == "setCacheLimit") HandleSetCacheLimit(payload);
     else if (type == "setRebakeOnChange") HandleSetRebakeOnChange(payload);
@@ -2968,7 +2991,7 @@ void DrumGroover::HandleCommitVoiceParam(const nlohmann::json& payload)
   }
 }
 
-namespace { void Enqueue909FactoryDefaults(double sr, int target); }   // defined with the other bake queues below
+namespace { void Enqueue909FactoryDefaults(double sr, int target, uint64_t cancelGen); }   // defined with the other bake queues below
 
 void DrumGroover::HandleSetCacheVariantCount(const nlohmann::json& payload)
 {
@@ -3031,7 +3054,7 @@ void DrumGroover::HandleClearCache(const nlohmann::json& payload)
     for (int i = 0; i < dgg::CountInstruments("ride"); i++)  EnqueueRideVariantBake(i);
     for (int i = 0; i < dgg::CountInstruments("hihat"); i++)  EnqueueHiHatVariantBake(i);
     for (int i = 0; i < dgg::CountInstruments("cymbal"); i++) EnqueueCrashVariantBake(i);
-    Enqueue909FactoryDefaults(GetSampleRate(), mCacheVariantCount.load(std::memory_order_relaxed));
+    Enqueue909FactoryDefaults(GetSampleRate(), mCacheVariantCount.load(std::memory_order_relaxed), dgg::TR808VariantPoolBaker::Instance().CancelGeneration());
 
     DGG_Log("HandleClearCache[cache]: freed " + std::to_string(freed) + " bytes");
     SendBridgeMessage("cacheCleared", { {"tier", "cache"}, {"bytesFreed", (double)freed} });
@@ -3127,34 +3150,39 @@ CacheUsage MeasureCache()
 // has started rendering (queued slots can be released by a cancel, running
 // ones finish). Other slots of the same set are not affected.
 std::mutex gInFlightBakeMutex;
-std::unordered_map<std::string, bool> gInFlightSlots;
+struct InFlightSlot { bool started; unsigned gen; };   // gen: the abort generation of the bake that queued the slot
+std::unordered_map<std::string, InFlightSlot> gInFlightSlots;
 
 std::string SlotId(const std::string& baseName, int k) { return baseName + "#" + std::to_string(k); }
 
-bool TryMarkSlotInFlight(const std::string& baseName, int k)
+// False when another job holds the slot, or when `gen` is not the current abort generation any more (a caller that was already past a Pause: it must not queue).
+bool TryMarkSlotInFlight(const std::string& baseName, int k, unsigned gen)
 {
   std::lock_guard<std::mutex> lock(gInFlightBakeMutex);
-  return gInFlightSlots.emplace(SlotId(baseName, k), false).second;
+  if (gen != dgg::BakeAbortCounter().load()) return false;
+  return gInFlightSlots.emplace(SlotId(baseName, k), InFlightSlot{ false, gen }).second;
 }
 
 void MarkSlotStarted(const std::string& baseName, int k)
 {
   std::lock_guard<std::mutex> lock(gInFlightBakeMutex);
   auto it = gInFlightSlots.find(SlotId(baseName, k));
-  if (it != gInFlightSlots.end()) it->second = true;
+  if (it != gInFlightSlots.end()) it->second.started = true;
 }
 
-void UnmarkSlotInFlight(const std::string& baseName, int k)
+// Only the job of the generation that marked the slot may release it: a stopped job that ends late must not free the slot a Resume has queued again.
+void UnmarkSlotInFlight(const std::string& baseName, int k, unsigned gen)
 {
   std::lock_guard<std::mutex> lock(gInFlightBakeMutex);
-  gInFlightSlots.erase(SlotId(baseName, k));
+  auto it = gInFlightSlots.find(SlotId(baseName, k));
+  if (it != gInFlightSlots.end() && it->second.gen == gen) gInFlightSlots.erase(it);
 }
 
-void ReleaseQueuedSlots()
+// Pause / Close: every slot is free at once (queued ones will never run, running ones are stopped); Resume can queue them again without waiting for the stopped jobs.
+void ReleaseAllSlots()
 {
   std::lock_guard<std::mutex> lock(gInFlightBakeMutex);
-  for (auto it = gInFlightSlots.begin(); it != gInFlightSlots.end();)
-    it = it->second ? std::next(it) : gInFlightSlots.erase(it);
+  gInFlightSlots.clear();
 }
 
 // Bakes whichever variants (1..target) of set `baseName` have no file yet. Each missing variant is its own parallel
@@ -3169,6 +3197,7 @@ void EnqueueMissingVariants(const char* label, Pool& pool, const dgg::TR808Varia
                             bool rebakeAll = false, int immediateVariants = 2)
 {
   pool.SetTargetVariantCount(target);
+  const unsigned abortGen = dgg::BakeAbortCounter().load();   // jobs queued here die with the next Pause / Close
   std::vector<int> missing;
   std::random_device rd;
   const double saltSec = std::uniform_real_distribution<double>(0.0, kBakeSaltMaxSec)(rd);
@@ -3185,7 +3214,7 @@ void EnqueueMissingVariants(const char* label, Pool& pool, const dgg::TR808Varia
   }
   // Slots another job is already baking are left to that job.
   missing.erase(std::remove_if(missing.begin(), missing.end(),
-    [&](int k) { return !TryMarkSlotInFlight(baseName, k); }), missing.end());
+    [&](int k) { return !TryMarkSlotInFlight(baseName, k, abortGen); }), missing.end());
   if (missing.empty()) return;
 
   DGG_Log("EnqueueVariantBake: " + baseName + " missing=" + std::to_string(missing.size()) + "/" + std::to_string(target));
@@ -3203,9 +3232,13 @@ void EnqueueMissingVariants(const char* label, Pool& pool, const dgg::TR808Varia
     return [=](const dgg::TR808VariantPoolBaker::ProgressFn& report) {
       const int k = missing[slot];
       MarkSlotStarted(baseName, k);
+      const dgg::BakeScope bakeScope(abortGen);
       const double warmupSec = (k - 1) * kBakeWarmupStepSec + saltSec;
       const auto t0 = std::chrono::steady_clock::now();
-      std::vector<float> tap = render(warmupSec);
+      std::vector<float> tap;
+      if (!dgg::BakeAborted()) tap = render(warmupSec);
+      const bool aborted = dgg::BakeAborted();   // Pause / Close since this job was queued: nothing half-finished is stored
+      if (aborted) tap.clear();
       const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
       dgg::TR808VariantPoolBaker::Instance().RecordBake(ms);
       const auto path = VariantFilePath(baseName, k);
@@ -3215,10 +3248,11 @@ void EnqueueMissingVariants(const char* label, Pool& pool, const dgg::TR808Varia
         EvictCacheIfOverBudget();
       }
       DGG_Log("BakeTiming: " + baseName + " v" + std::to_string(k) + " took " + std::to_string(ms) + "ms ("
-        + std::to_string(tap.size()) + " samples, warmup=" + std::to_string(warmupSec) + "s)");
+        + std::to_string(tap.size()) + " samples, warmup=" + std::to_string(warmupSec) + "s" + (aborted ? ", stopped, not stored" : "") + ")");
+      if (aborted) DggAppLog("808 bake " + baseName + " v" + std::to_string(k) + ": stopped (Pause or Close, not stored) after " + std::to_string(static_cast<int>(ms)) + " ms");
       report(1, 1);
-      dgg::TR808VariantPoolBaker::Instance().FinishUnits(1);
-      UnmarkSlotInFlight(baseName, k);
+      dgg::TR808VariantPoolBaker::Instance().FinishUnits(aborted ? 0 : 1);
+      UnmarkSlotInFlight(baseName, k, abortGen);
     };
   };
 
@@ -3256,6 +3290,7 @@ void EnqueueRideSet(const char* label, const dgg::TR808VariantKey128& key, int t
     bakeVoice.Trigger(1.0, static_cast<dgg::TR808RideVoice::Articulation>(p.art));
     while (bakeVoice.IsActive())
     {
+      if (dgg::BakeAborted()) { tap.clear(); break; }   // Pause / Close: stop between two blocks of 4096 samples
       std::fill(scratch.begin(), scratch.end(), 0.0);
       bakeVoice.Process(scratch.data(), (int)scratch.size());
     }
@@ -3285,6 +3320,7 @@ void EnqueueHiHatSet(const dgg::TR808VariantKey128& key, int target, bool loadIf
     bakeVoice.Trigger(1.0);
     while (bakeVoice.IsActive())
     {
+      if (dgg::BakeAborted()) { tap.clear(); break; }   // Pause / Close: stop between two blocks of 4096 samples
       std::fill(scratch.begin(), scratch.end(), 0.0);
       bakeVoice.Process(scratch.data(), (int)scratch.size());
     }
@@ -3308,6 +3344,7 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
   const std::string baseName = dgg::Tr909SetBaseName(key);
   dgg::Tr909VariantPool& pool = dgg::Tr909VariantPool::Instance();
   pool.SetTargetVariantCount(target);
+  const unsigned abortGen = dgg::BakeAbortCounter().load();   // jobs queued here die with the next Pause / Close
   std::vector<int> missing;
   if (rebakeAll)
   {
@@ -3321,7 +3358,7 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
     LoadExistingVariantsIntoPool(pool, key, baseName);
   }
   missing.erase(std::remove_if(missing.begin(), missing.end(),
-    [&](int k) { return !TryMarkSlotInFlight(baseName, k); }), missing.end());
+    [&](int k) { return !TryMarkSlotInFlight(baseName, k, abortGen); }), missing.end());
   if (missing.empty()) return;
 
   DGG_Log("EnqueueVariantBake: " + baseName + " missing=" + std::to_string(missing.size()) + "/" + std::to_string(target));
@@ -3336,6 +3373,7 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
     return [=](const dgg::TR808VariantPoolBaker::ProgressFn& report) {
       const int k = missing[slot];
       MarkSlotStarted(baseName, k);
+      const dgg::BakeScope bakeScope(abortGen);   // Pause and Close raise the counter: a hit being rendered then stops and is not stored
       thread_local dgg::Tr909FullModelRunner runner;
       thread_local const bool runnerHcInit = [&] {
         dgg::Tr909HcPackageStore::Instance().SetDirectory(GetCacheDir().parent_path() / "Models");
@@ -3350,22 +3388,23 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
         (void)runnerHcInit;
       std::vector<float> tap;
       const auto t0 = std::chrono::steady_clock::now();
-      const dgg::Tr909BakeResult res = dgg::Tr909BakeVariant(key, k, runner, tap);
+      const dgg::Tr909BakeResult res = dgg::BakeAborted() ? dgg::Tr909BakeResult::RunFailed : dgg::Tr909BakeVariant(key, k, runner, tap);
       const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
       dgg::TR808VariantPoolBaker::Instance().RecordBake(ms);
       const auto path = VariantFilePath(baseName, k);
-      if (res == dgg::Tr909BakeResult::Ok && (rebakeAll || !VariantFileValid(path)) && !tap.empty())
+      const bool aborted = dgg::BakeAborted();
+      if (!aborted && res == dgg::Tr909BakeResult::Ok && (rebakeAll || !VariantFileValid(path)) && !tap.empty())
       {
         if (SaveVariantToDisk(path, tap)) dgg::Tr909VariantPool::Instance().AddVariant(key, std::vector<float>(tap));
         EvictCacheIfOverBudget();
       }
       DGG_Log("BakeTiming: " + baseName + " v" + std::to_string(k) + " took " + std::to_string(ms) + "ms ("
         + std::to_string(tap.size()) + " samples, result=" + std::to_string(static_cast<int>(res)) + ")");
-      DggAppLog("909 bake " + baseName + " v" + std::to_string(k) + ": " + (res == dgg::Tr909BakeResult::Ok ? "Ok" : res == dgg::Tr909BakeResult::AccentNotValidated ? "AccentNotValidated" : "RunFailed")
+      DggAppLog("909 bake " + baseName + " v" + std::to_string(k) + ": " + (aborted ? "stopped (Pause or Close, not stored)" : res == dgg::Tr909BakeResult::Ok ? "Ok" : res == dgg::Tr909BakeResult::AccentNotValidated ? "AccentNotValidated" : "RunFailed")
         + ", " + std::to_string(tap.size()) + " samples, " + std::to_string(static_cast<int>(ms)) + " ms");
       report(1, 1);
-      dgg::TR808VariantPoolBaker::Instance().FinishUnits(1);
-      UnmarkSlotInFlight(baseName, k);
+      dgg::TR808VariantPoolBaker::Instance().FinishUnits(aborted ? 0 : 1);
+      UnmarkSlotInFlight(baseName, k, abortGen);
     };
   };
 
@@ -3382,9 +3421,15 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
   }
 }
 
-void Enqueue909FactoryDefaults(double sr, int target)
+// Stops enqueuing as soon as the bake was cancelled (CancelPending() changes the generation): this runs on its own thread and takes a while, so without the
+// check "Cancel" would drop the queue and the rest of the default sets would be queued again right behind it.
+void Enqueue909FactoryDefaults(double sr, int target, uint64_t cancelGen)
 {
-  for (const dgg::Tr909SetKey& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(sr)))) Enqueue909Set(k, target, /*loadIfComplete=*/true);
+  for (const dgg::Tr909SetKey& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(sr))))
+  {
+    if (dgg::TR808VariantPoolBaker::Instance().CancelGeneration() != cancelGen) return;
+    Enqueue909Set(k, target, /*loadIfComplete=*/true);
+  }
 }
 
 // The factory-default entries of the instrument table's Ride, HiHat and Cymbal rows, in bake order (ride, hi-hat, cymbal).
@@ -3395,6 +3440,17 @@ std::vector<dgg::FactoryDefaultEntry> FactoryDefaultEntries()
     for (const dgg::InstrumentDef& d : dgg::kInstruments)
       if (d.kind == kind) out.push_back(FactoryEntryOf(d));
   return out;
+}
+
+// Counts the variant files of all factory-default sets (808 and 909) that are complete on disk and the number of files there should be.
+void CountFactoryDefaultFiles(double sr, int target, int& ready, int& total)
+{
+  std::set<std::string> names;
+  for (const auto& e : FactoryDefaultEntries()) names.insert(dgg::FactoryDefaultBaseName(e, sr));
+  for (const auto& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(sr)))) names.insert(dgg::Tr909SetBaseName(k));
+  ready = 0; total = 0;
+  for (const std::string& n : names)
+    for (int v = 1; v <= target; ++v) { ++total; if (VariantFileValid(VariantFilePath(n, v))) ++ready; }
 }
 
 void EnqueueFactoryDefaultSet(const dgg::FactoryDefaultEntry& e, double sr, int target)
@@ -3436,9 +3492,28 @@ void DrumGroover::ApplyFactoryDefaults()
   DGG_Log("ApplyFactoryDefaults: " + std::to_string(names.size()) + " default sets, sr=" + std::to_string(sr));
   DggAppLog("ApplyFactoryDefaults: " + std::to_string(names.size()) + " default sets (808 and 909), sr=" + std::to_string(sr) + ", variants per set " + std::to_string(target));
 
-  std::thread([entries, sr, target]() {
-    for (const auto& e : entries) EnqueueFactoryDefaultSet(e, sr, target);
-    Enqueue909FactoryDefaults(sr, target);
+  EnqueueFactoryDefaultBakes();
+}
+
+// Queues the factory-default sets (808 and 909) that are not complete yet on its own thread (the sets are checked file by file, which takes a while).
+// Stops as soon as the bake is cancelled (CancelPending() changes the generation).
+void DrumGroover::EnqueueFactoryDefaultBakes()
+{
+  const std::vector<dgg::FactoryDefaultEntry> entries = FactoryDefaultEntries();
+  const double sr = GetSampleRate();
+  const int target = mCacheVariantCount.load(std::memory_order_relaxed);
+  const uint64_t cancelGen = dgg::TR808VariantPoolBaker::Instance().CancelGeneration();
+  gDefaultEnqueueRunning.fetch_add(1);
+  std::thread([entries, sr, target, cancelGen]() {
+    struct Done { ~Done() { gDefaultEnqueueRunning.fetch_sub(1); } } done;   // also on the early return after a Pause
+    for (const auto& e : entries)
+    {
+      if (dgg::TR808VariantPoolBaker::Instance().CancelGeneration() != cancelGen) return;
+      EnqueueFactoryDefaultSet(e, sr, target);
+    }
+    Enqueue909FactoryDefaults(sr, target, cancelGen);
+    const auto snap = dgg::TR808VariantPoolBaker::Instance().GetSnapshot();
+    DggAppLog("Default sets queued: planned " + std::to_string(snap.unitsPlanned) + " sounds, done " + std::to_string(snap.unitsDone) + ", jobs pending " + std::to_string(snap.pendingJobs));
   }).detach();
 }
 
@@ -3615,6 +3690,25 @@ void DrumGroover::HandleSetCacheLimit(const nlohmann::json& payload)
   SendCacheInfo();
 }
 
+// "Close" of the paused bake dialog: ends the whole bake. Finished files stay, what is missing is calculated at the next start (Pause has already stopped the hits being rendered).
+void DrumGroover::HandleAbortCacheBake(const nlohmann::json&)
+{
+  dgg::TR808VariantPoolBaker::Instance().CancelPending();
+  dgg::pcmfast::BakeAbortGeneration().fetch_add(1);
+  dgg::TR808VariantPoolBaker::Instance().ResetPlan();
+  ReleaseAllSlots();
+  gFirstRunBake.store(false);
+  DggAppLog("Cache bake closed by the user: queued jobs dropped, 909 hits being rendered are stopped");
+}
+
+// Pause / Resume of the first-start bake: Cancel (below) drops the queue; Resume queues what is still missing, the finished files stay.
+void DrumGroover::HandleResumeCacheBake(const nlohmann::json&)
+{
+  gFirstRunBake.store(true);
+  DggAppLog("Cache bake resumed by the user");
+  EnqueueFactoryDefaultBakes();
+}
+
 // Stops the running bake: queued jobs are dropped, jobs already rendering
 // finish their file. Files baked so far stay, so applying again resumes
 // where this stopped. The variant count in effect was never changed by the
@@ -3626,7 +3720,15 @@ void DrumGroover::HandleCancelCacheBake(const nlohmann::json&)
     gApplyJob.active = false;
   }
   dgg::TR808VariantPoolBaker::Instance().CancelPending();
-  ReleaseQueuedSlots();
+  dgg::pcmfast::BakeAbortGeneration().fetch_add(1);   // Pause is pause: the 909 hits being rendered stop within a few milliseconds and are discarded (nothing half-finished is stored)
+  {
+    const auto snap = dgg::TR808VariantPoolBaker::Instance().GetSnapshot();
+    DggAppLog("Pause: planned " + std::to_string(snap.unitsPlanned) + " sounds, done " + std::to_string(snap.unitsDone) + ", jobs pending " + std::to_string(snap.pendingJobs));
+  }
+  dgg::TR808VariantPoolBaker::Instance().ResetPlan();   // the dropped jobs' planned units go; Resume plans only what is still missing (the dialog adds the sounds already ready)
+  ReleaseAllSlots();
+  gFirstRunBake.store(false);
+  DggAppLog("Cache bake paused by the user: queued jobs dropped, 909 hits being rendered are stopped and discarded");
   HandleSetCacheVariantCount({ {"value", mCacheVariantCount.load(std::memory_order_relaxed)} });
   SendBridgeMessage("cacheBakeCancelled", nlohmann::json::object());
 }

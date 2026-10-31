@@ -2062,6 +2062,11 @@ let deEngineParamsBuilt = false;
 // e.g. of the sounds of a knob edit, only shows in the status line.
 const DE_CACHE_NAMES = { ride: 'Ride', hihat: 'Hi-Hat', cymbal: 'Cymbals', kick: 'Kick', snare: 'Snare', tom: 'Toms', rimshot: 'Rim Shot', claves: 'Claves', handclap: 'Hand Clap', maracas: 'Maracas', hc: 'Hand Clap / Maracas', cowbell: 'Cowbell', cb: 'Cowbell', pc2: 'PC-2' };
 let deCacheDialog = null;
+let deCachePaused = false;          // the user paused the first-start bake: the dialog stays with Resume / Close
+let deCacheBase = 0;                // sounds already ready before a Resume (the host plans only what is still missing)
+let deCacheShown = { done: 0, total: 0 };   // last numbers shown
+let deCacheSession = false;         // the dialog was shown for this bake: it stays until the bake is over, whatever the host's first-start flag does after a Resume
+let deCacheResuming = false;        // Resume was clicked: keep the dialog until the host has queued the remaining sounds (at most a few seconds)
 
 function deCacheNameList(keys) {
   return keys.map((k) => DE_CACHE_NAMES[k] || k).join(', ');
@@ -2087,46 +2092,100 @@ function deBuildCacheDialog() {
   const count = el('app-modal-message');
   count.style.margin = '6px 0 0';
   const actions = el('app-modal-actions');
-  // Cancel instead of Hide: while the bake runs there is nothing to do behind the dialog, but letting it run is a
-  // choice -- running jobs finish and write their file, queued ones are dropped, and the next bake resumes where this
-  // one left off (C++ HandleCancelCacheBake).
-  const cancel = document.createElement('button');
-  cancel.type = 'button';
-  cancel.className = 'btn';
-  cancel.textContent = 'Cancel';
-  cancel.dataset.tooltip = 'Cancel\nStops the calculation now. Finished sounds stay on disk; the rest is picked up where it left off the next time a bake runs.';
-  cancel.addEventListener('click', () => {
+  // Pause / Resume / Close: Pause stops the calculation (running jobs finish and write their file, queued ones are dropped, C++ HandleCancelCacheBake);
+  // the dialog then stays with Resume (continues where it stopped) and Close (gives up for now: the rest is picked up at the next start).
+  const mkBtn = (text, tip) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn'; b.textContent = text; b.dataset.tooltip = tip; return b; };
+  const pause = mkBtn('Pause', 'Pause\nStops the calculation at once: no new sound is started, the sounds being calculated are discarded. Finished sounds stay on disk. Afterwards you can resume or close this window.');
+  const resume = mkBtn('Resume', 'Resume\nContinues the calculation where it stopped.');
+  const close = mkBtn('Close', 'Close\nEnds the calculation. Finished sounds stay on disk; the remaining sounds are calculated at the next start. Sounds not yet in the cache are rendered on demand.');
+  pause.addEventListener('click', () => {
+    deCachePaused = true;
+    const statusEl = document.getElementById('statusText');
+    if (statusEl) statusEl.textContent = 'Cache bake paused';
+    if (typeof hostBridge !== 'undefined' && hostBridge.send) hostBridge.send('cancelCacheBake', {});
+    if (deCacheDialog) deRenderCachePaused(deCacheDialog, { pendingJobs: 1 });
+  });
+  resume.addEventListener('click', () => {
+    deCachePaused = false;
+    deCacheBase = deCacheShown.done;   // the host plans only what is still missing: the display goes on from here
+    deCacheResuming = true; deCacheSession = true; setTimeout(() => { deCacheResuming = false; }, 8000);
+    const statusEl = document.getElementById('statusText');
+    if (statusEl) statusEl.textContent = 'Cache bake resumed';
+    if (deCacheDialog) { deCacheDialog.title.textContent = 'Preparing the sound cache'; deCacheDialog.activity.textContent = 'Calculating the next sounds…'; deSetCacheButtons(deCacheDialog, 'running'); }
+    if (typeof hostBridge !== 'undefined' && hostBridge.send) hostBridge.send('resumeCacheBake', {});
+  });
+  close.addEventListener('click', () => {
+    deCachePaused = false; deCacheBase = 0;
     if (deCacheDialog) { deCacheDialog.overlay.remove(); deCacheDialog = null; }
     const statusEl = document.getElementById('statusText');
-    if (statusEl) statusEl.textContent = 'Cache bake cancelled';
-    if (typeof hostBridge !== 'undefined' && hostBridge.send) hostBridge.send('cancelCacheBake', {});
+    if (statusEl) statusEl.textContent = 'Cache bake stopped; the rest is calculated at the next start';
+    if (typeof hostBridge !== 'undefined' && hostBridge.send) hostBridge.send('abortCacheBake', {});
   });
-  actions.appendChild(cancel);
+  actions.append(pause, resume, close);
   box.append(title, message, activity, barOuter, count, actions);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
-  return { overlay, title, message, activity, bar, count };
+  const d = { overlay, title, message, activity, bar, count, pause, resume, close };
+  deSetCacheButtons(d, 'running');
+  return d;
+}
+
+// Buttons of the dialog: while running only Pause; paused: Resume and Close (Resume only once the jobs already running have finished their file).
+function deSetCacheButtons(d, mode) {
+  d.pause.style.display = mode === 'running' ? '' : 'none';
+  d.resume.style.display = mode === 'running' ? 'none' : '';
+  d.close.style.display = mode === 'running' ? 'none' : '';
+  d.resume.disabled = false;   // available at once: the jobs still finishing do not conflict with it (the host skips sets already in flight)
+}
+
+// The paused state of the dialog (the host's progress is not used for the numbers: the last values before the pause stay).
+function deRenderCachePaused(d, p) {
+  const pausing = (p.pendingJobs || 0) > 0;
+  d.title.textContent = pausing ? 'Pausing the sound cache…' : 'Sound cache paused';
+  d.message.textContent = pausing
+    ? 'The sounds being calculated are stopped and discarded.'
+    : 'Finished sounds stay on disk. Resume calculates the missing ones; Close ends the calculation and leaves the rest for the next start. Cache rendering is paused; sounds not yet in the cache are rendered on demand.';
+  d.activity.textContent = '';
+  const total = deCacheShown.total;
+  d.bar.style.width = Math.round(100 * Math.min(1, Math.max(0, total > 0 ? deCacheShown.done / total : 0))) + '%';
+  d.count.textContent = total > 0 ? deCacheShown.done + ' of ' + total + ' sounds ready' : '';
+  deSetCacheButtons(d, pausing ? 'pausing' : 'paused');
 }
 
 function deUpdateCacheBakeDialog(p) {
   const busy = !!p && (p.pendingJobs || 0) > 0;
-  const show = busy && !!p.firstRun;
+  if (deCachePaused) {   // paused by the user: the dialog stays until Resume or Close
+    if (!deCacheDialog) deCacheDialog = deBuildCacheDialog();
+    if (p && (p.defaultsTotal || 0) > 0) deCacheShown = { done: p.defaultsReady || 0, total: p.defaultsTotal };   // valid files on disk
+    deRenderCachePaused(deCacheDialog, p || {});
+    return;
+  }
+  if (busy) deCacheResuming = false;
+  const show = busy && (!!p.firstRun || deCacheSession);
   if (!show) {
+    if (deCacheResuming && deCacheDialog) return;   // between Resume and the first queued job the dialog stays
+    deCacheSession = false;
     if (deCacheDialog) { deCacheDialog.overlay.remove(); deCacheDialog = null; }
+    if (!busy) { deCacheBase = 0; deCacheShown = { done: 0, total: 0 }; }
     return;
   }
   if (!deCacheDialog) deCacheDialog = deBuildCacheDialog();
+  deCacheSession = true;
   const d = deCacheDialog;
   const labels = p.labels || [];
-  d.title.textContent = p.firstRun ? 'Preparing the sound cache' : 'Updating the sound cache';
-  d.message.textContent = p.firstRun
-    ? 'First start: the sounds of all instruments are calculated and stored once. An instrument stays silent until its sound is ready. This only happens on the first start, and again after the cache was cleared.'
-    : 'Sounds are calculated and stored. An instrument stays silent until its sound is ready.';
+  const firstStart = !!p.firstRun || deCacheSession;
+  d.title.textContent = firstStart ? 'Preparing the sound cache' : 'Updating the sound cache';
+  d.message.textContent = firstStart
+    ? 'First start: the sounds of all instruments are calculated and stored once. Sounds not yet in the cache are rendered on demand. This only happens on the first start, and again after the cache was cleared.'
+    : 'Sounds are calculated and stored. Sounds not yet in the cache are rendered on demand.';
   d.activity.textContent = labels.length ? 'Calculating: ' + deCacheNameList(labels) : 'Calculating the next sounds…';
-  const total = p.unitsTotal || 0;
-  const frac = total > 0 ? (p.unitsDone || 0) / total : 0;
+  // Sounds on disk / sounds there should be: the host counts the valid, completely stored files (the same numbers before and after a Pause / Resume and after a restart).
+  const total = p.defaultsTotal || 0, done = p.defaultsReady || 0;
+  deCacheShown = { done, total };
+  const shownDone = done, frac = total > 0 ? shownDone / total : 0;
   d.bar.style.width = Math.round(100 * Math.min(1, Math.max(0, frac))) + '%';
-  d.count.textContent = total > 0 ? (p.unitsDone || 0) + ' of ' + total + ' sounds ready' : '';
+  d.count.textContent = total > 0 ? shownDone + ' of ' + total + ' sounds ready' : '';
+  deSetCacheButtons(d, 'running');
 }
 
 // Tells the host the UI is up: it writes default.index and bakes the factory-default sets. The defaults themselves are the host's

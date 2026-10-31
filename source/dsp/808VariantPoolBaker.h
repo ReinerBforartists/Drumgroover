@@ -89,7 +89,14 @@ public:
   void FinishUnits(int n)
   {
     std::lock_guard<std::mutex> lock(mProgressMutex);
-    mUnitsDone += n;
+    mUnitsDone = std::min(mUnitsDone + n, mUnitsPlanned);   // a job that was not planned (or whose plan was reset by a pause) cannot push the display beyond 100 %
+  }
+  // Pause of a bake: the jobs that were dropped keep their planned units otherwise, and the sets queued again by Resume would be planned a second time
+  // (the displayed total doubled with every Pause / Resume).
+  void ResetPlan()
+  {
+    std::lock_guard<std::mutex> lock(mProgressMutex);
+    mUnitsPlanned = 0; mUnitsDone = 0;
   }
 
   // True once every enqueued job has finished, including jobs a running

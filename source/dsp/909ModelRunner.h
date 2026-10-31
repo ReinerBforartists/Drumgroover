@@ -43,7 +43,7 @@ namespace dgg {
 class Tr909FullModelRunner : public Tr909ModelRunner, public Tr909LiveSource
 {
 public:
-  // Table packages of the closed hi-hat hybrid model (one per accent anchor, tr909/HcHybrid.h). With a provider that returns a package for the anchor, the HC runs on the
+  // Table packages of the hand clap (HC) hybrid model (one per accent anchor, tr909/HcHybrid.h). With a provider that returns a package for the anchor, the HC runs on the
   // hybrid model at the 5 us noise path; without one (or on the 20 us path, or when the package cannot be read) the HC runs on the full model as before.
   // Set before the first run; the packages must outlive the runner.
   using HcPackageProvider = std::function<const hch::HcPackage*(int anchorCode)>;
@@ -144,7 +144,7 @@ private:
       // like HitRunner::Render: the samples the decimator has produced up to the end of the hit, at most seconds x fs
       const long want = static_cast<long>(seconds * fs); out.clear(); out.resize(static_cast<size_t>(std::max(want, 0L)));
       if (!hs_.Begin(seed, static_cast<double>(fs), seconds)) { out.clear(); return false; }
-      long got = 0; while (got < want) { const int w = hs_.Pull(out.data() + got, static_cast<int>(std::min<long>(want - got, 4096))); if (w <= 0) break; got += w; }
+      long got = 0; while (got < want) { if (::dgg::BakeAborted()) { out.clear(); return false; } const int w = hs_.Pull(out.data() + got, static_cast<int>(std::min<long>(want - got, 4096))); if (w <= 0) break; got += w; }
       out.resize(static_cast<size_t>(got)); return got > 0;
     }
     void Warm(Tr909Voice v, bool fast20) override { if (!Ensure(fast20) && fast20) full_.Warm(v, fast20); }

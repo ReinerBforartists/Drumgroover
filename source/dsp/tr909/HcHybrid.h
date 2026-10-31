@@ -1,4 +1,4 @@
-// TR-909 closed hi-hat, hybrid reduced model (state hc909-lev7-fine1-gap3): production engine for the first millisecond, then a reduced Newton model (22 ports / 16 currents
+// TR-909 hand clap (HC), hybrid reduced model (state hc909-lev7-fine1-gap3): production engine for the first millisecond, then a reduced Newton model (22 ports / 16 currents
 // around the comparator events, 5 ports / 3 currents elsewhere) on the 5 us noise grid, with precomputed tables of the unsolved devices.
 // Carried over mechanically from tools/_sweep/wrenfold_hc/hc_hybrid9.cpp by gen_hchybrid.py; validated R246-R264 (see tools/DEVELOPMENT_HANDOFF.md).
 // One Renderer (and the two Red table sets it uses) per hit stream and per thread; the tables are read-only after Red::Load and may be shared.

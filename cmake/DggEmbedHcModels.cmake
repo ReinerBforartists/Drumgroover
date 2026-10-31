@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Reiner Prokein
-# Embeds the table packages of the closed hi-hat hybrid model (resources/models/hc_a<anchor>.hcpk, one per accent anchor, ~11 MB each) into the plugin DLL as
+# Embeds the table packages of the hand clap (HC) hybrid model (resources/models/hc_a<anchor>.hcpk, one per accent anchor, ~11 MB each) into the plugin DLL as
 # Windows resources (RCDATA "DGG_HC_A<anchor>"), so the plugin needs no files next to it. The packages are read in place (LockResource), nothing is copied.
 # A C array (as dgg_embed_web_resources does for the small web files) is not used: 54 MB would be a 270 MB source file.
 # The packages are generated from the model data by tools/_sweep/wrenfold_hc (make_hcpk.py); the version stored in a package must match hch::kModelVer.

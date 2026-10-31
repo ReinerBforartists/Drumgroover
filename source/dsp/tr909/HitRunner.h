@@ -4,9 +4,11 @@
 // chooses the step size from the curvature of the device currents, and returns the output voltage at the host rate.
 // One runner object serves many hits: the propagators are built once, every hit starts from a new model state.
 #pragma once
+#include <atomic>
 #include "FullFast2.h"
 #include "HostDecimator.h"
 #include "../909AccentPlan.h"
+#include "../BakeAbort.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -14,6 +16,10 @@
 #include <vector>
 
 namespace dgg { namespace pcmfast {
+
+// Raised by the host to stop the hits that are being rendered right now (Pause of the cache bake): RunSteps() returns false within a few hundred steps,
+// the hit is incomplete and must not be stored. A hit that is started afterwards is not affected (it compares with the value it saw at its start).
+inline std::atomic<unsigned>& BakeAbortGeneration() { return ::dgg::BakeAbortCounter(); }   // same counter for every engine (BakeAbort.h)
 
 // Numeric settings of one voice. Validated per voice against the engine (tools handoff R162-R165).
 struct HitTuning
@@ -177,7 +183,12 @@ public:
   bool RunSteps(const HitTuning& tu, HitNoise* noise, double seconds, StepFn&& onStep)
   {
     Begin(tu, noise, seconds);
-    while (!Finished()) { Advance(); onStep(t_, y_); }
+    unsigned cnt = 0;
+    while (!Finished())
+    {
+      if ((++cnt & 127u) == 0 && ::dgg::BakeAborted()) return false;   // a bake job enqueued before the last Pause / Close stops here (never true outside bake jobs)
+      Advance(); onStep(t_, y_);
+    }
     return true;
   }
 
