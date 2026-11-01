@@ -573,6 +573,15 @@ struct Renderer
     InitEma(); if (!h.avg.empty()) dlAvg = h.avg; if (!h.avgT.empty()) dlAvgT = h.avgT; if (!h.full && !h.dl.empty()) SQ.SetDelta(h.dl);
     t_ = h.time; hcur = MF.dt; Pump(); return true;
   }
+  // Starts from the state at the end of the engine phase (a base taken with `cap`, 1 ms after the trigger) and runs the reduced model with the noise sequence noiseSeed from there on: the noise is white,
+  // the state holds everything that the first millisecond left in the circuit, so the hit is another realisation of the same process that shares only its first millisecond with the base.
+  void BeginFromBase(const Handover& b, int noiseSeed)
+  {
+    SF.luOk = SQ.luOk = false; curSeed = noiseSeed; capSeed = noiseSeed; nz.Start(noiseSeed, 5e-6, 0.0); engine = false; full = true; S = &SF; swc = 0; hold = 0; dec.Restart(0.0); host.clear(); pushed = 0; idle = b.idle;
+    evt.assign(b.et.begin(), b.et.end()); evy.assign(b.ey.begin(), b.ey.end());
+    SF.z = b.z; SF.fS = b.fS; SF.pprev = b.pprev; SQ.z = SF.z; SQ.fS.assign(SF.fS.begin(), SF.fS.begin() + MQ.NS); SQ.pprev.assign(SF.pprev.begin(), SF.pprev.begin() + MQ.NP);
+    InitEma(); t_ = std::round(b.time / MF.dt) * MF.dt; hcur = MF.dt;
+  }
   void SetHostRate(double fs) { dec.Init(fs); }
   void Begin(int seed)
   {
@@ -592,7 +601,7 @@ struct Renderer
       SF.z.assign(m.z, m.z + MF.R); SF.fS.resize(MF.NS); for (int j = 0; j < MF.NS; ++j) SF.fS[j] = m.f0[MF.sell[j]]; SF.pprev.resize(MF.NP); for (int a = 0; a < MF.NP; ++a) SF.pprev[a] = m.p[MF.prow[a]];
       SQ.z = SF.z; SQ.fS.assign(SF.fS.begin(), SF.fS.begin() + MQ.NS); SQ.pprev.assign(SF.pprev.begin(), SF.pprev.begin() + MQ.NP);
       full = true; S = &SF; t_ = std::round(r.Time() / MF.dt) * MF.dt; hcur = MF.dt; engine = false;
-      if (cap) { cap->z = SF.z; cap->fS = SF.fS; cap->pprev = SF.pprev; cap->et = evt; cap->ey = evy; cap->time = r.Time(); }
+      if (cap) { cap->z = SF.z; cap->fS = SF.fS; cap->pprev = SF.pprev; cap->et = evt; cap->ey = evy; cap->time = r.Time(); cap->idle = idle; }
     }
     const double dt = MF.dt;
     while (t_ < 0.35 - 1e-12 && t_ < tEnd)
@@ -668,7 +677,7 @@ public:
       const HcPackage full = pkg.View("F/"), mini = pkg.View("Q/");
       MF_ = std::make_shared<Red>(); MQ_ = std::make_shared<Red>(); MF_->Load(full); MQ_->Load(mini);
       auto num = [&](const char* k, double d) { auto it = pkg.meta.find(k); return it == pkg.meta.end() ? d : std::atof(it->second.c_str()); };
-      quiet_ = BuildQuiet(*MF_, num("mb_ms", 3.0), num("ma_ms", 8.0), num("gapmin_ms", 3.0));
+      quiet_ = BuildQuiet(*MF_, HcEnv("MB") ? std::atof(HcEnv("MB")) : num("mb_ms", 3.0), HcEnv("MA") ? std::atof(HcEnv("MA")) : num("ma_ms", 8.0), num("gapmin_ms", 3.0));
       R_ = std::make_unique<Rend>(*MF_, *MQ_, quiet_, HcEnv("YTF") ? std::atof(HcEnv("YTF")) : kEngineYtf, HcEnv("DPT") ? std::atof(HcEnv("DPT")) : kEngineDpt); R_->pkgHash = pkg.hash;
       cache_.clear(); loaded_ = true; return true;
     }
@@ -697,6 +706,19 @@ public:
     if (!loaded_) return false;
     typename Rend::Handover& h = cache_[(int)seed]; if (!h.key.empty()) return true;
     R_->SetHostRate(48000.0); R_->cap2 = &h; R_->capT = kCapT; R_->Begin((int)seed); R_->Render(kCapT + 0.002); R_->cap2 = nullptr; return !h.key.empty();
+  }
+  // The state at the end of the engine phase (1 ms) of a seed: the part of a hit that costs most (noise run-up and engine, about 85 ms) and that several entries can share (PrepareFrom).
+  bool MakeBase(uint64_t seed, HcHandover& out)
+  {
+    if (!loaded_) return false;
+    out = HcHandover(); R_->SetHostRate(48000.0); R_->cap = &out; R_->cap2 = nullptr; R_->Begin((int)seed); R_->RenderCore(R_->handover + 1e-4); R_->cap = nullptr; return !out.z.empty();
+  }
+  // Builds the handover entry (state at 40 ms) of noiseSeed on the base: the reduced model with the noise sequence noiseSeed from 1 ms on (about 60 ms instead of 145 ms).
+  bool PrepareFrom(const HcHandover& base, uint64_t noiseSeed)
+  {
+    if (!loaded_) return false;
+    typename Rend::Handover& h = cache_[(int)noiseSeed]; if (!h.key.empty()) return true;
+    R_->SetHostRate(48000.0); R_->cap2 = &h; R_->capT = kCapT; R_->BeginFromBase(base, (int)noiseSeed); R_->Render(kCapT + 0.002); R_->cap2 = nullptr; return !h.key.empty();
   }
   bool Begin(uint64_t seed, double fsHz, double seconds, long long tailNoiseSeed = -1)
   {

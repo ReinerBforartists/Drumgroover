@@ -110,8 +110,11 @@ public:
   {
     Prepare(tu);
     tu_ = tu; noise_ = noise;
+#ifdef DGG_HC_ENV_KNOBS
+    if (const char* e = std::getenv("PREROLL")) tu_.preRoll = std::atof(e) * 1e-3;   // test harness only (ms)
+#endif
     knotN_ = (Mdl::kNT == 2 && noise) ? std::max(1LL, std::llround(noise->step() / kH0)) * std::max(1, tu.knotSpan) : 1LL;
-    preN_ = Mdl::kNT == 2 ? static_cast<long long>(std::llround(tu.preRoll / kH0)) : 0LL;
+    preN_ = Mdl::kNT == 2 ? static_cast<long long>(std::llround(tu_.preRoll / kH0)) : 0LL;
     nEnd_ = static_cast<long long>(seconds / kH0) + preN_;
     for (int k = 0; k < Mdl::kNF; ++k) gFprev_[k] = 0.0;
     gHprev_ = 0.0; gEnv_ = 0.0; n_ = 0; j_ = 0; t_ = 0.0; y_ = 0.0; for (long& c : limCount) c = 0;

@@ -76,6 +76,8 @@ struct StreamBase
   virtual bool Load(const hch::HcPackage& pkg) = 0;
   virtual bool LoadFrom(StreamBase& master, bool warmEngine) = 0;   // shares the tables of a master stream of the same anchor
   virtual bool Prepare(uint64_t seed) = 0;
+  virtual bool MakeBase(uint64_t seed, hch::HcHandover& out) = 0;
+  virtual bool PrepareFrom(const hch::HcHandover& base, uint64_t noiseSeed) = 0;
   virtual bool Export(uint64_t seed, hch::HcHandover& out) = 0;
   virtual void Import(uint64_t seed, const hch::HcHandover& h) = 0;
   virtual void Erase(uint64_t seed) = 0;
@@ -88,6 +90,8 @@ struct StreamImpl : StreamBase
   bool Load(const hch::HcPackage& pkg) override { return hs.Load(pkg); }
   bool LoadFrom(StreamBase& master, bool warmEngine) override { return hs.LoadFrom(static_cast<StreamImpl<Mdl>&>(master).hs, warmEngine); }
   bool Prepare(uint64_t seed) override { return hs.Prepare(seed); }
+  bool MakeBase(uint64_t seed, hch::HcHandover& out) override { return hs.MakeBase(seed, out); }
+  bool PrepareFrom(const hch::HcHandover& base, uint64_t noiseSeed) override { return hs.PrepareFrom(base, noiseSeed); }
   bool Export(uint64_t seed, hch::HcHandover& out) override { return hs.ExportEntry(seed, out); }
   void Import(uint64_t seed, const hch::HcHandover& h) override { hs.ImportEntry(seed, h); }
   void Erase(uint64_t seed) override { hs.EraseEntry(seed); }
@@ -170,6 +174,24 @@ private:
 };
 #endif
 
+// The states at the end of the engine phase (1 ms) that entries are built on: kBases per anchor, the same noise seed for every anchor of a base (an accent between two anchors is a blend of two runs
+// that need the same noise). Built when first needed, read-only afterwards.
+constexpr int kMaxBases = 16;
+class Bases
+{
+public:
+  std::shared_ptr<const hch::HcHandover> Get(StreamSet& set, int anchor, int k)
+  {
+    Slot& s = slot_[anchor][k]; std::lock_guard<std::mutex> lk(s.mu);
+    if (!s.b) { StreamBase* st = set.Get(anchor); std::shared_ptr<hch::HcHandover> n(new hch::HcHandover()); if (!st || !st->MakeBase(kSeed0 + static_cast<uint64_t>(k), *n)) return nullptr; s.b = n; }
+    return s.b;
+  }
+  static constexpr uint64_t kSeed0 = 9000000;
+private:
+  struct Slot { std::mutex mu; std::shared_ptr<const hch::HcHandover> b; };
+  Slot slot_[kTr909AnchorCount][kMaxBases];
+};
+
 constexpr double kHitSeconds = 0.35;      // length of a hit (as the baked sets)
 constexpr double kHeadSeconds = 0.0385;   // the part of a hit that a prepared entry carries as host samples (the handover state is at 40 ms)
 constexpr int kMaxRate = 192000;
@@ -178,7 +200,7 @@ constexpr int kSlots = 24;
 // a prepared hit: handover state and head samples of one or two anchor runs (accent between two anchors = blend of two runs with the same seed)
 struct Entry
 {
-  int level = 0, code = 0, fs = 0, n = 0, anchor[2] = {0, 0}; double w[2] = {1.0, 0.0}; uint64_t seed = 0; bool shared = false;   // shared: the fallback entry of a level, never freed, played again
+  int level = 0, code = 0, fs = 0, epoch = 0, n = 0, anchor[2] = {0, 0}; double w[2] = {1.0, 0.0}; uint64_t seed = 0; bool shared = false;   // shared: the fallback entry of a level, never freed, played again
   hch::HcHandover ho[2]; std::vector<float> head[2];
 };
 
@@ -206,6 +228,9 @@ public:
   // (each hit with fresh noise costs about 0.2-0.4 s of preparation: the number of preparers decides how many hits per second get a new seed and how much CPU the engine takes; the rest repeat used entries)
   static std::atomic<int>& PrepOverride() { static std::atomic<int> n{0}; return n; }   // tests: number of preparer threads of the next engine
   static int PrepThreads() { const int o = PrepOverride().load(); return o > 0 ? o : 2; }
+  // Entries are built on one of this many bases per anchor (the first millisecond is shared by the entries of a base, everything after it has its own noise); 0: every entry runs its own engine phase.
+  static std::atomic<int>& BasesOverride() { static std::atomic<int> n{-1}; return n; }
+  static int BaseCount() { const int o = BasesOverride().load(); return o < 0 ? 16 : std::min(o, hclive::kMaxBases); }   // 16: with 4 the level of the first millisecond has only 4 values and the statistics of the first milliseconds are not equivalent (tools handoff R310)
   // render threads: half of the cores, 2..6 (each tail needs about 1/6 of a core for its 0.35 s; a hit of two anchors has two)
   static int RenderThreads() { const int hw = static_cast<int>(std::thread::hardware_concurrency()); return std::clamp(hw / 2, 2, 6); }
   int RenderThreadCount() const { return nRender_; }
@@ -288,7 +313,29 @@ public:
     return a;
   }
 
+  // Drops the prepared entries (tests, a change of the settings above); non-real-time.
+  void Flush()
+  {
+    std::lock_guard<std::mutex> lk(cfgMu_); ready_.store(false);
+    for (int l = 0; l < kLevels; ++l) { hclive::Entry* e; while (rings_[l]->Pop(e)) delete e; while (recycle_[l]->Pop(e)) delete e; fill_[l].store(0); hclive::Entry* s = shared_[l].exchange(nullptr); retired_.push_back(std::unique_ptr<hclive::Entry>(s)); }
+    epoch_.fetch_add(1); ready_.store(true); Wake();
+  }
   bool Ready() const { return ready_.load(std::memory_order_acquire); }
+  // CPU seconds used so far by the preparer threads / the render threads (diagnosis, Windows only; 0 elsewhere)
+  double CpuSeconds(bool render) const
+  {
+#ifdef _WIN32
+    double s = 0; const int np = PrepThreads();
+    for (size_t i = 0; i < threads_.size(); ++i)
+    {
+      const bool isRender = static_cast<int>(i) >= np; if (isRender != render) continue;
+      FILETIME c, e, k, u; if (GetThreadTimes(const_cast<std::thread&>(threads_[i]).native_handle(), &c, &e, &k, &u)) s += ((static_cast<unsigned long long>(k.dwHighDateTime) << 32 | k.dwLowDateTime) + (static_cast<unsigned long long>(u.dwHighDateTime) << 32 | u.dwLowDateTime)) * 1e-7;
+    }
+    return s;
+#else
+    (void)render; return 0.0;
+#endif
+  }
   // A hit continues after its first 40 ms with a fresh noise sequence of its own (default); false: with the sequence of its entry (the hit is then the same as the one the bake path renders for that seed).
   void SetFreshTail(bool on) { freshTail_.store(on); }
   // number of prepared entries of a level, and counters (diagnosis)
@@ -339,7 +386,7 @@ private:
       hclive::Entry* e = BuildEntry(set, best);
       inflight_[best].fetch_sub(1);
       if (!e) { std::this_thread::sleep_for(std::chrono::milliseconds(200)); continue; }
-      if (e->fs != fs_.load()) { delete e; continue; }
+      if (e->fs != fs_.load() || e->epoch != epoch_.load()) { delete e; continue; }   // built for another rate or before a flush
       prepares_.fetch_add(1);
       if (!shared_[best].load()) { hclive::Entry* c = new hclive::Entry(*e); c->shared = true; hclive::Entry* none = nullptr; if (!shared_[best].compare_exchange_strong(none, c)) delete c; }
       if (rings_[best]->Push(e)) fill_[best].fetch_add(1); else delete e;
@@ -349,14 +396,20 @@ private:
   {
     const int fs = fs_.load(); const int code = levelCode_[level];
     Tr909AccentRun runs[2]; const int n = Tr909AccentRuns(Tr909Voice::Hc, code, runs); if (n == 0) return nullptr;
-    std::unique_ptr<hclive::Entry> e(new hclive::Entry()); e->level = level; e->code = code; e->fs = fs; e->n = n; e->seed = nextSeed_.fetch_add(1);
+    std::unique_ptr<hclive::Entry> e(new hclive::Entry()); e->level = level; e->code = code; e->fs = fs; e->epoch = epoch_.load(); e->n = n; e->seed = nextSeed_.fetch_add(1);
     const long headLen = static_cast<long>(hclive::kHeadSeconds * fs);
+    const int nBases = BaseCount(); const int kb = nBases > 0 ? static_cast<int>(baseCursor_.fetch_add(1) % static_cast<unsigned>(nBases)) : 0;
     for (int i = 0; i < n; ++i)
     {
       int a = -1; for (int k = 0; k < kTr909AnchorCount; ++k) if (kTr909Anchors[k] == runs[i].anchorCode) a = k;
       hclive::StreamBase* s = set.Get(a); if (!s) return nullptr;
       e->anchor[i] = a; e->w[i] = runs[i].weight;
-      if (!s->Prepare(e->seed) || !s->Export(e->seed, e->ho[i])) return nullptr;
+      if (nBases > 0)
+      {
+        std::shared_ptr<const hch::HcHandover> base = bases_.Get(set, a, kb); if (!base) return nullptr;
+        if (!s->PrepareFrom(*base, e->seed) || !s->Export(e->seed, e->ho[i])) return nullptr;
+      }
+      else if (!s->Prepare(e->seed) || !s->Export(e->seed, e->ho[i])) return nullptr;
       if (!s->Begin(e->seed, static_cast<double>(fs), hclive::kHitSeconds)) { s->Erase(e->seed); return nullptr; }
       e->head[i].assign(static_cast<size_t>(headLen), 0.0f);
       long got = 0; while (got < headLen) { const int w = s->Pull(e->head[i].data() + got, static_cast<int>(std::min<long>(headLen - got, 1024))); if (w <= 0) break; got += w; }
@@ -410,7 +463,7 @@ private:
   }
   void FreeGraveyard() { hclive::Entry* e; while (graveyard_.Pop(e)) delete e; }
 
-  hclive::Masters masters_;
+  hclive::Masters masters_; hclive::Bases bases_; std::atomic<unsigned> baseCursor_{0};
   int nRender_ = 0;
   std::atomic<bool> running_{false}, ready_{false};
   std::atomic<int> fs_{0}, epoch_{0};
