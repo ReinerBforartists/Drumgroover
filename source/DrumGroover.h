@@ -367,6 +367,7 @@ private:
   void TriggerInstrument(const dgg::InstrumentDef& inst, double velocity01, double gain = 1.0, bool accent = false);
   void Setup909Pools(double sampleRate);                 // voice identity and sample rate of the TR-909 pools
   void Trigger909(const dgg::InstrumentDef& inst, double velocity01, double gain);   // TR-909 mode: the row plays its 909 voice
+  void Prepare909Rim();                                  // TR-909 mode: builds the live Rim Shot hosts (worker thread, about 1.4 s), once per sample rate
 
   // One voice pool per Hi‑Hat instance (dsp/808InstrumentTable.h, family "hihat": Closed Edge, Tight Edge, Open Edge 0/4, Closed Tip,
   // Tight Tip); pool index = poolSlot = paramIndex. Choke: a hit of the Closed circuit chokes the pools of the Open circuit.
@@ -379,6 +380,7 @@ private:
   // Rack Tom 2 (MT) 47/80/79, Rack Tom 3 (LT) 45/78/77, Floor Tom 1 (MC, conga position) 43/75/74, Floor Tom 2 (LC) 41/73/72.
   // The HT conga is the Custom-tab conga (no pool yet).
   std::array<dgg::VoicePool<dgg::TR808TomVoice, 6>, dgg::CountInstruments("tom")> mTomPools;
+  std::array<dgg::VoicePool<dgg::Tr909RimLiveVoice, 1>, dgg::CountInstruments("snare", dgg::EngineKind::RmRim)> m909RimPools;   // TR-909 mode: the Rim Shot rows (pool index = poolSlot), live model, one voice per row (a retrigger continues the circuit)
   std::array<dgg::VoicePool<dgg::Tr909CachedVoice, 4>, dgg::kNumInstruments> m909Pools;   // TR-909 mode: one pool per table row (only the rows of Tr909VoiceForInstrument are used), played into the row's mixer channel
   // Calls f(instrumentRow, pool) for every tom instance, in table order (pool index = poolSlot = paramIndex).
   template <typename F> void ForEachTomPool(F&& f);

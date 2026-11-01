@@ -1,11 +1,12 @@
 // TR-909 mode: which instrument-table rows play a 909 fast voice.
 //
 // In the 909 engine mode the kick, the snare (SD circuit) and the rack and floor toms (not the congas) play the 909 voices of the same name;
-// every other kit row (hi-hats, cymbals, rim shot) keeps playing the 808 voice. The 909 voice goes to the mixer channel of the row.
+// every other kit row (hi-hats, cymbals) keeps playing the 808 voice. The rim shot rows play the live 909 Rim Shot (Tr909RimLiveForInstrument). The 909 voice goes to the mixer channel of the row.
 // The Hand Clap 909 is not a table row of the 808 table: it is defined in 909CustomInstruments.h.
 #pragma once
 #include "808InstrumentTable.h"
 #include "909Playback.h"
+#include "909RimLive.h"
 
 namespace dgg {
 
@@ -21,5 +22,8 @@ inline bool Tr909VoiceForInstrument(const InstrumentDef& d, Tr909Voice& v)
     default: return false;
   }
 }
+
+// The two Rim Shot rows (Snare Rimshot, Snare Rim Only) play the one 909 Rim Shot circuit, computed live (909RimLive.h; the 909 has no second rim circuit).
+inline bool Tr909RimLiveForInstrument(const InstrumentDef& d) { return d.kind == EngineKind::RmRim; }
 
 }  // namespace dgg

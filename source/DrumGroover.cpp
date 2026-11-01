@@ -797,6 +797,11 @@ void SetTr909CustomParam(dgg::Tr909CachedVoice& v, const std::string& p, double 
   if (p == "levelKnob") v.levelKnob = val;
   else if (p == "pitchRatio") v.pitchRatio = val;
 }
+void Set909RimParam(dgg::Tr909RimLiveVoice& v, const std::string& p, double val)
+{
+  if (p == "levelKnob") v.levelKnob = val;
+  else if (p == "pitchRatio") v.pitchRatio = val;
+}
 nlohmann::json TomVoiceParamsToJson(const dgg::TR808TomVoice& v)
 {
   return { {"tuningKnob", v.tuningKnob}, {"levelKnob", v.levelKnob}, {"pitchRatio", v.pitchRatio} };
@@ -1086,6 +1091,10 @@ DrumGroover::DrumGroover(const InstanceInfo& info)
     for (auto& v : pool.Voices())
       for (int i = 0; i < d.numDefaults; ++i) SetParamOn(v, d.defaults[i].key, d.defaults[i].value);
   });
+  for (int i = 0; i < dgg::kNumInstruments; ++i)   // the live 909 Rim Shot of a row starts with the row's defaults (Level and Pitch are the knobs it shares with the 808 rim shot)
+    if (dgg::Tr909RimLiveForInstrument(dgg::kInstruments[i]))
+      for (auto& v : m909RimPools[dgg::kInstruments[i].poolSlot].Voices())
+        for (int j = 0; j < dgg::kInstruments[i].numDefaults; ++j) Set909RimParam(v, dgg::kInstruments[i].defaults[j].key, dgg::kInstruments[i].defaults[j].value);
 
   // Which circuit each tom instance plays (sheet, Tom/Conga switch, articulation) and its start values: the instrument table.
   ForEachTomPool([](const dgg::InstrumentDef& d, auto& pool) {
@@ -2577,6 +2586,7 @@ void DrumGroover::HandleSetEngineMode(const nlohmann::json& payload)
   const std::string engine = payload.value("engine", "internal");
   const int mode = EngineModeFromName(engine);
   mEngineMode.store(mode, std::memory_order_relaxed);
+  Prepare909Rim();
 
   DGG_Log("HandleSetEngineMode: engine='" + engine + "' (global, whole kit)");
 
@@ -2921,6 +2931,7 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
     ForEachSnarePool([&](const dgg::InstrumentDef& d, auto& pool) {
       if (d.paramIndex != target) return;
       for (auto& v : pool.Voices()) SetParamOn(v, param, value);
+      if (dgg::Tr909RimLiveForInstrument(d)) for (auto& v : m909RimPools[d.poolSlot].Voices()) Set909RimParam(v, param, value);   // the 909 Rim Shot of the row follows the card
     });
   }
   else if (family == "hihat")
@@ -4135,6 +4146,7 @@ void DrumGroover::TriggerGmNoteVoices(int note, double velocity01, bool accent)
   {
     dgg::Tr909Voice voice909;
     if (engineMode == static_cast<int>(EngineMode::Tr909) && dgg::Tr909VoiceForInstrument(*inst, voice909)) Trigger909(*inst, std::min(1.0, velocity01), gain);
+    else if (engineMode == static_cast<int>(EngineMode::Tr909) && dgg::Tr909RimLiveForInstrument(*inst)) { m909RimPools[inst->poolSlot].SetNextGain(gain); m909RimPools[inst->poolSlot].Trigger(std::min(1.0, velocity01)); }
     else TriggerInstrument(*inst, std::min(1.0, velocity01), gain, accent);
   }
 }
@@ -4147,12 +4159,20 @@ void DrumGroover::Setup909Pools(double sampleRate)
     if (dgg::Tr909VoiceForInstrument(dgg::kInstruments[i], v)) for (auto& voice : m909Pools[i].Voices()) voice.SetVoice(v);
     m909Pools[i].SetSampleRate(sampleRate);
   }
+  for (auto& p : m909RimPools) p.SetSampleRate(sampleRate);
   for (int k = 0; k < dgg::kNumCustomInstruments; ++k)
   {
     if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909)
       for (auto& voice : m909CustomPools[k].Voices()) voice.SetVoice(static_cast<dgg::Tr909Voice>(dgg::CustomInstrument(k).arg));
     m909CustomPools[k].SetSampleRate(sampleRate);
   }
+}
+
+// Builds the live Rim Shot hosts (worker thread, about 1.4 s and 14 MB each) when the 909 engine is selected; a hit before they are ready is silent. Called on every change of the engine or the sample rate.
+void DrumGroover::Prepare909Rim()
+{
+  if (mEngineMode.load(std::memory_order_relaxed) != static_cast<int>(EngineMode::Tr909)) return;
+  for (auto& p : m909RimPools) for (auto& v : p.Voices()) v.Prepare();
 }
 
 // The accent of a 909 hit comes from the velocity alone (the MIDI path of the Nava firmware: velocity = DAC code), spread over the validated codes of the voice.
@@ -4197,6 +4217,7 @@ void DrumGroover::OnReset()
   for (auto& p : mRidePools) p.SetSampleRate(sr);
   for (auto& pool : mTomPools) pool.SetSampleRate(sr);
   Setup909Pools(sr);
+  Prepare909Rim();
   for (auto& pool : mCustomPools) pool.SetSampleRate(sr);
   for (auto& pool : mCustomRmPools) pool.SetSampleRate(sr);
   for (auto& pool : mCustomHcPools) pool.SetSampleRate(sr);
@@ -4318,6 +4339,7 @@ int DrumGroover::UnserializeState(const IByteChunk& chunk, int startPos)
       const std::string engineStr = engine.value("engineMode", "internal");
       const int mode = EngineModeFromName(engineStr);
       mEngineMode.store(mode, std::memory_order_relaxed);
+      Prepare909Rim();
     }
     if (engine.contains("muted")) HandleSetMuted({ {"muted", engine.value("muted", false)} });
 
@@ -4504,6 +4526,8 @@ void DrumGroover::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 
         for (int i = 0; i < dgg::kNumInstruments; ++i)   // TR-909 voices play into the mixer channel of their row
           m909Pools[i].Process(chanBuf[static_cast<int>(dgg::kInstruments[i].channel)].data() + pos, segLen);
+        for (int i = 0; i < dgg::kNumInstruments; ++i)   // the live 909 Rim Shot of a row renders on every block once its host is built (its clock is the output clock)
+          if (dgg::Tr909RimLiveForInstrument(dgg::kInstruments[i])) m909RimPools[dgg::kInstruments[i].poolSlot].Process(chanBuf[static_cast<int>(dgg::kInstruments[i].channel)].data() + pos, segLen);
         for (int k = 0; k < dgg::kNumCustomInstruments; ++k)   // the 909 custom instruments play into their channel in every engine mode
           m909CustomPools[k].Process(chanBuf[static_cast<int>(dgg::CustomInstrument(k).channel)].data() + pos, segLen);
 
