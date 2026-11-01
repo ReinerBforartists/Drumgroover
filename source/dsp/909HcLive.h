@@ -20,6 +20,15 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace dgg {
 
@@ -136,6 +145,31 @@ struct StreamSet
   Masters& masters; bool warmEngine; std::unique_ptr<StreamBase> s[kTr909AnchorCount]; bool failed[kTr909AnchorCount] = {false, false, false, false, false};
 };
 
+// A counting semaphore that does not lose a post (a notify without a waiter is lost): the audio thread posts, a worker waits. Windows: kernel semaphore (a post is one system call, no lock);
+// elsewhere a mutex / condition variable with a counter (the post then takes a lock for a moment).
+#ifdef _WIN32
+class Semaphore
+{
+public:
+  Semaphore() : h_(CreateSemaphoreW(nullptr, 0, 1 << 20, nullptr)) {}
+  ~Semaphore() { if (h_) CloseHandle(h_); }
+  Semaphore(const Semaphore&) = delete; Semaphore& operator=(const Semaphore&) = delete;
+  void Post(int n = 1) { ReleaseSemaphore(h_, n, nullptr); }
+  bool Wait(int ms) { return WaitForSingleObject(h_, static_cast<DWORD>(ms)) == WAIT_OBJECT_0; }
+private:
+  HANDLE h_;
+};
+#else
+class Semaphore
+{
+public:
+  void Post(int n = 1) { { std::lock_guard<std::mutex> lk(m_); c_ += n; } cv_.notify_all(); }
+  bool Wait(int ms) { std::unique_lock<std::mutex> lk(m_); if (!cv_.wait_for(lk, std::chrono::milliseconds(ms), [&] { return c_ > 0; })) return false; --c_; return true; }
+private:
+  std::mutex m_; std::condition_variable cv_; int c_ = 0;
+};
+#endif
+
 constexpr double kHitSeconds = 0.35;      // length of a hit (as the baked sets)
 constexpr double kHeadSeconds = 0.0385;   // the part of a hit that a prepared entry carries as host samples (the handover state is at 40 ms)
 constexpr int kMaxRate = 192000;
@@ -167,7 +201,11 @@ struct Hit
 class Tr909HcLiveEngine
 {
 public:
-  static constexpr int kLevels = kTr909VelocityLevels, kPrepThreads = 2, kRing = 8;
+  static constexpr int kLevels = kTr909VelocityLevels, kRing = 8, kRecycle = 8;
+  // preparer threads: two by default, at low priority (the host's audio threads come first); render threads have the deadline of the hit and run at normal priority
+  // (each hit with fresh noise costs about 0.2-0.4 s of preparation: the number of preparers decides how many hits per second get a new seed and how much CPU the engine takes; the rest repeat used entries)
+  static std::atomic<int>& PrepOverride() { static std::atomic<int> n{0}; return n; }   // tests: number of preparer threads of the next engine
+  static int PrepThreads() { const int o = PrepOverride().load(); return o > 0 ? o : 2; }
   // render threads: half of the cores, 2..6 (each tail needs about 1/6 of a core for its 0.35 s; a hit of two anchors has two)
   static int RenderThreads() { const int hw = static_cast<int>(std::thread::hardware_concurrency()); return std::clamp(hw / 2, 2, 6); }
   int RenderThreadCount() const { return nRender_; }
@@ -182,9 +220,9 @@ public:
   }
   ~Tr909HcLiveEngine()
   {
-    running_.store(false); { std::lock_guard<std::mutex> lk(wakeMu_); } wake_.notify_all();
+    running_.store(false); jobSem_.Post(64); prepSem_.Post(64);
     for (std::thread& t : threads_) if (t.joinable()) t.join();
-    for (int l = 0; l < kLevels; ++l) { hclive::Entry* e; while (rings_[l]->Pop(e)) delete e; delete shared_[l].load(); }
+    for (int l = 0; l < kLevels; ++l) { hclive::Entry* e; while (rings_[l]->Pop(e)) delete e; while (recycle_[l]->Pop(e)) delete e; delete shared_[l].load(); }
     hclive::Job* j; while (jobs_.Pop(j)) {}
   }
   Tr909HcLiveEngine(const Tr909HcLiveEngine&) = delete; Tr909HcLiveEngine& operator=(const Tr909HcLiveEngine&) = delete;
@@ -197,13 +235,13 @@ public:
     if (fs != fs_.load())
     {
       ready_.store(false); fs_.store(fs); epoch_.fetch_add(1);
-      for (int l = 0; l < kLevels; ++l) { hclive::Entry* e; while (rings_[l]->Pop(e)) delete e; fill_[l].store(0); hclive::Entry* s = shared_[l].exchange(nullptr); retired_.push_back(std::unique_ptr<hclive::Entry>(s)); }
+      for (int l = 0; l < kLevels; ++l) { hclive::Entry* e; while (rings_[l]->Pop(e)) delete e; while (recycle_[l]->Pop(e)) delete e; fill_[l].store(0); hclive::Entry* s = shared_[l].exchange(nullptr); retired_.push_back(std::unique_ptr<hclive::Entry>(s)); }
       ready_.store(true);
     }
     if (threads_.empty())
     {
       running_.store(true);
-      for (int i = 0; i < kPrepThreads; ++i) threads_.emplace_back([this, i] { PrepLoop(i); });
+      for (int i = 0; i < PrepThreads(); ++i) threads_.emplace_back([this, i] { LowPriority(); PrepLoop(i); });
       nRender_ = RenderThreads();
       for (int i = 0; i < nRender_; ++i) threads_.emplace_back([this] { RenderLoop(); });
     }
@@ -218,7 +256,8 @@ public:
     if (used_[level].load(std::memory_order_relaxed) < 8) used_[level].fetch_add(1, std::memory_order_relaxed);
     hclive::Entry* e = nullptr; bool own = true;
     if (rings_[level]->Pop(e)) fill_[level].fetch_sub(1, std::memory_order_relaxed);
-    else { e = shared_[level].load(std::memory_order_acquire); own = false; ++repeats_; }
+    else if (recycle_[level]->Pop(e)) ++repeats_;   // a used entry of this level plays again (its noise seed repeats), after the others of the recycle ring
+    else { e = shared_[level].load(std::memory_order_acquire); own = false; ++repeats_; ++sharedRepeats_; }
     Wake();   // the store of this level wants a new entry
     if (!e || e->fs != fs_.load(std::memory_order_relaxed)) { if (own && e) graveyard_.Push(e); ++misses_; return nullptr; }
     hclive::Hit* h = nullptr;
@@ -236,8 +275,7 @@ public:
       h->produced[r].store(h->head, std::memory_order_release);
     }
     h->pending.store(e->n, std::memory_order_release);
-    for (int r = 0; r < e->n; ++r) { h->job[r].hit = h; h->job[r].run = r; jobs_.Push(&h->job[r]); }
-    Wake();
+    for (int r = 0; r < e->n; ++r) { h->job[r].hit = h; h->job[r].run = r; jobs_.Push(&h->job[r]); jobSem_.Post(1); }
     return h;
   }
   // Audio thread: the voice is done with the slot.
@@ -254,6 +292,7 @@ public:
   int Prepared(int level) const { return fill_[level].load(); }
   unsigned long Misses() const { return misses_.load(); }
   unsigned long Repeats() const { return repeats_.load(); }
+  unsigned long SharedRepeats() const { return sharedRepeats_.load(); }   // repeats that had to use the first entry of the level (recycle ring empty)
   unsigned long Underruns() const { return underruns_.load(); }
   void CountUnderrun() { underruns_.fetch_add(1, std::memory_order_relaxed); }
   unsigned long Prepares() const { return prepares_.load(); }
@@ -263,13 +302,19 @@ private:
   {
     for (int l = 0; l < kLevels; ++l)
     {
-      rings_[l].reset(new hclive::MpmcQueue<hclive::Entry*>(kRing)); fill_[l].store(0); used_[l].store(0); shared_[l].store(nullptr);
+      rings_[l].reset(new hclive::MpmcQueue<hclive::Entry*>(kRing)); recycle_[l].reset(new hclive::MpmcQueue<hclive::Entry*>(kRecycle)); fill_[l].store(0); used_[l].store(0); shared_[l].store(nullptr);
       levelCode_[l] = Tr909CodeForVelocity(Tr909Voice::Hc, static_cast<double>(l) / (kLevels - 1));
     }
     slots_.reset(new hclive::Hit[hclive::kSlots]);
     for (int i = 0; i < hclive::kSlots; ++i) for (int r = 0; r < 2; ++r) slots_[i].buf[r].assign(static_cast<size_t>(hclive::kHitSeconds * hclive::kMaxRate) + 64, 0.0f);
   }
-  void Wake() { wake_.notify_all(); }
+  void Wake() { prepSem_.Post(1); }   // a level lost an entry (or the rate changed): a preparer looks at the stores
+  static void LowPriority()
+  {
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+  }
 
   // Preparer: keeps every level stocked (1 entry for a level that was never played, up to 4 for a level in use); a level is served in the order of its shortage.
   void PrepLoop(int idx)
@@ -286,7 +331,7 @@ private:
         const int score = have * 16 - std::min(used_[l].load(), 8);
         if (score < bestScore) { bestScore = score; best = l; }
       }
-      if (best < 0) { std::unique_lock<std::mutex> lk(wakeMu_); wake_.wait_for(lk, std::chrono::milliseconds(50)); continue; }
+      if (best < 0) { prepSem_.Wait(1000); continue; }
       inflight_[best].fetch_add(1);
       hclive::Entry* e = BuildEntry(set, best);
       inflight_[best].fetch_sub(1);
@@ -326,7 +371,7 @@ private:
     {
       FreeGraveyard();
       hclive::Job* j = nullptr;
-      if (!jobs_.Pop(j)) { std::unique_lock<std::mutex> lk(wakeMu_); wake_.wait_for(lk, std::chrono::milliseconds(5)); continue; }
+      if (!jobs_.Pop(j)) { jobSem_.Wait(1000); continue; }
       RenderJob(set, *j);
     }
   }
@@ -354,7 +399,11 @@ private:
     for (int i = end; i < len; ++i) h.buf[r][static_cast<size_t>(i)] = 0.0f;   // a short or failed run ends in silence
     { int cur = h.len.load(); while (end < cur && !h.len.compare_exchange_weak(cur, end)) {} }   // the hit ends where its stream ends
     h.produced[r].store(end, std::memory_order_release);
-    if (h.pending.fetch_sub(1, std::memory_order_acq_rel) == 1 && !shared) delete ent;   // the last run of the hit frees its entry (the slot may be reused from here on, so nothing of it is read again)
+    const int entLevel = e.level; const int entFs = e.fs;
+    if (h.pending.fetch_sub(1, std::memory_order_acq_rel) == 1 && !shared)   // the last run of the hit gives its entry to the recycle ring (or frees it); the slot may be reused from here on, so nothing of it is read again
+    {
+      if (entFs != fs_.load() || !recycle_[entLevel]->Push(ent)) delete ent;
+    }
   }
   void FreeGraveyard() { hclive::Entry* e; while (graveyard_.Pop(e)) delete e; }
 
@@ -362,9 +411,9 @@ private:
   int nRender_ = 0;
   std::atomic<bool> running_{false}, ready_{false};
   std::atomic<int> fs_{0}, epoch_{0};
-  std::mutex cfgMu_, wakeMu_; std::condition_variable wake_;
+  std::mutex cfgMu_; hclive::Semaphore jobSem_, prepSem_;
   std::vector<std::thread> threads_;
-  std::unique_ptr<hclive::MpmcQueue<hclive::Entry*>> rings_[kLevels];
+  std::unique_ptr<hclive::MpmcQueue<hclive::Entry*>> rings_[kLevels], recycle_[kLevels];
   std::atomic<int> fill_[kLevels], inflight_[kLevels], used_[kLevels];
   std::atomic<hclive::Entry*> shared_[kLevels];
   std::vector<std::unique_ptr<hclive::Entry>> retired_;
@@ -373,7 +422,7 @@ private:
   hclive::MpmcQueue<hclive::Job*> jobs_;
   hclive::MpmcQueue<hclive::Entry*> graveyard_;
   std::atomic<uint64_t> nextSeed_{static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count() % 1000000) + 100000};
-  std::atomic<unsigned long> misses_{0}, repeats_{0}, underruns_{0}, prepares_{0};
+  std::atomic<unsigned long> misses_{0}, repeats_{0}, sharedRepeats_{0}, underruns_{0}, prepares_{0};
 };
 
 // The voice of the Hand Clap 909: the live engine when a prepared entry is available, the baked set of the cache otherwise.
@@ -381,8 +430,9 @@ class Tr909HcVoice : public Tr909CachedVoice
 {
 public:
   explicit Tr909HcVoice(Tr909Voice v = Tr909Voice::Hc) : Tr909CachedVoice(v) {}
-  void SetEngine(Tr909HcLiveEngine* e) { engine_.store(e, std::memory_order_release); }
-  ~Tr909HcVoice() override = default;
+  // Another engine (or none): the slot of a hit that is still playing goes back to the engine it came from (call while that engine exists).
+  void SetEngine(Tr909HcLiveEngine* e) { Tr909HcLiveEngine* old = engine_.load(std::memory_order_acquire); if (e != old && mHit) { if (old) Tr909HcLiveEngine::Release(mHit); mHit = nullptr; } engine_.store(e, std::memory_order_release); }
+  ~Tr909HcVoice() override { if (mHit && engine_.load(std::memory_order_acquire)) Tr909HcLiveEngine::Release(mHit); mHit = nullptr; }
 
   void Trigger(double velocity01) override
   {
