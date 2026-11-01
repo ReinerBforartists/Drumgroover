@@ -79,7 +79,7 @@ struct StreamBase
   virtual bool Export(uint64_t seed, hch::HcHandover& out) = 0;
   virtual void Import(uint64_t seed, const hch::HcHandover& h) = 0;
   virtual void Erase(uint64_t seed) = 0;
-  virtual bool Begin(uint64_t seed, double fs, double seconds) = 0;
+  virtual bool Begin(uint64_t seed, double fs, double seconds, long long tailNoiseSeed = -1) = 0;
   virtual int Pull(float* out, int n) = 0;
 };
 template <class Mdl>
@@ -91,7 +91,7 @@ struct StreamImpl : StreamBase
   bool Export(uint64_t seed, hch::HcHandover& out) override { return hs.ExportEntry(seed, out); }
   void Import(uint64_t seed, const hch::HcHandover& h) override { hs.ImportEntry(seed, h); }
   void Erase(uint64_t seed) override { hs.EraseEntry(seed); }
-  bool Begin(uint64_t seed, double fs, double seconds) override { return hs.Begin(seed, fs, seconds); }
+  bool Begin(uint64_t seed, double fs, double seconds, long long tailNoiseSeed = -1) override { return hs.Begin(seed, fs, seconds, tailNoiseSeed); }
   int Pull(float* out, int n) override { return hs.Pull(out, n); }
   hch::HitStream<Mdl> hs;
 };
@@ -192,7 +192,7 @@ struct Hit
   std::vector<float> buf[2];
   std::atomic<int> len{0};        // samples of the hit; the render lowers it to the real end (the decimator ends a few samples before seconds x fs)
   int n = 0, head = 0, fs = 0; double w[2] = {1.0, 0.0};
-  Entry* entry = nullptr; Job job[2]; uint64_t seed = 0; int anchor[2] = {0, 0};   // seed and anchors of the hit (diagnosis)
+  Entry* entry = nullptr; Job job[2]; uint64_t seed = 0; long long tailSeed = -1; int anchor[2] = {0, 0};   // seed and anchors of the hit (diagnosis); tailSeed >= 0: the noise after 40 ms is another sequence than the one of the entry
   Hit() { produced[0].store(0); produced[1].store(0); }
 };
 
@@ -268,6 +268,7 @@ public:
     }
     if (!h) { if (own) graveyard_.Push(e); ++misses_; return nullptr; }   // an entry that is not used is freed by a worker
     h->n = e->n; h->fs = e->fs; h->len.store(std::min(static_cast<int>(hclive::kHitSeconds * e->fs), static_cast<int>(h->buf[0].size())), std::memory_order_release); h->head = static_cast<int>(e->head[0].size());
+    h->tailSeed = freshTail_.load(std::memory_order_relaxed) ? static_cast<long long>(tailCounter_.fetch_add(1, std::memory_order_relaxed) & 0x7FFFFFFFFFFFLL) : -1;
     h->entry = e; h->w[0] = e->w[0]; h->w[1] = e->w[1]; h->seed = e->seed; h->anchor[0] = e->anchor[0]; h->anchor[1] = e->anchor[1];
     for (int r = 0; r < e->n; ++r)
     {
@@ -288,6 +289,8 @@ public:
   }
 
   bool Ready() const { return ready_.load(std::memory_order_acquire); }
+  // A hit continues after its first 40 ms with a fresh noise sequence of its own (default); false: with the sequence of its entry (the hit is then the same as the one the bake path renders for that seed).
+  void SetFreshTail(bool on) { freshTail_.store(on); }
   // number of prepared entries of a level, and counters (diagnosis)
   int Prepared(int level) const { return fill_[level].load(); }
   unsigned long Misses() const { return misses_.load(); }
@@ -383,7 +386,7 @@ private:
     if (s)
     {
       s->Import(e.seed, e.ho[r]);
-      if (s->Begin(e.seed, static_cast<double>(e.fs), hclive::kHitSeconds))
+      if (s->Begin(e.seed, static_cast<double>(e.fs), hclive::kHitSeconds, h.tailSeed))
       {
         float tmp[256];
         while (pos < len)
@@ -422,6 +425,7 @@ private:
   hclive::MpmcQueue<hclive::Job*> jobs_;
   hclive::MpmcQueue<hclive::Entry*> graveyard_;
   std::atomic<uint64_t> nextSeed_{static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count() % 1000000) + 100000};
+  std::atomic<bool> freshTail_{true}; std::atomic<uint64_t> tailCounter_{static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count() % 1000003) * 7919 + 500000000ULL};
   std::atomic<unsigned long> misses_{0}, repeats_{0}, sharedRepeats_{0}, underruns_{0}, prepares_{0};
 };
 

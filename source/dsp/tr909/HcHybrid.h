@@ -559,12 +559,14 @@ struct Renderer
     SF.z = h.z; SF.fS = h.fS; SF.pprev = h.pprev; SQ.z = SF.z; SQ.fS.assign(SF.fS.begin(), SF.fS.begin() + MQ.NS); SQ.pprev.assign(SF.pprev.begin(), SF.pprev.begin() + MQ.NP);
     t_ = std::round(h.time / MF.dt) * MF.dt; hcur = MF.dt;
   }
-  bool BeginCachedAt(int seed, const Handover& h)   // restart from a state taken with cap2 (either solver may be active); false (nothing started) when the entry's key differs
+  // restart from a state taken with cap2 (either solver may be active); false (nothing started) when the entry's key differs. noiseSeed >= 0: the noise after the handover comes from another sequence
+  // (the noise is white, the state at the handover holds everything the past left in the circuit: the continuation is another realisation of the same process)
+  bool BeginCachedAt(int seed, const Handover& h, long long noiseSeed = -1)
   {
     if (h.key != KeyFor(seed, h.time)) return false;
     SF.luOk = SQ.luOk = false;
     curSeed = seed;
-    nz.Start(seed, 5e-6, 0.0); engine = false; swc = 0; hold = 0; dec.Restart(0.0); host.clear(); pushed = 0; idle = h.idle;
+    nz.Start(noiseSeed >= 0 ? (uint64_t)noiseSeed : (uint64_t)seed, 5e-6, 0.0); engine = false; swc = 0; hold = 0; dec.Restart(0.0); host.clear(); pushed = 0; idle = h.idle;
     evt.assign(h.et.begin(), h.et.end()); evy.assign(h.ey.begin(), h.ey.end());
     if (h.full) { SF.z = h.z; SF.fS = h.fS; SF.pprev = h.pprev; full = true; S = &SF; }
     else { SQ.z = h.z; SQ.fS = h.fS; SQ.pprev = h.pprev; full = false; S = &SQ; }
@@ -696,12 +698,12 @@ public:
     typename Rend::Handover& h = cache_[(int)seed]; if (!h.key.empty()) return true;
     R_->SetHostRate(48000.0); R_->cap2 = &h; R_->capT = kCapT; R_->Begin((int)seed); R_->Render(kCapT + 0.002); R_->cap2 = nullptr; return !h.key.empty();
   }
-  bool Begin(uint64_t seed, double fsHz, double seconds)
+  bool Begin(uint64_t seed, double fsHz, double seconds, long long tailNoiseSeed = -1)
   {
     if (!loaded_) return false;
     const int sd = (int)seed; fs_ = fsHz; R_->SetHostRate(fsHz); rd_ = 0; produced_ = 0; want_ = (long)(seconds * fsHz); target_ = 0.0;
     auto it = cache_.find(sd);
-    if (it != cache_.end() && !it->second.key.empty() && R_->BeginCachedAt(sd, it->second)) { target_ = kCapT; return true; }
+    if (it != cache_.end() && !it->second.key.empty() && R_->BeginCachedAt(sd, it->second, tailNoiseSeed)) { target_ = kCapT; return true; }
     typename Rend::Handover& h = cache_[sd]; h = typename Rend::Handover(); R_->cap2 = &h; R_->capT = kCapT; R_->Begin(sd); return true;   // cap2 fills the entry when the stream passes 40 ms
   }
   int Pull(float* out, int n)
