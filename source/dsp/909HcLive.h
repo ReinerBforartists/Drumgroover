@@ -149,6 +149,18 @@ struct StreamSet
   Masters& masters; bool warmEngine; std::unique_ptr<StreamBase> s[kTr909AnchorCount]; bool failed[kTr909AnchorCount] = {false, false, false, false, false};
 };
 
+// CPU time of the calling thread in microseconds (diagnosis counters; Windows, 0 elsewhere)
+inline long long ThreadCpuUs()
+{
+#ifdef _WIN32
+  FILETIME c, e, k, u; if (!GetThreadTimes(GetCurrentThread(), &c, &e, &k, &u)) return 0;
+  return static_cast<long long>(((static_cast<unsigned long long>(k.dwHighDateTime) << 32 | k.dwLowDateTime) + (static_cast<unsigned long long>(u.dwHighDateTime) << 32 | u.dwLowDateTime)) / 10);
+#else
+  return 0;
+#endif
+}
+inline thread_local long long tlBaseUs = 0;   // CPU time this thread spent building bases (to separate it from the entry it was building)
+
 // A counting semaphore that does not lose a post (a notify without a waiter is lost): the audio thread posts, a worker waits. Windows: kernel semaphore (a post is one system call, no lock);
 // elsewhere a mutex / condition variable with a counter (the post then takes a lock for a moment).
 #ifdef _WIN32
@@ -183,11 +195,16 @@ public:
   std::shared_ptr<const hch::HcHandover> Get(StreamSet& set, int anchor, int k)
   {
     Slot& s = slot_[anchor][k]; std::lock_guard<std::mutex> lk(s.mu);
-    if (!s.b) { StreamBase* st = set.Get(anchor); std::shared_ptr<hch::HcHandover> n(new hch::HcHandover()); if (!st || !st->MakeBase(kSeed0 + static_cast<uint64_t>(k), *n)) return nullptr; s.b = n; }
+    if (!s.b) { StreamBase* st = set.Get(anchor); std::shared_ptr<hch::HcHandover> n(new hch::HcHandover()); const long long c0 = ThreadCpuUs(); if (!st || !st->MakeBase(kSeeds[k], *n)) return nullptr; const long long d = ThreadCpuUs() - c0; tlBaseUs += d; cpuUs_.fetch_add(d); built_.fetch_add(1); s.b = n; }
     return s.b;
   }
-  static constexpr uint64_t kSeed0 = 9000000;
+  // Base seeds: chosen from 400 candidates (seeds 9100000...9100399) so that the level of the first 0.83 ms of the 16 lies at the midpoints of the 16 quantile classes of the pool, over all five anchors together
+  // (tools/_sweep/hc_live/hc_base_select.cpp; the mean level of the 16 differs from the pool by at most 0.26 %, 16 random seeds by a median of 4.6 %). Same seed for every anchor.
+  static constexpr uint64_t kSeeds[16] = {9100270, 9100161, 9100285, 9100201, 9100086, 9100060, 9100225, 9100182, 9100397, 9100185, 9100194, 9100036, 9100172, 9100284, 9100323, 9100229};
+  long long CpuUs() const { return cpuUs_.load(); }   // CPU time of all base builds so far
+  int Built() const { return built_.load(); }
 private:
+  std::atomic<long long> cpuUs_{0}; std::atomic<int> built_{0};
   struct Slot { std::mutex mu; std::shared_ptr<const hch::HcHandover> b; };
   Slot slot_[kTr909AnchorCount][kMaxBases];
 };
@@ -346,6 +363,13 @@ public:
   unsigned long Underruns() const { return underruns_.load(); }
   void CountUnderrun() { underruns_.fetch_add(1, std::memory_order_relaxed); }
   unsigned long Prepares() const { return prepares_.load(); }
+  // CPU accounting (thread times, microseconds -> seconds): the bases (once, 16 per anchor), the entries without their bases, the render jobs
+  double BaseCpuSeconds() const { return bases_.CpuUs() * 1e-6; }
+  int BasesBuilt() const { return bases_.Built(); }
+  double EntryCpuSeconds() const { return entryCpuUs_.load() * 1e-6; }
+  unsigned long EntryRuns() const { return entryRuns_.load(); }
+  double RenderCpuSeconds() const { return renderCpuUs_.load() * 1e-6; }
+  unsigned long RenderJobs() const { return renderJobs_.load(); }
 
 private:
   Tr909HcLiveEngine() : jobs_(256), graveyard_(256)
@@ -394,6 +418,7 @@ private:
   }
   hclive::Entry* BuildEntry(hclive::StreamSet& set, int level)
   {
+    const long long c0 = hclive::ThreadCpuUs(), b0 = hclive::tlBaseUs; struct Acct { Tr909HcLiveEngine* e; long long c0, b0; unsigned long runs = 0; ~Acct() { e->entryCpuUs_.fetch_add(hclive::ThreadCpuUs() - c0 - (hclive::tlBaseUs - b0)); e->entryRuns_.fetch_add(runs); } } acct{this, c0, b0};
     const int fs = fs_.load(); const int code = levelCode_[level];
     Tr909AccentRun runs[2]; const int n = Tr909AccentRuns(Tr909Voice::Hc, code, runs); if (n == 0) return nullptr;
     std::unique_ptr<hclive::Entry> e(new hclive::Entry()); e->level = level; e->code = code; e->fs = fs; e->epoch = epoch_.load(); e->n = n; e->seed = nextSeed_.fetch_add(1);
@@ -403,7 +428,7 @@ private:
     {
       int a = -1; for (int k = 0; k < kTr909AnchorCount; ++k) if (kTr909Anchors[k] == runs[i].anchorCode) a = k;
       hclive::StreamBase* s = set.Get(a); if (!s) return nullptr;
-      e->anchor[i] = a; e->w[i] = runs[i].weight;
+      e->anchor[i] = a; e->w[i] = runs[i].weight; ++acct.runs;
       if (nBases > 0)
       {
         std::shared_ptr<const hch::HcHandover> base = bases_.Get(set, a, kb); if (!base) return nullptr;
@@ -433,6 +458,7 @@ private:
   }
   void RenderJob(hclive::StreamSet& set, hclive::Job& j)
   {
+    const long long cpu0 = hclive::ThreadCpuUs();
     hclive::Hit& h = *j.hit; hclive::Entry* const ent = h.entry; const hclive::Entry& e = *ent; const int r = j.run, len = h.len.load(std::memory_order_acquire), head = h.head; const bool shared = e.shared;
     hclive::StreamBase* s = set.Get(e.anchor[r]);
     int pos = 0;
@@ -455,6 +481,7 @@ private:
     for (int i = end; i < len; ++i) h.buf[r][static_cast<size_t>(i)] = 0.0f;   // a short or failed run ends in silence
     { int cur = h.len.load(); while (end < cur && !h.len.compare_exchange_weak(cur, end)) {} }   // the hit ends where its stream ends
     h.produced[r].store(end, std::memory_order_release);
+    renderCpuUs_.fetch_add(hclive::ThreadCpuUs() - cpu0); renderJobs_.fetch_add(1);
     const int entLevel = e.level; const int entFs = e.fs;
     if (h.pending.fetch_sub(1, std::memory_order_acq_rel) == 1 && !shared)   // the last run of the hit gives its entry to the recycle ring (or frees it); the slot may be reused from here on, so nothing of it is read again
     {
@@ -479,7 +506,7 @@ private:
   hclive::MpmcQueue<hclive::Entry*> graveyard_;
   std::atomic<uint64_t> nextSeed_{static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count() % 1000000) + 100000};
   std::atomic<bool> freshTail_{true}; std::atomic<uint64_t> tailCounter_{static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count() % 1000003) * 7919 + 500000000ULL};
-  std::atomic<unsigned long> misses_{0}, repeats_{0}, sharedRepeats_{0}, underruns_{0}, prepares_{0};
+  std::atomic<unsigned long> misses_{0}, repeats_{0}, sharedRepeats_{0}, underruns_{0}, prepares_{0}, entryRuns_{0}, renderJobs_{0}; std::atomic<long long> entryCpuUs_{0}, renderCpuUs_{0};
 };
 
 // The voice of the Hand Clap 909: the live engine when a prepared entry is available, the baked set of the cache otherwise.
