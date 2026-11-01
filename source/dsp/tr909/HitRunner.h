@@ -33,6 +33,8 @@ struct HitTuning
   bool quasiLinearCaps = false;
   int fixedJ = -1;           // >= 0: fixed step 2^fixedJ x 0.156 us (only shortened to meet a pulse corner or noise knot); -1: adaptive
   int knotSpan = 1;          // a step may span this many noise knots (1: every knot ends a step)
+  double capThr = 0.0;       // bypass of the nonlinear capacitance charges within this port voltage change (V) of the last full evaluation; 0: off (FullFast2::CapQm)
+  double chordFirst = 5.0;   // a chord step whose first Newton correction (V) exceeds this refactors the Jacobian; 1e9: never (HC: 1.00 -> 0.36 factorisations per step in the engine phase, output changes by < -100 dB, tools handoff R304)
   double preRoll = 0.0;      // seconds of noise before the trigger (a multiple of the noise knot spacing): the noise-driven states then belong to the noise sequence of the hit
 };
 
@@ -48,7 +50,7 @@ inline HitTuning HitTuningFor(Tr909Voice v, bool fast20)
     case Tr909Voice::Ht: t.ytol = fast20 ? 3e-3 : 7e-4; t.yfloor = 0.4; t.ytailT = 0.1; t.ytailMul = 4.0; t.ytail2T = 0.02; t.ytail2Mul = 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Sd: t.ytol = fast20 ? 3e-2 : 2e-3; t.yfloor = 0.7; t.ytailT = 0.2; t.ytailMul = 6.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Bd: t.ytol = fast20 ? 1e-2 : 2e-3; t.yfloor = 0.7; break;
-    case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 1e-3; t.yfloor = 0.4; t.zohW = 0.1; t.preRoll = 0.005; break;
+    case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 1e-3; t.yfloor = 0.4; t.zohW = 0.1; t.preRoll = 0.005; t.chordFirst = 1e9; t.capThr = 3e-4; break;
     default: break;
   }
   return t;
@@ -220,7 +222,15 @@ private:
     if (built_) { auto props = std::move(m_->props); auto half = std::move(m_->halfIdx); m_.reset(new Model()); m_->Init(); m_->props = std::move(props); m_->halfIdx = std::move(half); }
     else { m_->Init(); built_ = true; }
     Model& m = *m_;
-    m.dampOn = true; m.dampRatio = 0.01; m.noFallback = true; m.zohW = tu.zohW; m.chordFirst = 5; m.fastDot = true; m.fastSolve = true;
+    m.dampOn = true; m.dampRatio = 0.01; m.noFallback = true; m.zohW = tu.zohW; m.chordFirst = tu.chordFirst; m.capThr = tu.capThr; m.fastDot = true; m.fastSolve = true;
+#ifdef DGG_HC_ENV_KNOBS   // test harness only: solver settings of the engine phase from the environment
+    if (const char* e = std::getenv("PREDW")) m.predW = std::atof(e);
+    if (const char* e = std::getenv("CHORDFIRST")) m.chordFirst = std::atof(e);
+    if (const char* e = std::getenv("ASTOL")) m.asTol = std::atof(e);
+    if (std::getenv("EVCACHE")) m.evCache = true;
+    if (const char* e = std::getenv("CAPTHR")) m.capThr = std::atof(e);
+    if (const char* e = std::getenv("QLC")) { m.QlcEnable(std::atoi(e) != 0); if (const char* g = std::getenv("QLCERR")) m.qlcErr = std::atof(g); }
+#endif
     m.Reset(Mdl::kAcc); m.PortGrpInit();
     if (tu.quasiLinearCaps) { m.QlcEnable(true); m.qlcErr = 1e-3; }
     m.QlEnable(true); m.qlTol = 0.1; m.qlErr = 1e-3; m.qleOn = true; m.qleHold = 500;

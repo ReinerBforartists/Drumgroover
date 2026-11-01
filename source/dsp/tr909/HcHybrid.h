@@ -20,6 +20,15 @@
 namespace dgg { namespace hch {
 
 #define PR(...)
+#ifdef HCH_PROF
+#include <intrin.h>
+inline unsigned long long g_hp[16] = {0};
+#define HP_T(v) unsigned long long v = __rdtsc()
+#define HP_ADD(i, v) (g_hp[(i) + (M.NP < 10 ? 8 : 0)] += __rdtsc() - (v))
+#else
+#define HP_T(v)
+#define HP_ADD(i, v)
+#endif
 // Model version of the stored tables and equations: raise whenever device values, table contents or the reduced-model equations change (it is part of the cache key).
 inline const char* const kModelVer = "hc909-lev7-fine1-gap3";
 // Environment knobs exist only in the test harness (DGG_HC_ENV_KNOBS); the plugin always runs with the defaults.
@@ -73,10 +82,15 @@ struct HcPackage
   HcPackage View(const char* pfx) const { HcPackage v; v.idx = idx; v.prefix = pfx; v.meta = meta; v.hash = hash; return v; }
 };
 
+// The data of a table are read-only after Load; the window of interpolated rows that at() keeps is state of the reader, one per thread (a Red can be read by several threads, each with its own
+// Renderer). Tabs have a number (slot) for this: thread_local cursors, indexed by slot.
+struct TabCursor { std::vector<double> buf; int base = -1, top = -2; };
+inline std::atomic<int> g_tabSlots{0};
 struct Tab
 {
   int rows = 0, cols = 0, nk = 0; std::vector<int> kr; std::vector<float> yf; std::vector<double> yd, ref; bool useF = false;
-  std::vector<double> buf; int base = -1, top = -2; long fills = 0, filledRows = 0;
+  int slot = g_tabSlots.fetch_add(1);
+  TabCursor& Cur() const { static thread_local std::vector<TabCursor> v; if ((size_t)slot >= v.size()) v.resize((size_t)slot + 1); return v[(size_t)slot]; }
   bool Load(const HcBlob& blob)
   {
     if (!blob.p) return false; Rd rd(blob);
@@ -89,11 +103,12 @@ struct Tab
      return true;
   }
   double Y(int i, int c) const { const size_t k = (size_t)i * cols + c; return useF ? (double)yf[k] + (ref.empty() ? 0.0 : ref[c]) : yd[k]; }
-  void Fill(int r0, int r1)
+  void Fill(int r0, int r1, TabCursor& cu) const
   {
+    std::vector<double>& buf = cu.buf; int& base = cu.base; int& top = cu.top;
     int i = (int)(std::upper_bound(kr.begin(), kr.end(), r0) - kr.begin()) - 1; if (i < 0) i = 0;
     int j = i + 1; while (j < nk - 1 && (kr[j] < r1 || kr[j] - kr[i] < 256)) ++j; j = std::min(j, nk - 1);
-    base = kr[i]; top = kr[j]; buf.resize((size_t)(top - base + 1) * cols); ++fills; filledRows += top - base + 1;
+    base = kr[i]; top = kr[j]; buf.resize((size_t)(top - base + 1) * cols);
     for (int s = i; s < j; ++s)
     {
       const int a0 = std::max(s - 1, 0), b0 = std::min(s + 1, nk - 1), a1 = s, b1 = std::min(s + 2, nk - 1);
@@ -110,8 +125,8 @@ struct Tab
     }
     if (j == i) for (int c = 0; c < cols; ++c) buf[c] = Y(i, c);
   }
-  const double* at(int r) { const int r1 = std::min(r + 1, rows - 1); if (r < base || r1 > top) Fill(r, r1); return &buf[(size_t)(r - base) * cols]; }
-  size_t Bytes() const { return yf.size() * 4 + yd.size() * 8 + buf.size() * 8; }
+  const double* at(int r) const { TabCursor& cu = Cur(); const int r1 = std::min(r + 1, rows - 1); if (r < cu.base || r1 > cu.top) Fill(r, r1, cu); return &cu.buf[(size_t)(r - cu.base) * cols]; }
+  size_t Bytes() const { return yf.size() * 4 + yd.size() * 8; }
 };
 inline std::vector<double> LdPacked(const HcBlob& blob)
 {
@@ -183,7 +198,7 @@ struct Red
   std::vector<Dev> dev; double gb, gc, kcmp;
   std::vector<Lev> lev; FineTab fine;
   std::vector<double> PZs, PFun, PU, PCc, Xo, Dou, Dofsel, Dofun, Do1;
-  mutable Tab FMU, FMGU, PBU, FTU, YU, PSILp;
+  Tab FMU, FMGU, PBU, FTU, YU, PSILp;
   std::vector<std::vector<char>> sgn;   // sign (>0) of the comparator input ports (cx) on the whole grid
   std::vector<double> evs;              // comparator event times of the noise-free table (s), > 0.6 ms
   std::vector<double> bp;   // preprocessed bjt params 16 per device
@@ -222,6 +237,65 @@ struct Red
 };
 inline double TrigAt(double t) { return pcmfast::HitTrigger(t); }
 
+// Matrix-vector kernels of the reduced solver, carried over verbatim from FullFast2.h (DotF / MatVec): y[i] = init[i] + row i of Mat . x, four rows interleaved, every row keeps the two-accumulator summation
+// order of the row-wise dot product (AVX2 when the CPU has it, SSE2 otherwise, scalar stand-ins on other platforms: identical results).
+inline double HcDotF(const double* __restrict a, const double* __restrict b, int n, double init)
+{
+  if (::g_ff2Avx && n >= ::g_ff2DotMin)
+  {
+    __m256d v = _mm256_setzero_pd(); int k = 0;
+    for (; k + 4 <= n; k += 4) v = _mm256_add_pd(v, _mm256_mul_pd(_mm256_loadu_pd(a + k), _mm256_loadu_pd(b + k)));
+    __m128d s0 = _mm_add_pd(_mm256_castpd256_pd128(v), _mm256_extractf128_pd(v, 1)); _mm256_zeroupper();
+    double t[2]; _mm_storeu_pd(t, s0); double s = init + (t[0] + t[1]); for (; k < n; ++k) s += a[k] * b[k]; return s;
+  }
+  __m128d s0 = _mm_setzero_pd(), s1 = _mm_setzero_pd(); int k = 0;
+  for (; k + 4 <= n; k += 4) { s0 = _mm_add_pd(s0, _mm_mul_pd(_mm_loadu_pd(a + k), _mm_loadu_pd(b + k))); s1 = _mm_add_pd(s1, _mm_mul_pd(_mm_loadu_pd(a + k + 2), _mm_loadu_pd(b + k + 2))); }
+  s0 = _mm_add_pd(s0, s1); double t[2]; _mm_storeu_pd(t, s0); double s = init + (t[0] + t[1]); for (; k < n; ++k) s += a[k] * b[k]; return s;
+}
+// y[i] = HcDotF(M row i, x, n, 0) for all rows, four rows interleaved: every row keeps the two-accumulator summation order of DotF (bitwise the same result) while eight independent chains hide the addition latency
+inline void HcMatVec(const double* __restrict Mat, int ld, int rows, const double* __restrict x, int n, double* y, const double* init = nullptr)
+{
+  int i = 0;
+  if (::g_ff2Avx)
+  {
+    for (; i + 4 <= rows; i += 4)
+    {
+      const double* m0 = Mat + (size_t)i * ld; const double* m1 = m0 + ld; const double* m2 = m1 + ld; const double* m3 = m2 + ld;
+      __m256d a = _mm256_setzero_pd(), b = a, c = a, d = a; int k = 0;
+      for (; k + 4 <= n; k += 4)
+      {
+        const __m256d xv = _mm256_loadu_pd(x + k);
+        a = _mm256_add_pd(a, _mm256_mul_pd(_mm256_loadu_pd(m0 + k), xv)); b = _mm256_add_pd(b, _mm256_mul_pd(_mm256_loadu_pd(m1 + k), xv));
+        c = _mm256_add_pd(c, _mm256_mul_pd(_mm256_loadu_pd(m2 + k), xv)); d = _mm256_add_pd(d, _mm256_mul_pd(_mm256_loadu_pd(m3 + k), xv));
+      }
+      __m128d ra = _mm_add_pd(_mm256_castpd256_pd128(a), _mm256_extractf128_pd(a, 1)), rb = _mm_add_pd(_mm256_castpd256_pd128(b), _mm256_extractf128_pd(b, 1));
+      __m128d rc = _mm_add_pd(_mm256_castpd256_pd128(c), _mm256_extractf128_pd(c, 1)), rd = _mm_add_pd(_mm256_castpd256_pd128(d), _mm256_extractf128_pd(d, 1));
+      double t[8]; _mm_storeu_pd(t, ra); _mm_storeu_pd(t + 2, rb); _mm_storeu_pd(t + 4, rc); _mm_storeu_pd(t + 6, rd); _mm256_zeroupper();
+      double s0 = (init ? init[i] : 0.0) + (t[0] + t[1]), s1 = (init ? init[i + 1] : 0.0) + (t[2] + t[3]), s2 = (init ? init[i + 2] : 0.0) + (t[4] + t[5]), s3 = (init ? init[i + 3] : 0.0) + (t[6] + t[7]);
+      for (int kk = k; kk < n; ++kk) { const double xv = x[kk]; s0 += m0[kk] * xv; s1 += m1[kk] * xv; s2 += m2[kk] * xv; s3 += m3[kk] * xv; }
+      y[i] = s0; y[i + 1] = s1; y[i + 2] = s2; y[i + 3] = s3;
+    }
+  }
+  for (; i + 4 <= rows; i += 4)
+  {
+    const double* m0 = Mat + (size_t)i * ld; const double* m1 = m0 + ld; const double* m2 = m1 + ld; const double* m3 = m2 + ld;
+    __m128d a0 = _mm_setzero_pd(), a1 = a0, b0 = a0, b1 = a0, c0 = a0, c1 = a0, d0 = a0, d1 = a0; int k = 0;
+    for (; k + 4 <= n; k += 4)
+    {
+      const __m128d xa = _mm_loadu_pd(x + k), xb = _mm_loadu_pd(x + k + 2);
+      a0 = _mm_add_pd(a0, _mm_mul_pd(_mm_loadu_pd(m0 + k), xa)); a1 = _mm_add_pd(a1, _mm_mul_pd(_mm_loadu_pd(m0 + k + 2), xb));
+      b0 = _mm_add_pd(b0, _mm_mul_pd(_mm_loadu_pd(m1 + k), xa)); b1 = _mm_add_pd(b1, _mm_mul_pd(_mm_loadu_pd(m1 + k + 2), xb));
+      c0 = _mm_add_pd(c0, _mm_mul_pd(_mm_loadu_pd(m2 + k), xa)); c1 = _mm_add_pd(c1, _mm_mul_pd(_mm_loadu_pd(m2 + k + 2), xb));
+      d0 = _mm_add_pd(d0, _mm_mul_pd(_mm_loadu_pd(m3 + k), xa)); d1 = _mm_add_pd(d1, _mm_mul_pd(_mm_loadu_pd(m3 + k + 2), xb));
+    }
+    a0 = _mm_add_pd(a0, a1); b0 = _mm_add_pd(b0, b1); c0 = _mm_add_pd(c0, c1); d0 = _mm_add_pd(d0, d1); double t[8]; _mm_storeu_pd(t, a0); _mm_storeu_pd(t + 2, b0); _mm_storeu_pd(t + 4, c0); _mm_storeu_pd(t + 6, d0);
+    double s0 = (init ? init[i] : 0.0) + (t[0] + t[1]), s1 = (init ? init[i + 1] : 0.0) + (t[2] + t[3]), s2 = (init ? init[i + 2] : 0.0) + (t[4] + t[5]), s3 = (init ? init[i + 3] : 0.0) + (t[6] + t[7]);
+    for (int kk = k; kk < n; ++kk) { const double xv = x[kk]; s0 += m0[kk] * xv; s1 += m1[kk] * xv; s2 += m2[kk] * xv; s3 += m3[kk] * xv; }
+    y[i] = s0; y[i + 1] = s1; y[i + 2] = s2; y[i + 3] = s3;
+  }
+  for (; i < rows; ++i) y[i] = HcDotF(Mat + (size_t)i * ld, x, n, init ? init[i] : 0.0);
+}
+
 struct Solver
 {
   const Red& M; pcmfast::HitNoise& nz;
@@ -238,13 +312,17 @@ struct Solver
   std::vector<double> evt, evy;   // event list (t, y)
   std::vector<double>* evtp = nullptr; std::vector<double>* evyp = nullptr;
   double HMIN;
+  // Newton factorisation kept between iterations and steps (chord): the factors belong to the step size level (key = its PGs table). A step that converges slowly with the old factors refactors at its current point.
+  // The residual test decides convergence, so the result differs from the fully refactored one only within the tolerance of the test. Settings for the test harness: CHORD=0 switches it off, CHORDMINI=1 also for the mini set.
+  bool chordOn = HcEnv("CHORD") ? std::atoi(HcEnv("CHORD")) != 0 : true; bool chordMini = HcEnv("CHORDMINI") ? std::atoi(HcEnv("CHORDMINI")) != 0 : false; double chordRatio = HcEnv("CHORDRATIO") ? std::atof(HcEnv("CHORDRATIO")) : 0.5; int chordMaxIt = HcEnv("CHORDMAXIT") ? std::atoi(HcEnv("CHORDMAXIT")) : 4;
+  bool luOk = false; const double* luKey = nullptr; std::vector<int> bPiv; long nFactor = 0;
   // scratch
-  std::vector<std::vector<double>> zL, xL, pL; std::vector<double> bP, bG, bPt, bGt, bDp, bBest, bDpm, bJm, bFv, bA, rF, fPa, fFv, fSt;
+  std::vector<std::vector<double>> zL, xL, pL; std::vector<double> bP, bG, bPt, bGt, bDp, bBest, bDpm, bJm, bFv, bDpm2, bA, bLU, rF, fPa, fFv, fSt;
   std::vector<double> zb, pb, F, g, Dp, J, dp, pp, pt, gt, tmp;
   Solver(const Red& m, pcmfast::HitNoise& n_) : M(m), nz(n_)
   {
     HMIN = M.dt / (double)(1 << (M.LEV - 1)); zL.assign(8, std::vector<double>(M.R)); xL.assign(8, std::vector<double>(M.NS)); pL.assign(8, std::vector<double>(M.NP));
-    bP.resize(M.NP); bG.resize(M.NP); bPt.resize(M.NP); bGt.resize(M.NP); bDp.resize(M.NP); bBest.resize(M.NP); bDpm.resize((size_t)M.NS * M.NP); bJm.resize((size_t)M.NP * M.NP); bFv.resize(M.NS); bA.resize((size_t)M.NP * M.NP); rF.resize(M.NS); fPa.resize(M.NP); fFv.resize(M.NS); fSt.resize(M.NP); zb.resize(M.R); pb.resize(M.NP); F.resize(M.NS); g.resize(M.NP); Dp.resize((size_t)M.NS * M.NP); J.resize((size_t)M.NP * M.NP); dp.resize(M.NP); pp.resize(M.NP); pt.resize(M.NP); gt.resize(M.NP); tmp.resize(M.NP);
+    bP.resize(M.NP); bG.resize(M.NP); bPt.resize(M.NP); bGt.resize(M.NP); bDp.resize(M.NP); bBest.resize(M.NP); bDpm.resize((size_t)M.NS * M.NP); bJm.resize((size_t)M.NP * M.NP); bFv.resize(M.NS); bDpm2.resize((size_t)M.NS * M.NP); bLU.resize((size_t)M.NP * M.NP); bPiv.resize(M.NP); bA.resize((size_t)M.NP * M.NP); rF.resize(M.NS); fPa.resize(M.NP); fFv.resize(M.NS); fSt.resize(M.NP); zb.resize(M.R); pb.resize(M.NP); F.resize(M.NS); g.resize(M.NP); Dp.resize((size_t)M.NS * M.NP); J.resize((size_t)M.NP * M.NP); dp.resize(M.NP); pp.resize(M.NP); pt.resize(M.NP); gt.resize(M.NP); tmp.resize(M.NP);
   }
   // device currents F(p) and derivatives Dp (NS x NP, row = current, column = port) when wantD
   void Fsel(const double* p, double* Fo, double* D) const
@@ -265,9 +343,9 @@ struct Solver
   }
   // g(p) = p - pb - PGs F(p); returns scaled residual norm
   const double gRS = HcEnv("RS") ? std::atof(HcEnv("RS")) : 1.0;
-  double Resid(const double* p, double* gout, const double* PGs) const
+  double Resid(const double* p, double* gout, const double* PGs, double* Dout = nullptr) const
   {
-    std::vector<double>& Fv = const_cast<std::vector<double>&>(rF); Fsel(p, Fv.data(), nullptr);
+    std::vector<double>& Fv = const_cast<std::vector<double>&>(rF); HP_T(tf_); Fsel(p, Fv.data(), Dout); HP_ADD(0, tf_);
     double r = 0; for (int a = 0; a < M.NP; ++a)
     {
       double s = p[a] - pb[a]; for (int j = 0; j < M.NS; ++j) s -= PGs[(size_t)a * M.NS + j] * Fv[j];
@@ -277,29 +355,43 @@ struct Solver
   }
   bool Newton(const double* p0, const double* PGs, double* pout, int& itOut, int maxIt = 60)
   {
-    double rhist[64]; std::vector<double>& p = bP; p.assign(p0, p0 + M.NP); std::vector<double>& gg = bG; std::vector<double>& pt_ = bPt; std::vector<double>& gt_ = bGt; std::vector<double>& dpv = bDp; std::vector<double>& best = bBest; best.assign(p0, p0 + M.NP); std::vector<double>& Dpm = bDpm; std::vector<double>& Jm = bJm; std::vector<double>& Fv = bFv; int nzj[512], nzb[512]; double nzv[512];
-    double rn = Resid(p.data(), gg.data(), PGs), bestr = rn; bool ok = false; int it = 0;
+    double rhist[64]; std::vector<double>& p = bP; p.assign(p0, p0 + M.NP); std::vector<double>& gg = bG; std::vector<double>& pt_ = bPt; std::vector<double>& gt_ = bGt; std::vector<double>& dpv = bDp; std::vector<double>& best = bBest; best.assign(p0, p0 + M.NP); std::vector<double>* Dcur = &bDpm; std::vector<double>* Dtry = &bDpm2; std::vector<double>& Jm = bJm; std::vector<double>& Fv = bFv; int nzj[512], nzb[512]; double nzv[512];
+    const bool chord = chordOn && (M.NP >= 10 || chordMini); const bool chordUsable = chord && luOk && luKey == PGs; bool dOk = !chordUsable, needRefactor = false;   // dOk: *Dcur holds the device derivatives of p
+    double rn = Resid(p.data(), gg.data(), PGs, dOk ? Dcur->data() : nullptr), bestr = rn, prevRn = INFINITY; bool ok = false; int it = 0, chordIts = 0;   // the device derivatives of a point come with its residual (one device evaluation per point)
     for (; it < maxIt; ++it)
     {
       if (rn < 1.0) { ok = true; break; }
-      Fsel(p.data(), Fv.data(), Dpm.data());
+      const bool refactor = !chord || !luOk || luKey != PGs || needRefactor;
+      if (refactor)
       {
-        int nzn = 0; for (int j = 0; j < M.NS; ++j) for (int b = 0; b < M.NP; ++b) { const double v = Dpm[(size_t)j * M.NP + b]; if (v != 0.0) { nzj[nzn] = j; nzb[nzn] = b; nzv[nzn] = v; ++nzn; } }
-        for (int a = 0; a < M.NP; ++a) { double* Jr = &Jm[(size_t)a * M.NP]; for (int b = 0; b < M.NP; ++b) Jr[b] = (a == b) ? 1.0 : 0.0; const double* Pr = &PGs[(size_t)a * M.NS]; for (int k = 0; k < nzn; ++k) Jr[nzb[k]] -= Pr[nzj[k]] * nzv[k]; }
-      }
-      dpv = gg;   // solve Jm dp = gg (Gaussian elimination, partial pivoting)
-      {
-        std::vector<double>& A = bA; std::copy(Jm.begin(), Jm.end(), A.begin()); bool sing = false; const int N = M.NP;
+        if (!dOk) { Fsel(p.data(), Fv.data(), Dcur->data()); dOk = true; }
+        HP_T(tj_);
+        {
+          int nzn = 0; for (int j = 0; j < M.NS; ++j) for (int b = 0; b < M.NP; ++b) { const double v = (*Dcur)[(size_t)j * M.NP + b]; if (v != 0.0) { nzj[nzn] = j; nzb[nzn] = b; nzv[nzn] = v; ++nzn; } }
+          for (int a = 0; a < M.NP; ++a) { double* Jr = &Jm[(size_t)a * M.NP]; for (int b = 0; b < M.NP; ++b) Jr[b] = (a == b) ? 1.0 : 0.0; const double* Pr = &PGs[(size_t)a * M.NS]; for (int k = 0; k < nzn; ++k) Jr[nzb[k]] -= Pr[nzj[k]] * nzv[k]; }
+        }
+        HP_ADD(1, tj_); HP_T(tf2_);
+        // factorisation with partial pivoting: multipliers below the diagonal, row swaps in bPiv (the same operations, in the same order, as the elimination that carried the right-hand side along)
+        std::vector<double>& A = bLU; std::copy(Jm.begin(), Jm.end(), A.begin()); bool sing = false; const int N = M.NP;
         for (int c = 0; c < N; ++c)
         {
           int pr = c; double mx = std::fabs(A[(size_t)c * N + c]); for (int r = c + 1; r < N; ++r) if (std::fabs(A[(size_t)r * N + c]) > mx) { mx = std::fabs(A[(size_t)r * N + c]); pr = r; }
           if (mx < 1e-300) { sing = true; break; }
-          if (pr != c) { for (int k = 0; k < N; ++k) std::swap(A[(size_t)c * N + k], A[(size_t)pr * N + k]); std::swap(dpv[c], dpv[pr]); }
-          for (int r = c + 1; r < N; ++r) { const double f = A[(size_t)r * N + c] / A[(size_t)c * N + c]; if (f != 0.0) { for (int k = c; k < N; ++k) A[(size_t)r * N + k] -= f * A[(size_t)c * N + k]; dpv[r] -= f * dpv[c]; } }
+          bPiv[c] = pr; if (pr != c) for (int k = c; k < N; ++k) std::swap(A[(size_t)c * N + k], A[(size_t)pr * N + k]);   // columns left of c hold the multipliers of earlier steps and stay with their rows (the solve applies the swaps step by step)
+          for (int r = c + 1; r < N; ++r) { const double f = A[(size_t)r * N + c] / A[(size_t)c * N + c]; A[(size_t)r * N + c] = f; if (f != 0.0) for (int k = c + 1; k < N; ++k) A[(size_t)r * N + k] -= f * A[(size_t)c * N + k]; }
         }
-        if (sing) break;
+        HP_ADD(2, tf2_); ++nFactor;
+        if (sing) { luOk = false; break; }
+        luOk = true; luKey = PGs; needRefactor = false; chordIts = 0;
+      }
+      HP_T(te_);
+      dpv = gg;   // solve J dp = gg with the factors
+      {
+        const std::vector<double>& A = bLU; const int N = M.NP;
+        for (int c = 0; c < N; ++c) { if (bPiv[c] != c) std::swap(dpv[c], dpv[bPiv[c]]); const double dc = dpv[c]; for (int r = c + 1; r < N; ++r) { const double f = A[(size_t)r * N + c]; if (f != 0.0) dpv[r] -= f * dc; } }
         for (int r = N - 1; r >= 0; --r) { double s = dpv[r]; for (int k = r + 1; k < N; ++k) s -= A[(size_t)r * N + k] * dpv[k]; dpv[r] = s / A[(size_t)r * N + r]; }
       }
+      HP_ADD(2, te_);
       bool fin = true; for (double v : dpv) if (!std::isfinite(v)) fin = false; if (!fin) break;
       double dpm = 0; for (int a = 0; a < M.NP; ++a) if (M.jp[a]) dpm = std::max(dpm, std::fabs(dpv[a]));
       // the limit applies to the port change implied by the current step: dp itself (ports are the unknowns)
@@ -307,16 +399,19 @@ struct Solver
       if (limMode == 0) { if (dpm > 0.04) for (double& v : dpv) v *= 0.04 / dpm; }
       else if (limMode == 1) { for (int a_ = 0; a_ < M.NP; ++a_) if (M.jp[a_] && std::fabs(dpv[a_]) > limV) dpv[a_] = dpv[a_] > 0 ? limV : -limV; }
       else if (limMode == 2) { /* no limit */ }
-      double lam = 1.0, rt = INFINITY;
+      double lam = 1.0, rt = INFINITY; bool dTry = true;
       for (int ls = 0; ls < 12; ++ls)
       {
         for (int a = 0; a < M.NP; ++a) pt_[a] = p[a] - lam * dpv[a];
-        rt = Resid(pt_.data(), gt_.data(), PGs); if (rt < rn * (1 - 1e-4 * lam) || rt < 1.0) break; lam *= 0.5;
+        dTry = !(chord && luOk && luKey == PGs); rt = Resid(pt_.data(), gt_.data(), PGs, dTry ? Dtry->data() : nullptr); if (rt < rn * (1 - 1e-4 * lam) || rt < 1.0) break; lam *= 0.5;
       }
-      p = pt_; gg = gt_; rn = rt; if (rn < bestr) { bestr = rn; best = p; }
+      p = pt_; gg = gt_; prevRn = rn; rn = rt; if (dTry) std::swap(Dcur, Dtry); dOk = dTry;
+      if (chord && rn >= 1.0 && (rn > chordRatio * prevRn || ++chordIts >= chordMaxIt)) needRefactor = true;   // slow with the old factors: refactor at the next point
+      if (rn < bestr) { bestr = rn; best = p; }
       PR(if (it < 40) rhist[it] = rn;)
     }
     PR(if (HcEnv("RSTAT")) { if (!ok) { if (gNF < 400 && gNF % 20 == 0) std::printf("FAIL its %d rn: r1 %.2e r3 %.2e r5 %.2e r8 %.2e r12 %.2e r20 %.2e r39 %.2e\n", it, rhist[0], rhist[2], rhist[4], rhist[7], rhist[11], rhist[19], rhist[39]); } else if (it >= 8) { std::printf("OK-slow its %d rn: r1 %.2e r3 %.2e r5 %.2e r8 %.2e\n", it, rhist[0], rhist[2], rhist[4], rhist[7]); } })
+    if (!ok) luOk = false;
     PR(if (!ok) { ++gNF; gNFits += it; }) itOut = it; std::copy(ok ? p.begin() : best.begin(), ok ? p.end() : best.end(), pout); return ok;
   }
   struct Ex { double nb, dna, tb_, dtra, ycomp; };
@@ -338,22 +433,27 @@ struct Solver
       else { const double* f0 = fm; for (int j = 0; j < NU; ++j) fmb[j] = f0[j]; for (int j : dlj) fmb[j] = f0[j] * (1.0 + dlfm[j]); fm = fmb.data(); }
       dtail = M.FTU.at(ia);
     } const double* pbr = M.PBU.at(ia); const double frac = (ta - ia * M.dt) / M.dt + h / M.dt;   // position of tb in the interval
+    HP_T(ts_);
+    HcMatVec(L.Ad.data(), R, R, z.data(), R, zb.data());   // zb = Ad z + G0s fS (+ GU fm), four rows at a time
+    HcMatVec(L.G0s.data(), NS, R, fS.data(), NS, zb.data(), zb.data());
+    if (!ongrid) HcMatVec(L.GU.data(), NU, R, fm, NU, zb.data(), zb.data());
     for (int i = 0; i < R; ++i)
     {
-      double s = 0; const double* Ad = &L.Ad[(size_t)i * R]; for (int j = 0; j < R; ++j) s += Ad[j] * z[j];
-      const double* g0 = &L.G0s[(size_t)i * NS]; for (int j = 0; j < NS; ++j) s += g0[j] * fS[j];
-      if (ongrid) s += fg[i]; else { const double* gu = &L.GU[(size_t)i * NU]; for (int j = 0; j < NU; ++j) s += gu[j] * fm[j]; }
+      double s = zb[i];
+      if (ongrid) s += fg[i];
       s += L.G0n[i] * na + L.G1n[i] * nb + L.Pz[(size_t)i * 4 + 1] * dna + L.G0t[i] * ta_ + L.G1t[i] * tb_ + L.Pz[(size_t)i * 4 + 2] * dtra + L.Pz[(size_t)i * 4 + 0] * M.ACC + L.Pz[(size_t)i * 4 + 3];
       zb[i] = s;
     }
+    HcMatVec(M.PZs.data(), R, NP, zb.data(), R, pb.data());
     for (int a = 0; a < NP; ++a)
     {
-      double s = 0; const double* pz = &M.PZs[(size_t)a * R]; for (int j = 0; j < R; ++j) s += pz[j] * zb[j];
+      double s = pb[a];
       const double* pu = &M.PU[(size_t)a * 5]; s += pu[0] * M.ACC + pu[1] * nb + pu[2] * dna + pu[3] * tb_ + pu[4] * dtra;
       const double pbu = ongrid ? pbr[NP + a] : (fineStep ? M.fine.pe[fidx * M.fine.NP + a] : (1 - frac) * pbr[a] + frac * pbr[NP + a]);
       double dpb = 0.0; if (dtail) { const double* pf = &M.PFun[(size_t)a * NU]; for (int j : dlj) dpb += pf[j] * dlfm[j] * (ongrid ? dtail[NU + j] : (1 - frac) * dtail[j] + frac * dtail[NU + j]); }
       pb[a] = s + pbu + dpb;
     }
+    HP_ADD(3, ts_);
     PR(const double q1 = Now(); gT[0] += q1 - q0;)
     const double* PGs = L.PGs.data();
     // pcmfast ports -> NewtonStart
@@ -367,6 +467,7 @@ struct Solver
         if ((sp > 0) != (pprev[jx] > 0)) predq = (int)qx;
       }
     }
+    HP_T(tn_);
     bool ok = predq >= 0 ? false : Newton(pprev.data(), PGs, pp.data(), it, nit1);
     if (!ok)
     {
@@ -396,15 +497,17 @@ struct Solver
       }
       PR(gT[3] += Now() - tf0;)
     }
+    HP_ADD(4, tn_);
     PR(const double q2 = Now(); gT[1] += q2 - q1;)
-    nits += it + 1;
+    nits += it + 1; HP_T(tp_);
     Fsel(pp.data(), F.data(), nullptr); xnew.assign(F.begin(), F.end()); pnew.assign(pp.begin(), pp.end());
-    for (int i = 0; i < R; ++i) { double s = zb[i]; const double* g1 = &L.G1s[(size_t)i * NS]; for (int j = 0; j < NS; ++j) s += g1[j] * xnew[j]; znew[i] = s; }
+    HcMatVec(L.G1s.data(), NS, R, xnew.data(), NS, znew.data(), zb.data());
     double yu; if (ongrid) yu = M.YU.at(ia)[1]; else { yu = 0; const double* f0 = M.FTU.at(ia); const double* f1 = f0 + NU; for (int j = 0; j < NU; ++j) yu += M.Dofun[j] * ((1 - frac) * f0[j] + frac * f1[j]); }
     double y = M.Do1[0] + M.Dou[0] * M.ACC + M.Dou[1] * nb + M.Dou[2] * dna + M.Dou[3] * tb_ + M.Dou[4] * dtra + yu;
-    for (int i = 0; i < R; ++i) y += M.Xo[i] * znew[i];
+    y = HcDotF(M.Xo.data(), znew.data(), R, y);
     for (int j = 0; j < NS; ++j) y += M.Dofsel[j] * xnew[j];
     PR(gT[2] += Now() - q2;)
+    HP_ADD(5, tp_);
     ex = {nb, dna, tb_, dtra, y};
     return ok;
   }
@@ -420,6 +523,9 @@ struct Solver
   bool lastFlip = false;
 };
 
+// State of a hit at the handover time (40 ms): the same layout for every anchor, so that a prepared state can be passed between threads and streams (HitStream::ExportEntry / ImportEntry).
+struct HcHandover { std::vector<double> z, fS, pprev, et, ey; double time = 0, idle = 0; bool full = true; std::string key; std::vector<double> avg, avgT, dl; };
+
 template <class Mdl>
 struct Renderer
 {
@@ -430,13 +536,13 @@ struct Renderer
     unsigned long long hq = 1469598103934665603ULL; for (char c : quiet) { hq ^= (unsigned char)c; hq *= 1099511628211ULL; }
     char b[384]; std::snprintf(b, sizeof b, "hc|mv=%s|acc=%.6g|dt=%.6g|n=%d|seed=%d|ytf=%.6g|dpt=%.6g|cap=%.6g|win=%llx|lev=%d|fine=%llx/%.6g|ema=%.6g|pk=%llx", kModelVer, MF.ACC, MF.dt, MF.n, seed, ytfK, dptK, capTime, hq, MF.LEV, MF.fine.hash, MF.fine.h, emaOn ? emaTau : 0.0, pkgHash); return b;
   }
-  Solver SF, SQ; Solver* S; std::vector<double> evt, evy; bool engine = true, full = true; double t_ = 0, hcur = 0; int hold = 0; long swc = 0; const double handover = 1.0e-3; const int HOLD = 8;
-  Renderer(const Red& f, const Red& q, const std::vector<char>& qt, double ytf, double dpt) : MF(f), MQ(q), quiet(qt), SF(f, nz), SQ(q, nz), S(&SF)
+  Solver SF, SQ; Solver* S; std::vector<double> evt, evy; bool engine = true, full = true; double t_ = 0, hcur = 0; int hold = 0; long swc = 0; double handover = HcEnv("HANDOVER") ? std::atof(HcEnv("HANDOVER")) * 1e-3 : 1.0e-3; const int HOLD = 8;
+  Renderer(const Red& f, const Red& q, const std::vector<char>& qt, double ytf, double dpt, bool warmEngine = true) : MF(f), MQ(q), quiet(qt), SF(f, nz), SQ(q, nz), S(&SF)
   {
-    tu = pcmfast::HitTuningFor(Tr909Voice::Hc, false); tu.ytol *= ytf; tu.dpTol = dpt; ytfK = ytf; dptK = dpt; r.Warm(tu);
+    tu = pcmfast::HitTuningFor(Tr909Voice::Hc, false); tu.ytol *= ytf; tu.dpTol = dpt; ytfK = ytf; dptK = dpt; if (warmEngine) r.Warm(tu);
     host.reserve(24000); dec.Init(48000.0); evt.reserve(200000); evy.reserve(200000); SF.evtp = SQ.evtp = &evt; SF.evyp = SQ.evyp = &evy;
   }
-  struct Handover { std::vector<double> z, fS, pprev, et, ey; double time = 0, idle = 0; bool full = true; std::string key; std::vector<double> avg, avgT, dl; };
+  using Handover = HcHandover;
   // moving mean (time constant emaTau) of the offset "solved current of the full set minus noise-free table" for the currents that the mini set takes from the table
   bool emaOn = HcEnv("EMA") != nullptr; double emaTau = HcEnv("TAU") ? std::atof(HcEnv("TAU")) * 1e-6 : 200e-6; std::vector<double> dlAvg, dlAvgT; std::vector<std::pair<int, int>> dlMap;
   void InitEma()
@@ -447,6 +553,7 @@ struct Renderer
   Handover* cap = nullptr; Handover* cap2 = nullptr; double capT = -1; int capSeed = 0; int curSeed = 0;   // cap2: state at the first grid time >= capT on the reduced model   // when set, the state at the end of the engine phase is stored there
   void BeginCached(int seed, const Handover& h)
   {
+    SF.luOk = SQ.luOk = false;
     nz.Start(seed, 5e-6, 0.0); engine = false; full = true; S = &SF; swc = 0; hold = 0; InitEma();
     evt.assign(h.et.begin(), h.et.end()); evy.assign(h.ey.begin(), h.ey.end());
     SF.z = h.z; SF.fS = h.fS; SF.pprev = h.pprev; SQ.z = SF.z; SQ.fS.assign(SF.fS.begin(), SF.fS.begin() + MQ.NS); SQ.pprev.assign(SF.pprev.begin(), SF.pprev.begin() + MQ.NP);
@@ -455,6 +562,7 @@ struct Renderer
   bool BeginCachedAt(int seed, const Handover& h)   // restart from a state taken with cap2 (either solver may be active); false (nothing started) when the entry's key differs
   {
     if (h.key != KeyFor(seed, h.time)) return false;
+    SF.luOk = SQ.luOk = false;
     curSeed = seed;
     nz.Start(seed, 5e-6, 0.0); engine = false; swc = 0; hold = 0; dec.Restart(0.0); host.clear(); pushed = 0; idle = h.idle;
     evt.assign(h.et.begin(), h.et.end()); evy.assign(h.ey.begin(), h.ey.end());
@@ -466,6 +574,7 @@ struct Renderer
   void SetHostRate(double fs) { dec.Init(fs); }
   void Begin(int seed)
   {
+    SF.luOk = SQ.luOk = false;
     curSeed = seed; capSeed = seed; nz.Start(seed, 5e-6, 0.0); r.Begin(tu, &nz, 0.35); engine = true; full = true; S = &SF; evt.clear(); evy.clear(); swc = 0; hold = 0; dec.Restart(0.0); host.clear(); pushed = 0; idle = r.idle(); InitEma();
   }
   bool Done() const { return !engine && t_ >= 0.35 - 1e-12; }
@@ -486,7 +595,7 @@ struct Renderer
     const double dt = MF.dt;
     while (t_ < 0.35 - 1e-12 && t_ < tEnd)
     {
-      if (cap2 && t_ >= capT - 1e-12 && hcur >= dt * 0.999 && std::fabs(t_ / dt - std::llround(t_ / dt)) < 1e-6) { cap2->z = S->z; cap2->fS = S->fS; cap2->pprev = S->pprev; cap2->et = evt; cap2->ey = evy; cap2->time = t_; cap2->full = full; cap2->idle = idle; cap2->avg = dlAvg; cap2->avgT = dlAvgT; cap2->dl = SQ.dlOn ? SQ.dlfm : std::vector<double>(); cap2->key = KeyFor(capSeed, t_); cap2 = nullptr; }
+      if (cap2 && t_ >= capT - 1e-12 && hcur >= dt * 0.999 && std::fabs(t_ / dt - std::llround(t_ / dt)) < 1e-6) { cap2->z = S->z; cap2->fS = S->fS; cap2->pprev = S->pprev; cap2->et = evt; cap2->ey = evy; cap2->time = t_; cap2->full = full; cap2->idle = idle; SF.luOk = SQ.luOk = false;   /* the factors of a run before the handover are not carried over: a stream that starts from the entry begins without factors, and a run that continues must do the same (reproducible output) */  cap2->avg = dlAvg; cap2->avgT = dlAvgT; cap2->dl = SQ.dlOn ? SQ.dlfm : std::vector<double>(); cap2->key = KeyFor(capSeed, t_); cap2 = nullptr; }
       const long kk0 = (long)std::llround(t_ / dt);
       if (hcur >= dt * 0.999 && std::fabs(t_ / dt - kk0) < 1e-6)
       {
@@ -555,15 +664,31 @@ public:
     try
     {
       const HcPackage full = pkg.View("F/"), mini = pkg.View("Q/");
-      MF_ = std::make_unique<Red>(); MQ_ = std::make_unique<Red>(); MF_->Load(full); MQ_->Load(mini);
+      MF_ = std::make_shared<Red>(); MQ_ = std::make_shared<Red>(); MF_->Load(full); MQ_->Load(mini);
       auto num = [&](const char* k, double d) { auto it = pkg.meta.find(k); return it == pkg.meta.end() ? d : std::atof(it->second.c_str()); };
       quiet_ = BuildQuiet(*MF_, num("mb_ms", 3.0), num("ma_ms", 8.0), num("gapmin_ms", 3.0));
-      R_ = std::make_unique<Rend>(*MF_, *MQ_, quiet_, kEngineYtf, kEngineDpt); R_->pkgHash = pkg.hash;
+      R_ = std::make_unique<Rend>(*MF_, *MQ_, quiet_, HcEnv("YTF") ? std::atof(HcEnv("YTF")) : kEngineYtf, HcEnv("DPT") ? std::atof(HcEnv("DPT")) : kEngineDpt); R_->pkgHash = pkg.hash;
       cache_.clear(); loaded_ = true; return true;
     }
     catch (const std::exception&) { loaded_ = false; return false; }
   }
   bool Loaded() const { return loaded_; }
+  // A stream that reads the tables of `master` (loaded once, read-only; every thread has its own stream, windows and solver state). warmEngine: the stream will Prepare seeds (engine phase);
+  // a stream that only continues prepared states (Begin of an imported entry) does not need the engine and starts without it.
+  bool LoadFrom(const HitStream& master, bool warmEngine)
+  {
+    if (!master.loaded_) return false;
+    try
+    {
+      MF_ = master.MF_; MQ_ = master.MQ_; quiet_ = master.quiet_; R_ = std::make_unique<Rend>(*MF_, *MQ_, quiet_, HcEnv("YTF") ? std::atof(HcEnv("YTF")) : kEngineYtf, HcEnv("DPT") ? std::atof(HcEnv("DPT")) : kEngineDpt, warmEngine);
+      R_->pkgHash = master.R_->pkgHash; cache_.clear(); loaded_ = true; return true;
+    }
+    catch (const std::exception&) { loaded_ = false; return false; }
+  }
+  // The prepared state of a seed can be copied out, put into another stream of the same anchor and package, and dropped (a stream keeps one state per seed otherwise).
+  bool ExportEntry(uint64_t seed, HcHandover& out) const { auto it = cache_.find((int)seed); if (it == cache_.end() || it->second.key.empty()) return false; out = it->second; return true; }
+  void ImportEntry(uint64_t seed, const HcHandover& h) { cache_[(int)seed] = h; }
+  void EraseEntry(uint64_t seed) { cache_.erase((int)seed); }
   // Builds the handover entry of a seed (engine phase 0-1 ms and the reduced model up to 40 ms); afterwards Begin(seed) starts from the entry.
   bool Prepare(uint64_t seed)
   {
@@ -590,7 +715,7 @@ public:
   bool Finished() const { return !loaded_ || produced_ >= want_ || (R_->Done() && rd_ >= (long)R_->host.size()); }
 
 private:
-  std::unique_ptr<Red> MF_, MQ_; std::vector<char> quiet_; std::unique_ptr<Rend> R_; std::map<int, typename Rend::Handover> cache_;
+  std::shared_ptr<Red> MF_, MQ_; std::vector<char> quiet_; std::unique_ptr<Rend> R_; std::map<int, typename Rend::Handover> cache_;
   bool loaded_ = false; long rd_ = 0, produced_ = 0, want_ = 0; double target_ = 0.0, fs_ = 48000.0;
 };
 

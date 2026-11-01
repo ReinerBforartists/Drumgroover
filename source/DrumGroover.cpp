@@ -1021,6 +1021,8 @@ std::atomic<int> gLiveInstances{0};
 
 DrumGroover::~DrumGroover()
 {
+  for (auto& pool : m909CustomPools) for (auto& v : pool.Voices()) v.SetEngine(nullptr);   // before the engine can go away
+  m909HcLive.reset();
   if (gLiveInstances.fetch_sub(1) == 1)
     dgg::TR808VariantPoolBaker::Instance().Shutdown();
 }
@@ -3942,6 +3944,7 @@ void DrumGroover::HandleSetCustomInstruments(const nlohmann::json& payload)
     DGG_Log(std::string("HandleSetCustomInstruments: ") + dgg::CustomInstrument(k).name + " track='" + ids[k] + "' note=" + std::to_string(notes[k]));
   }
   if (gainsChanged) SendBridgeMessage("articulationLevelState", BuildArticulationGainsJson(mEngineMode.load(std::memory_order_relaxed) == static_cast<int>(EngineMode::LoFi)));
+  Prepare909HcLive();
 }
 
 // Preview of a custom instrument from the UI (knobs of its Drum Engine card, no track needed): the note-on travels the same MIDI path as
@@ -4168,6 +4171,20 @@ void DrumGroover::Setup909Pools(double sampleRate)
   }
 }
 
+// Hand Clap 909: the live engine (prepared noise seeds, render threads) exists while a track plays the Hand Clap; the voices use it as soon as it has an entry for the velocity
+// and play the baked set of the cache before that.
+void DrumGroover::Prepare909HcLive()
+{
+  bool wanted = false;
+  for (int k = 0; k < dgg::kNumCustomInstruments; ++k)
+    if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909 && static_cast<dgg::Tr909Voice>(dgg::CustomInstrument(k).arg) == dgg::Tr909Voice::Hc && mCustomNote[k].load(std::memory_order_relaxed) >= 0) wanted = true;
+  if (!wanted) return;
+  if (!m909HcLive) { dgg::Tr909HcPackageStore::Instance().SetDirectory(GetCacheDir().parent_path() / "Models"); m909HcLive = dgg::Tr909HcLiveEngine::Get(); }
+  m909HcLive->Configure(GetSampleRate());
+  for (int k = 0; k < dgg::kNumCustomInstruments; ++k)
+    if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909) for (auto& v : m909CustomPools[k].Voices()) v.SetEngine(m909HcLive.get());
+}
+
 // Builds the live Rim Shot hosts (worker thread, about 1.4 s and 14 MB each) when the 909 engine is selected; a hit before they are ready is silent. Called on every change of the engine or the sample rate.
 void DrumGroover::Prepare909Rim()
 {
@@ -4218,6 +4235,7 @@ void DrumGroover::OnReset()
   for (auto& pool : mTomPools) pool.SetSampleRate(sr);
   Setup909Pools(sr);
   Prepare909Rim();
+  Prepare909HcLive();
   for (auto& pool : mCustomPools) pool.SetSampleRate(sr);
   for (auto& pool : mCustomRmPools) pool.SetSampleRate(sr);
   for (auto& pool : mCustomHcPools) pool.SetSampleRate(sr);

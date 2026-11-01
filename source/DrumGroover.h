@@ -17,6 +17,7 @@
 #include "dsp/808InstrumentTable.h"
 #include "dsp/909AccentPlan.h"
 #include "dsp/909Kit.h"
+#include "dsp/909HcLive.h"
 #include "dsp/CustomInstrumentRegistry.h"
 #include "dsp/808RmVoice.h"
 #include "dsp/808HcVoice.h"
@@ -367,6 +368,8 @@ private:
   void TriggerInstrument(const dgg::InstrumentDef& inst, double velocity01, double gain = 1.0, bool accent = false);
   void Setup909Pools(double sampleRate);                 // voice identity and sample rate of the TR-909 pools
   void Trigger909(const dgg::InstrumentDef& inst, double velocity01, double gain);   // TR-909 mode: the row plays its 909 voice
+  void Prepare909HcLive();                               // Hand Clap 909: the live engine with its store of prepared noise seeds, started when a Hand Clap track exists (worker threads, about 100 MB)
+  std::shared_ptr<dgg::Tr909HcLiveEngine> m909HcLive;
   void Prepare909Rim();                                  // TR-909 mode: builds the live Rim Shot hosts (worker thread, about 1.4 s), once per sample rate
 
   // One voice pool per Hi‑Hat instance (dsp/808InstrumentTable.h, family "hihat": Closed Edge, Tight Edge, Open Edge 0/4, Closed Tip,
@@ -393,7 +396,7 @@ private:
   std::array<dgg::VoicePool<dgg::TR808HcVoice, 6>, dgg::kNumCustomInstruments> mCustomHcPools;     // the instruments of kind HcClap / HcMaracas (HC sheet); the pools of the other kinds stay idle
   std::array<dgg::VoicePool<dgg::TR808Pc2Voice, 6>, dgg::kNumCustomInstruments> mCustomPc2Pools;   // the instrument of kind Pc2 (PC-2 sheet); the pools of the other kinds stay idle
   std::array<dgg::VoicePool<dgg::TR808CbVoice, 6>, dgg::kNumCustomInstruments> mCustomCbPools;     // the instrument of kind Cowbell (CB sheet); the pools of the other kinds stay idle
-  std::array<dgg::VoicePool<dgg::Tr909CachedVoice, 4>, dgg::kNumCustomInstruments> m909CustomPools;   // the instruments of kind Tr909 (909 voice from the baked sets); the pools of the other kinds stay idle
+  std::array<dgg::VoicePool<dgg::Tr909HcVoice, 4>, dgg::kNumCustomInstruments> m909CustomPools;   // the instruments of kind Tr909 (909 voice from the baked sets); the pools of the other kinds stay idle
   std::atomic<int> mCustomNote[dgg::kNumCustomInstruments];   // GM note of the assigned track, -1: none
   std::atomic<bool> mUiPreviewAccent{false};   // Drum Engine "Preview with accent" switch, set with each UI preview note
   std::atomic<double> mCustomPreviewGain[dgg::kNumCustomInstruments];   // volume knob of a card without a track: scales the preview velocity (unity = 1)

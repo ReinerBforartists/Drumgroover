@@ -288,6 +288,17 @@ template <class M> struct FullFast2
     else { q = qj; c = cj; }
     q -= C0 * v; c -= C0;
   }
+  // Charge of a nonlinear capacitance with a bypass: a charge device is a pure function of its port voltage, so a voltage within capThr (V) of the last full evaluation follows from its charge and
+  // capacitance (first order in the voltage change; the error is second order, about half the capacitance slope times the square of the change). capThr 0: every call evaluates (the default).
+  struct CapMemo { double v = 0.0, q = 0.0, c = 0.0; bool valid = false; };
+  mutable CapMemo capMemo[M::kNumDev > 0 ? M::kNumDev : 1]; double capThr = 0.0; mutable long cmHits = 0, cmCalls = 0;
+  void CapQm(int d, const double* r, double v, double& q, double& c, bool wantC) const
+  {
+    if (capThr <= 0.0) { CapQ(r, v, q, c, wantC); return; }
+    CapMemo& m = capMemo[d]; ++cmCalls;
+    if (m.valid && std::fabs(v - m.v) < capThr) { ++cmHits; q = m.q + m.c * (v - m.v); c = m.c; return; }
+    CapQ(r, v, m.q, m.c, true); m.v = v; m.valid = true; q = m.q; c = m.c;
+  }
   // device currents f and the dense blocks d f / d p of every device (row-major [current][port], at most 2 x 3)
   void EvalF(const double* q, double* f, double (*jd)[6]) const
   {
@@ -309,7 +320,7 @@ template <class M> struct FullFast2
       {
       case 0: { const BjtOut o = BjtEvalG(bp[idx], q[pp], q[pp + 1]); f[cc] = o.ic; f[cc + 1] = o.ib; if (jd) { jd[d][0] = o.d[0][0]; jd[d][1] = o.d[0][1]; jd[d][2] = o.d[1][0]; jd[d][3] = o.d[1][1]; } break; }
       case 1: { double i, g; DiodeEvalG(&M::kDio[5 * idx], q[pp], i, g, &dioVj[idx], dioPre ? &dioXbv[idx] : nullptr); f[cc] = i; if (jd) jd[d][0] = g; break; }
-      case 6: { const double* r = &M::kCap[10 * idx]; if (qlcOn) { if (q0G[d] != q0Gen) { if (qcOk[d] && qcV[d] == ps0[pp]) { q0v[d] = qcQ[d]; c0v[d] = qcC[d]; } else CapQ(r, ps0[pp], q0v[d], c0v[d], true); q0G[d] = q0Gen; } if (qlcAct[d]) { f[cc] = r[1] * c0v[d] * (q[pp] - ps0[pp]) / capH; if (jd) jd[d][0] = r[1] * c0v[d] / capH; break; } } double q1, c1; CapQ(r, q[pp], q1, c1, jd != nullptr); if (q0G[d] != q0Gen) { double c0; CapQ(r, ps0[pp], q0v[d], c0, false); q0G[d] = q0Gen; } f[cc] = r[1] * (q1 - q0v[d]) / capH; if (jd) jd[d][0] = r[1] * c1 / capH; break; }   // the charge at the step start does not change during the step: computed once per step   // backward-Euler current of the charge that the constant capacitances do not carry
+      case 6: { const double* r = &M::kCap[10 * idx]; if (qlcOn) { if (q0G[d] != q0Gen) { if (qcOk[d] && qcV[d] == ps0[pp]) { q0v[d] = qcQ[d]; c0v[d] = qcC[d]; } else CapQ(r, ps0[pp], q0v[d], c0v[d], true); q0G[d] = q0Gen; } if (qlcAct[d]) { f[cc] = r[1] * c0v[d] * (q[pp] - ps0[pp]) / capH; if (jd) jd[d][0] = r[1] * c0v[d] / capH; break; } } double q1, c1; CapQm(d, r, q[pp], q1, c1, jd != nullptr); if (q0G[d] != q0Gen) { double c0; CapQm(d, r, ps0[pp], q0v[d], c0, false); q0G[d] = q0Gen; } f[cc] = r[1] * (q1 - q0v[d]) / capH; if (jd) jd[d][0] = r[1] * c1 / capH; break; }   // the charge at the step start does not change during the step: computed once per step   // backward-Euler current of the charge that the constant capacitances do not carry
       case 2:
       {
         const double gm = M::kTanh[3 * idx], im = M::kTanh[3 * idx + 1], lg = M::kTanh[3 * idx + 2], x = gm * q[pp] / im;
