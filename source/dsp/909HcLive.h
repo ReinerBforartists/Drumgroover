@@ -12,12 +12,14 @@
 #pragma once
 #include "909ModelRunner.h"
 #include "909HcPackages.h"
+#include "tr909/HcLanes.h"
 #include "909Playback.h"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <thread>
 #include <vector>
 #ifdef _WIN32
@@ -83,6 +85,8 @@ struct StreamBase
   virtual void Erase(uint64_t seed) = 0;
   virtual bool Begin(uint64_t seed, double fs, double seconds, long long tailNoiseSeed = -1) = 0;
   virtual int Pull(float* out, int n) = 0;
+  // Tails of n (<= 8) prepared entries of this anchor in one lane batch (HcLanes.h): the complete hits at the host rate, from the trigger on. false: not possible (no AVX2 build, entries not suited); nothing is changed then.
+  virtual bool RenderTails(int n, const hch::HcHandover* const* ho, const long long* tailSeed, double fs, std::vector<float>* out) = 0;
 };
 template <class Mdl>
 struct StreamImpl : StreamBase
@@ -97,6 +101,18 @@ struct StreamImpl : StreamBase
   void Erase(uint64_t seed) override { hs.EraseEntry(seed); }
   bool Begin(uint64_t seed, double fs, double seconds, long long tailNoiseSeed = -1) override { return hs.Begin(seed, fs, seconds, tailNoiseSeed); }
   int Pull(float* out, int n) override { return hs.Pull(out, n); }
+  bool RenderTails(int n, const hch::HcHandover* const* ho, const long long* tailSeed, double fs, std::vector<float>* out) override
+  {
+#if DGG_LANES_AVAILABLE
+    if (n < 1 || n > hclanes::NL) return false;
+    hclanes::MiniTail mt(hs.FullRed(), hs.MiniRed(), hs.QuietMask());
+    if (!mt.Begin(n, ho, tailSeed, fs, ho[0]->idle) || !mt.Run(hclive::kHitSeconds + 0.002)) return false;
+    for (int l = 0; l < n; ++l) out[l] = mt.Host(l);
+    return true;
+#else
+    (void)n; (void)ho; (void)tailSeed; (void)fs; (void)out; return false;
+#endif
+  }
   hch::HitStream<Mdl> hs;
 };
 inline std::unique_ptr<StreamBase> MakeStream(int anchorIdx)
@@ -235,12 +251,18 @@ constexpr double kHitSeconds = 0.35;      // length of a hit (as the baked sets)
 constexpr double kHeadSeconds = 0.0385;   // the part of a hit that a prepared entry carries as host samples (the handover state is at 40 ms)
 constexpr int kMaxRate = 192000;
 constexpr int kSlots = 24;
+constexpr int kLanes = 8;   // lanes of a batch (hclanes::NL)
+
+// an atomic counter that can be copied (entries are copied for the shared fallback)
+struct AtomicInt { std::atomic<int> v; AtomicInt(int x = 0) : v(x) {} AtomicInt(const AtomicInt& o) : v(o.v.load()) {} AtomicInt& operator=(const AtomicInt& o) { v.store(o.v.load()); return *this; } };
 
 // a prepared hit: handover state and head samples of one or two anchor runs (accent between two anchors = blend of two runs with the same seed)
 struct Entry
 {
   int level = 0, code = 0, fs = 0, epoch = 0, n = 0, anchor[2] = {0, 0}; double w[2] = {1.0, 0.0}; uint64_t seed = 0; bool shared = false;   // shared: the fallback entry of a level, never freed, played again
   hch::HcHandover ho[2]; std::vector<float> head[2];
+  // lane batch: the complete hit (head and tail with its own noise) rendered ahead; hasPre: valid, the first play of the entry copies it and renders nothing (the entry then plays on with the render jobs, fresh tail each time)
+  std::vector<float> pre[2]; long long tailSeed = -1; bool hasPre = false; AtomicInt runsLeft{0}; AtomicInt preFail{0};
 };
 
 struct Hit;
@@ -288,6 +310,8 @@ public:
     for (std::thread& t : threads_) if (t.joinable()) t.join();
     for (int l = 0; l < kLevels; ++l) { hclive::Entry* e; while (rings_[l]->Pop(e)) delete e; while (recycle_[l]->Pop(e)) delete e; delete shared_[l].load(); }
     hclive::Job* j; while (jobs_.Pop(j)) {}
+    { hclive::Entry* e; while (spent_.Pop(e)) delete e; while (graveyard_.Pop(e)) delete e; }
+    { std::set<hclive::Entry*> held; for (auto& p : pack_) for (const Held& h : p) held.insert(h.e); for (hclive::Entry* e : held) delete e; }   // entries whose tails were still waiting for a batch
   }
   Tr909HcLiveEngine(const Tr909HcLiveEngine&) = delete; Tr909HcLiveEngine& operator=(const Tr909HcLiveEngine&) = delete;
 
@@ -331,6 +355,16 @@ public:
       if ((st == 0 || (st == 2 && s.pending.load(std::memory_order_acquire) == 0)) && s.state.compare_exchange_strong(st, 1, std::memory_order_acq_rel)) h = &s;
     }
     if (!h) { if (own) graveyard_.Push(e); ++misses_; return nullptr; }   // an entry that is not used is freed by a worker
+    if (e->hasPre && freshTail_.load(std::memory_order_relaxed))   // rendered ahead in a lane batch: copy, no render job (the entry goes to a worker that frees the samples and passes it on to the recycle ring)
+    {
+      int len = std::min(static_cast<int>(hclive::kHitSeconds * e->fs), static_cast<int>(h->buf[0].size()));
+      for (int r = 0; r < e->n; ++r) len = std::min(len, static_cast<int>(e->pre[r].size()));
+      for (int r = 0; r < e->n; ++r) { std::copy(e->pre[r].begin(), e->pre[r].begin() + len, h->buf[r].begin()); h->produced[r].store(len, std::memory_order_release); }
+      h->n = e->n; h->fs = e->fs; h->head = static_cast<int>(e->head[0].size()); h->entry = nullptr; h->tailSeed = e->tailSeed; h->w[0] = e->w[0]; h->w[1] = e->w[1]; h->seed = e->seed; h->anchor[0] = e->anchor[0]; h->anchor[1] = e->anchor[1];
+      h->len.store(len, std::memory_order_release); h->pending.store(0, std::memory_order_release);
+      if (!spent_.Push(e)) graveyard_.Push(e);
+      ++preHits_; return h;
+    }
     h->n = e->n; h->fs = e->fs; h->len.store(std::min(static_cast<int>(hclive::kHitSeconds * e->fs), static_cast<int>(h->buf[0].size())), std::memory_order_release); h->head = static_cast<int>(e->head[0].size());
     h->tailSeed = freshTail_.load(std::memory_order_relaxed) ? static_cast<long long>(tailCounter_.fetch_add(1, std::memory_order_relaxed) & 0x7FFFFFFFFFFFLL) : -1;
     h->entry = e; h->w[0] = e->w[0]; h->w[1] = e->w[1]; h->seed = e->seed; h->anchor[0] = e->anchor[0]; h->anchor[1] = e->anchor[1];
@@ -392,14 +426,26 @@ public:
   double EntryCpuSeconds() const { return entryCpuUs_.load() * 1e-6; }
   unsigned long EntryRuns() const { return entryRuns_.load(); }
   double RenderCpuSeconds() const { return renderCpuUs_.load() * 1e-6; }
+  // tails rendered ahead: CPU of the batches (and of the scalar renders of runs that did not fill a batch), lane batches, runs in them, runs rendered one by one, hits played from ahead
+  double LaneCpuSeconds() const { return laneCpuUs_.load() * 1e-6; }
+  unsigned long LaneBatches() const { return laneBatches_.load(); }
+  unsigned long LaneRuns() const { return laneRuns_.load(); }
+  unsigned long ScalarPreRuns() const { return scalarPre_.load(); }
+  unsigned long PreHits() const { return preHits_.load(); }
+  // tests: false renders every tail one by one (scalar); true (default): in lane batches where the build has AVX2; PreRender false: no rendering ahead (the render jobs do it at the trigger)
+  static std::atomic<int>& HeldMsOverride() { static std::atomic<int> n{-1}; return n; }   // tests: longest wait of a run for a full lane batch (ms, default 250)
+  static std::atomic<int>& LanesOverride() { static std::atomic<int> n{-1}; return n; }
+  static bool LanesOn() { const int o = LanesOverride().load(); return o < 0 ? DGG_LANES_AVAILABLE != 0 : o > 0; }
+  static std::atomic<int>& PreRenderOverride() { static std::atomic<int> n{-1}; return n; }
+  static bool PreRenderOn() { return PreRenderOverride().load() != 0; }
   unsigned long RenderJobs() const { return renderJobs_.load(); }
 
 private:
-  Tr909HcLiveEngine() : jobs_(256), graveyard_(256)
+  Tr909HcLiveEngine() : jobs_(256), graveyard_(256), spent_(256)
   {
     for (int l = 0; l < kLevels; ++l)
     {
-      rings_[l].reset(new hclive::MpmcQueue<hclive::Entry*>(kRing)); recycle_[l].reset(new hclive::MpmcQueue<hclive::Entry*>(kRecycle)); fill_[l].store(0); used_[l].store(0); shared_[l].store(nullptr);
+      rings_[l].reset(new hclive::MpmcQueue<hclive::Entry*>(kRing)); recycle_[l].reset(new hclive::MpmcQueue<hclive::Entry*>(kRecycle)); fill_[l].store(0); used_[l].store(0); inflight_[l].store(0); heldE_[l].store(0); shared_[l].store(nullptr);
       levelCode_[l] = Tr909CodeForVelocity(Tr909Voice::Hc, static_cast<double>(l) / (kLevels - 1));
     }
     slots_.reset(new hclive::Hit[hclive::kSlots]);
@@ -429,25 +475,26 @@ private:
       int best = -1, bestScore = 1 << 30;
       for (int l = 0; l < kLevels; ++l)
       {
-        const int target = 1 + std::min(used_[l].load(std::memory_order_relaxed), 3), have = fill_[l].load() + inflight_[l].load();
+        const int target = 1 + std::min(used_[l].load(std::memory_order_relaxed), 3), have = fill_[l].load() + inflight_[l].load() + std::max(0, heldE_[l].load() - kHeldAhead);   // entries that wait for a batch count as stock beyond kHeldAhead per level: the stock is built ahead meanwhile
         if (have >= target) continue;
         const int score = have * 16 - std::min(used_[l].load(), 8);
         if (score < bestScore) { bestScore = score; best = l; }
       }
-      if (best < 0) { prepSem_.Wait(1000); continue; }
+      if (best < 0) { FlushAged(set, false); prepSem_.Wait(heldCount_.load() > 0 ? 50 : 1000); continue; }
       inflight_[best].fetch_add(1);
       const auto tb0 = std::chrono::steady_clock::now();
       hclive::Entry* e = BuildEntry(set, best);
-      inflight_[best].fetch_sub(1);
+      if (!e) inflight_[best].fetch_sub(1);
       {   // a busy machine: rest in proportion to the work (duty cycle), the host comes first
         const double duty = hclive::PrepDuty(hclive::SystemLoad());
         if (duty < 1.0) { throttled_.fetch_add(1); const double work = std::chrono::duration<double>(std::chrono::steady_clock::now() - tb0).count(); std::this_thread::sleep_for(std::chrono::duration<double>(std::min(1.0, work * (1.0 / duty - 1.0)))); }
       }
       if (!e) { std::this_thread::sleep_for(std::chrono::milliseconds(200)); continue; }
-      if (e->fs != fs_.load() || e->epoch != epoch_.load()) { delete e; continue; }   // built for another rate or before a flush
+      if (e->fs != fs_.load() || e->epoch != epoch_.load()) { inflight_[best].fetch_sub(1); delete e; continue; }   // built for another rate or before a flush
       prepares_.fetch_add(1);
       if (!shared_[best].load()) { hclive::Entry* c = new hclive::Entry(*e); c->shared = true; hclive::Entry* none = nullptr; if (!shared_[best].compare_exchange_strong(none, c)) delete c; }
-      if (rings_[best]->Push(e)) fill_[best].fetch_add(1); else delete e;
+      if (freshTail_.load() && PreRenderOn()) SubmitTails(set, e); else FinishEntry(e, false);
+      FlushAged(set, false);
     }
   }
   hclive::Entry* BuildEntry(hclive::StreamSet& set, int level)
@@ -476,6 +523,87 @@ private:
       if (got < headLen) return nullptr;
     }
     return e.release();
+  }
+
+  // ---- tails rendered ahead (lane batch) ----
+  // A built entry gets the complete hit rendered before it is stocked: the tails of up to 8 runs of the same anchor go through the lane batch together (HcLanes.h, about 4x less CPU per tail than the
+  // scalar render); a batch with fewer than kMinLanes runs, a batch that fails or a build without AVX2 renders its runs one by one with the scalar path. The audio thread then only copies samples.
+  struct Held { hclive::Entry* e; int run; std::chrono::steady_clock::time_point t; };
+  static constexpr int kMinLanes = 3, kHeldAhead = 1000;   // 1000: held entries never count as stock (2 gave T3b and T4 failures, R314)
+  static int MaxHeldMs() { const int o = HeldMsOverride().load(); return o < 0 ? 250 : o; }
+  void FinishEntry(hclive::Entry* e, bool fromHeld)
+  {
+    const int level = e->level; if (fromHeld) heldE_[level].fetch_sub(1); else inflight_[level].fetch_sub(1);
+    if (e->fs != fs_.load() || e->epoch != epoch_.load()) { delete e; return; }
+    if (rings_[level]->Push(e)) fill_[level].fetch_add(1); else delete e;
+  }
+  // scalar tail of one run, written to e->pre[run] (false: failed, the run plays through the render job)
+  bool ScalarTail(hclive::StreamSet& set, hclive::Entry* e, int run)
+  {
+    hclive::StreamBase* s = set.Get(e->anchor[run]); if (!s) return false;
+    s->Import(e->seed, e->ho[run]); bool ok = false;
+    if (s->Begin(e->seed, static_cast<double>(e->fs), hclive::kHitSeconds, e->tailSeed))
+    {
+      const int len = static_cast<int>(hclive::kHitSeconds * e->fs); std::vector<float>& p = e->pre[run]; p.assign(static_cast<size_t>(len), 0.0f); int got = 0;
+      while (got < len) { const int w = s->Pull(p.data() + got, std::min(1024, len - got)); if (w <= 0) break; got += w; }
+      p.resize(static_cast<size_t>(got)); ok = got > 0;
+    }
+    s->Erase(e->seed); return ok;
+  }
+  void RunDone(hclive::Entry* e, bool ok)
+  {
+    if (!ok) e->preFail.v.store(1);
+    if (e->runsLeft.v.fetch_sub(1, std::memory_order_acq_rel) == 1) { e->hasPre = e->preFail.v.load() == 0; FinishEntry(e, true); }   // the entry is visible to the audio thread from here on
+  }
+  void RunBatch(hclive::StreamSet& set, int anchor, std::vector<Held>& b)
+  {
+    const long long cpu0 = hclive::ThreadCpuUs(); const int n = static_cast<int>(b.size());
+    bool ok = false; std::vector<float> out[hclive::kLanes];
+    if (n >= kMinLanes && n <= hclive::kLanes && LanesOn())
+    {
+      const hch::HcHandover* ho[hclive::kLanes]; long long sd[hclive::kLanes]; bool same = true;
+      for (int l = 0; l < n; ++l) { ho[l] = &b[l].e->ho[b[l].run]; sd[l] = b[l].e->tailSeed; if (b[l].e->fs != b[0].e->fs) same = false; }
+      hclive::StreamBase* s = same ? set.Get(anchor) : nullptr;
+      ok = s && s->RenderTails(n, ho, sd, static_cast<double>(b[0].e->fs), out);
+      if (ok) { laneBatches_.fetch_add(1); laneRuns_.fetch_add(n); }
+    }
+    for (int l = 0; l < n; ++l)
+    {
+      hclive::Entry* e = b[l].e; const int run = b[l].run;
+      bool good = ok; if (ok) { e->pre[run] = std::move(out[l]); good = !e->pre[run].empty(); } else { good = ScalarTail(set, e, run); if (good) scalarPre_.fetch_add(1); }
+      heldCount_.fetch_sub(1); RunDone(e, good);
+    }
+    laneCpuUs_.fetch_add(hclive::ThreadCpuUs() - cpu0);
+  }
+  void SubmitTails(hclive::StreamSet& set, hclive::Entry* e)
+  {
+    e->tailSeed = static_cast<long long>(tailCounter_.fetch_add(1, std::memory_order_relaxed) & 0x7FFFFFFFFFFFLL);
+    const int n = e->n; int anchor[2] = {e->anchor[0], e->anchor[1]};
+    e->runsLeft.v.store(n); e->preFail.v.store(0); heldCount_.fetch_add(n); inflight_[e->level].fetch_sub(1); heldE_[e->level].fetch_add(1);
+    for (int i = 0; i < n; ++i)   // after the last push the entry may be finished and played by other threads: only the copies above are used
+    {
+      std::vector<Held> batch;
+      {
+        std::lock_guard<std::mutex> lk(packMu_[anchor[i]]); pack_[anchor[i]].push_back(Held{e, i, std::chrono::steady_clock::now()});
+        if (!LanesOn() || static_cast<int>(pack_[anchor[i]].size()) >= hclive::kLanes) { batch = std::move(pack_[anchor[i]]); pack_[anchor[i]].clear(); }
+      }
+      if (!batch.empty()) RunBatch(set, anchor[i], batch);
+    }
+  }
+  // batches that have waited too long (or all of them: force) go as they are
+  void FlushAged(hclive::StreamSet& set, bool force)
+  {
+    if (heldCount_.load() <= 0) return;
+    const auto now = std::chrono::steady_clock::now();
+    for (int a = 0; a < kTr909AnchorCount; ++a)
+    {
+      std::vector<Held> batch;
+      {
+        std::lock_guard<std::mutex> lk(packMu_[a]);
+        if (!pack_[a].empty() && (force || now - pack_[a].front().t > std::chrono::milliseconds(MaxHeldMs()))) { batch = std::move(pack_[a]); pack_[a].clear(); }
+      }
+      if (!batch.empty()) RunBatch(set, a, batch);
+    }
   }
 
   // Renderer: continues a hit from its prepared state and publishes the samples as it goes.
@@ -519,10 +647,19 @@ private:
     const int entLevel = e.level; const int entFs = e.fs;
     if (h.pending.fetch_sub(1, std::memory_order_acq_rel) == 1 && !shared)   // the last run of the hit gives its entry to the recycle ring (or frees it); the slot may be reused from here on, so nothing of it is read again
     {
+      if (ent->hasPre) { std::vector<float>().swap(ent->pre[0]); std::vector<float>().swap(ent->pre[1]); ent->hasPre = false; }   // played with the render jobs (fresh tail off): the samples ahead are of no use any more
       if (entFs != fs_.load() || !recycle_[entLevel]->Push(ent)) delete ent;
     }
   }
-  void FreeGraveyard() { hclive::Entry* e; while (graveyard_.Pop(e)) delete e; }
+  void FreeGraveyard()
+  {
+    hclive::Entry* e; while (graveyard_.Pop(e)) delete e;
+    while (spent_.Pop(e))   // an entry whose rendered hit was played: the samples go, the entry plays again through the render jobs
+    {
+      std::vector<float>().swap(e->pre[0]); std::vector<float>().swap(e->pre[1]); e->hasPre = false;
+      if (e->fs != fs_.load() || !recycle_[e->level]->Push(e)) delete e;
+    }
+  }
 
   hclive::Masters masters_; hclive::Bases bases_; std::atomic<unsigned> baseCursor_{0};
   int nRender_ = 0;
@@ -531,13 +668,15 @@ private:
   std::mutex cfgMu_; hclive::Semaphore jobSem_, prepSem_;
   std::vector<std::thread> threads_;
   std::unique_ptr<hclive::MpmcQueue<hclive::Entry*>> rings_[kLevels], recycle_[kLevels];
-  std::atomic<int> fill_[kLevels], inflight_[kLevels], used_[kLevels];
+  std::atomic<int> fill_[kLevels], inflight_[kLevels], heldE_[kLevels], used_[kLevels];
   std::atomic<hclive::Entry*> shared_[kLevels];
   std::vector<std::unique_ptr<hclive::Entry>> retired_;
   int levelCode_[kLevels];
   std::unique_ptr<hclive::Hit[]> slots_;
   hclive::MpmcQueue<hclive::Job*> jobs_;
-  hclive::MpmcQueue<hclive::Entry*> graveyard_;
+  hclive::MpmcQueue<hclive::Entry*> graveyard_, spent_;
+  std::mutex packMu_[kTr909AnchorCount]; std::vector<Held> pack_[kTr909AnchorCount]; std::atomic<int> heldCount_{0};
+  std::atomic<unsigned long> laneBatches_{0}, laneRuns_{0}, scalarPre_{0}, preHits_{0}; std::atomic<long long> laneCpuUs_{0};
   std::atomic<uint64_t> nextSeed_{static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count() % 1000000) + 100000};
   std::atomic<bool> freshTail_{true}; std::atomic<uint64_t> tailCounter_{static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count() % 1000003) * 7919 + 500000000ULL};
   std::atomic<unsigned long> throttled_{0}, misses_{0}, repeats_{0}, sharedRepeats_{0}, underruns_{0}, prepares_{0}, entryRuns_{0}, renderJobs_{0}; std::atomic<long long> entryCpuUs_{0}, renderCpuUs_{0};

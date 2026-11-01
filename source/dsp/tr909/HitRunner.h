@@ -69,6 +69,7 @@ public:
   // Constant source at the idle level (no noise) with knots every `stepSeconds`: separates the cost of the knots from the cost of the noise.
   void StartSilent(double stepSeconds) { Start(0, stepSeconds, 0.0); amp_ = 0.0; }
   double step() const { return step_; }
+  void Scale(double s) { amp_ *= s; }   // test harness: scaled noise amplitude (linearity of the response to the noise)
   double At(double t)
   {
     const long idx = static_cast<long>(std::floor(t / step_)); Fill(idx + 1);

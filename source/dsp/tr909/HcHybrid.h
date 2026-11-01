@@ -608,7 +608,7 @@ struct Renderer
     if (h.key != KeyFor(seed, h.time)) return false;
     SF.ResetCaches(); SQ.ResetCaches();
     curSeed = seed;
-    nz.Start(noiseSeed >= 0 ? (uint64_t)noiseSeed : (uint64_t)seed, 5e-6, 0.0); engine = false; swc = 0; hold = 0; dec.Restart(0.0); host.clear(); pushed = 0; idle = h.idle;
+    nz.Start(noiseSeed >= 0 ? (uint64_t)noiseSeed : (uint64_t)seed, 5e-6, 0.0); engine = false; swc = 0; hold = 0; dec.Restart(0.0); if (HcEnv("TAILSCALE")) nz.Scale(std::atof(HcEnv("TAILSCALE"))); host.clear(); pushed = 0; idle = h.idle;
     evt.assign(h.et.begin(), h.et.end()); evy.assign(h.ey.begin(), h.ey.end());
     if (h.full) { SF.z = h.z; SF.fS = h.fS; SF.pprev = h.pprev; full = true; S = &SF; }
     else { SQ.z = h.z; SQ.fS = h.fS; SQ.pprev = h.pprev; full = false; S = &SQ; }
@@ -779,6 +779,8 @@ public:
     rd_ += w; produced_ += w; return w;
   }
   bool Finished() const { return !loaded_ || produced_ >= want_ || (R_->Done() && rd_ >= (long)R_->host.size()); }
+  // tables of the reduced models (lane batch of the tail, HcLanes.h)
+  const Red& FullRed() const { return *MF_; } const Red& MiniRed() const { return *MQ_; } const std::vector<char>& QuietMask() const { return quiet_; }
 
 private:
   std::shared_ptr<Red> MF_, MQ_; std::vector<char> quiet_; std::unique_ptr<Rend> R_; std::map<int, typename Rend::Handover> cache_;
