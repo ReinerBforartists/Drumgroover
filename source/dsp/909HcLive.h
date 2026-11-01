@@ -161,6 +161,27 @@ inline long long ThreadCpuUs()
 }
 inline thread_local long long tlBaseUs = 0;   // CPU time this thread spent building bases (to separate it from the entry it was building)
 
+// Load of the whole machine (all processes) over the last few hundred milliseconds, 0..1; Windows only (elsewhere 0). The host and the other
+// plug-ins come first: the preparers work with a share of their time that falls with the load (PrepDuty), the stores fill at full speed again when there is room. Called by the preparer threads only.
+inline double SystemLoad()
+{
+#ifdef _WIN32
+  static std::mutex mu; static unsigned long long lastIdle = 0, lastTotal = 0; static double load = 0.0; static std::chrono::steady_clock::time_point lastT{};
+  std::lock_guard<std::mutex> lk(mu); const auto now = std::chrono::steady_clock::now();
+  if (lastTotal != 0 && now - lastT < std::chrono::milliseconds(200)) return load;
+  FILETIME i, k, u; if (!GetSystemTimes(&i, &k, &u)) return load;
+  auto v = [](FILETIME f) { return (static_cast<unsigned long long>(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
+  const unsigned long long idle = v(i), total = v(k) + v(u);   // kernel time includes the idle time
+  if (lastTotal != 0 && total > lastTotal) load = 1.0 - static_cast<double>(idle - lastIdle) / static_cast<double>(total - lastTotal);
+  lastIdle = idle; lastTotal = total; lastT = now; return load;
+#else
+  return 0.0;
+#endif
+}
+// Share of its time a preparer may work: 1 up to a machine load of kLoadFree, falling linearly to kMinDuty at kLoadFull and above (never 0: the stores keep filling, slowly).
+constexpr double kLoadFree = 0.75, kLoadFull = 0.97, kMinDuty = 0.15;
+inline double PrepDuty(double load) { return std::clamp((kLoadFull - load) / (kLoadFull - kLoadFree), kMinDuty, 1.0); }
+
 // A counting semaphore that does not lose a post (a notify without a waiter is lost): the audio thread posts, a worker waits. Windows: kernel semaphore (a post is one system call, no lock);
 // elsewhere a mutex / condition variable with a counter (the post then takes a lock for a moment).
 #ifdef _WIN32
@@ -188,7 +209,7 @@ private:
 
 // The states at the end of the engine phase (1 ms) that entries are built on: kBases per anchor, the same noise seed for every anchor of a base (an accent between two anchors is a blend of two runs
 // that need the same noise). Built when first needed, read-only afterwards.
-constexpr int kMaxBases = 16;
+constexpr int kMaxBases = 64;
 class Bases
 {
 public:
@@ -198,9 +219,10 @@ public:
     if (!s.b) { StreamBase* st = set.Get(anchor); std::shared_ptr<hch::HcHandover> n(new hch::HcHandover()); const long long c0 = ThreadCpuUs(); if (!st || !st->MakeBase(kSeeds[k], *n)) return nullptr; const long long d = ThreadCpuUs() - c0; tlBaseUs += d; cpuUs_.fetch_add(d); built_.fetch_add(1); s.b = n; }
     return s.b;
   }
-  // Base seeds: chosen from 400 candidates (seeds 9100000...9100399) so that the level of the first 0.83 ms of the 16 lies at the midpoints of the 16 quantile classes of the pool, over all five anchors together
-  // (tools/_sweep/hc_live/hc_base_select.cpp; the mean level of the 16 differs from the pool by at most 0.26 %, 16 random seeds by a median of 4.6 %). Same seed for every anchor.
-  static constexpr uint64_t kSeeds[16] = {9100270, 9100161, 9100285, 9100201, 9100086, 9100060, 9100225, 9100182, 9100397, 9100185, 9100194, 9100036, 9100172, 9100284, 9100323, 9100229};
+  // Base seeds: 64 chosen from 1600 candidates (seeds 9200000...9201599) as a stratified sample: the pool is cut into 64 cells of equal size (splitting at the median of the feature with the largest spread, 25 features:
+  // log rms of three sub-windows of the first 0.75 ms, end value and end slope, for each of the five anchors), one random member of each cell, the best of 20000 such draws (mean and spread of all 25 features closest
+  // to the pool: mean differences at most 0.03 standard deviations, spread ratios 0.97-1.01). tools/_sweep/hc_live/hc_base_select.cpp. Same seed for every anchor.
+  static constexpr uint64_t kSeeds[64] = {9201422, 9201480, 9200273, 9201373, 9200230, 9201351, 9200462, 9201463, 9201076, 9201016, 9201293, 9200499, 9200276, 9200858, 9200738, 9200642, 9200740, 9201427, 9200386, 9201250, 9200532, 9200725, 9201492, 9201522, 9200197, 9200786, 9200059, 9200733, 9200874, 9200888, 9201056, 9200244, 9201519, 9200010, 9200153, 9200240, 9201364, 9201528, 9201246, 9200095, 9201338, 9200194, 9201468, 9200382, 9200096, 9201212, 9201350, 9200046, 9200544, 9200425, 9201192, 9200620, 9201490, 9200734, 9200168, 9200648, 9200638, 9201203, 9201301, 9201388, 9200696, 9200113, 9200955, 9200019};
   long long CpuUs() const { return cpuUs_.load(); }   // CPU time of all base builds so far
   int Built() const { return built_.load(); }
 private:
@@ -247,7 +269,7 @@ public:
   static int PrepThreads() { const int o = PrepOverride().load(); return o > 0 ? o : 2; }
   // Entries are built on one of this many bases per anchor (the first millisecond is shared by the entries of a base, everything after it has its own noise); 0: every entry runs its own engine phase.
   static std::atomic<int>& BasesOverride() { static std::atomic<int> n{-1}; return n; }
-  static int BaseCount() { const int o = BasesOverride().load(); return o < 0 ? 16 : std::min(o, hclive::kMaxBases); }   // 16: with 4 the level of the first millisecond has only 4 values and the statistics of the first milliseconds are not equivalent (tools handoff R310)
+  static int BaseCount() { const int o = BasesOverride().load(); return o < 0 ? 64 : std::min(o, hclive::kMaxBases); }   // 64 bases: the first millisecond of an entry comes from its base; 4 bases gave too few values for the statistics (tools handoff R310, R312)
   // render threads: half of the cores, 2..6 (each tail needs about 1/6 of a core for its 0.35 s; a hit of two anchors has two)
   static int RenderThreads() { const int hw = static_cast<int>(std::thread::hardware_concurrency()); return std::clamp(hw / 2, 2, 6); }
   int RenderThreadCount() const { return nRender_; }
@@ -285,7 +307,7 @@ public:
       running_.store(true);
       for (int i = 0; i < PrepThreads(); ++i) threads_.emplace_back([this, i] { LowPriority(); PrepLoop(i); });
       nRender_ = RenderThreads();
-      for (int i = 0; i < nRender_; ++i) threads_.emplace_back([this] { RenderLoop(); });
+      for (int i = 0; i < nRender_; ++i) threads_.emplace_back([this] { RenderPriority(); RenderLoop(); });
     }
     Wake();
   }
@@ -363,6 +385,7 @@ public:
   unsigned long Underruns() const { return underruns_.load(); }
   void CountUnderrun() { underruns_.fetch_add(1, std::memory_order_relaxed); }
   unsigned long Prepares() const { return prepares_.load(); }
+  unsigned long Throttled() const { return throttled_.load(); }   // preparer cycles skipped because the machine was busy
   // CPU accounting (thread times, microseconds -> seconds): the bases (once, 16 per anchor), the entries without their bases, the render jobs
   double BaseCpuSeconds() const { return bases_.CpuUs() * 1e-6; }
   int BasesBuilt() const { return bases_.Built(); }
@@ -383,6 +406,12 @@ private:
     for (int i = 0; i < hclive::kSlots; ++i) for (int r = 0; r < 2; ++r) slots_[i].buf[r].assign(static_cast<size_t>(hclive::kHitSeconds * hclive::kMaxRate) + 64, 0.0f);
   }
   void Wake() { prepSem_.Post(1); }   // a level lost an entry (or the rate changed): a preparer looks at the stores
+  static void RenderPriority()
+  {
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);   // a hit has a deadline
+#endif
+  }
   static void LowPriority()
   {
 #ifdef _WIN32
@@ -407,8 +436,13 @@ private:
       }
       if (best < 0) { prepSem_.Wait(1000); continue; }
       inflight_[best].fetch_add(1);
+      const auto tb0 = std::chrono::steady_clock::now();
       hclive::Entry* e = BuildEntry(set, best);
       inflight_[best].fetch_sub(1);
+      {   // a busy machine: rest in proportion to the work (duty cycle), the host comes first
+        const double duty = hclive::PrepDuty(hclive::SystemLoad());
+        if (duty < 1.0) { throttled_.fetch_add(1); const double work = std::chrono::duration<double>(std::chrono::steady_clock::now() - tb0).count(); std::this_thread::sleep_for(std::chrono::duration<double>(std::min(1.0, work * (1.0 / duty - 1.0)))); }
+      }
       if (!e) { std::this_thread::sleep_for(std::chrono::milliseconds(200)); continue; }
       if (e->fs != fs_.load() || e->epoch != epoch_.load()) { delete e; continue; }   // built for another rate or before a flush
       prepares_.fetch_add(1);
@@ -506,7 +540,7 @@ private:
   hclive::MpmcQueue<hclive::Entry*> graveyard_;
   std::atomic<uint64_t> nextSeed_{static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count() % 1000000) + 100000};
   std::atomic<bool> freshTail_{true}; std::atomic<uint64_t> tailCounter_{static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count() % 1000003) * 7919 + 500000000ULL};
-  std::atomic<unsigned long> misses_{0}, repeats_{0}, sharedRepeats_{0}, underruns_{0}, prepares_{0}, entryRuns_{0}, renderJobs_{0}; std::atomic<long long> entryCpuUs_{0}, renderCpuUs_{0};
+  std::atomic<unsigned long> throttled_{0}, misses_{0}, repeats_{0}, sharedRepeats_{0}, underruns_{0}, prepares_{0}, entryRuns_{0}, renderJobs_{0}; std::atomic<long long> entryCpuUs_{0}, renderCpuUs_{0};
 };
 
 // The voice of the Hand Clap 909: the live engine when a prepared entry is available, the baked set of the cache otherwise.
