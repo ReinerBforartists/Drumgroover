@@ -51,7 +51,7 @@ inline HitTuning HitTuningFor(Tr909Voice v, bool fast20)
     case Tr909Voice::Ht: t.ytol = fast20 ? 3e-3 : 7e-4; t.yfloor = 0.4; t.ytailT = 0.1; t.ytailMul = 4.0; t.ytail2T = 0.02; t.ytail2Mul = 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Sd: t.ytol = fast20 ? 3e-2 : 2e-3; t.yfloor = 0.7; t.ytailT = 0.2; t.ytailMul = 6.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Bd: t.ytol = fast20 ? 1e-2 : 2e-3; t.yfloor = 0.7; break;
-    case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 1e-3; t.yfloor = 0.4; t.zohW = 0.1; t.preRoll = 0.005; t.capThr = 1e-300; t.cmpEvents = true; break;   // capThr: a charge device evaluated at a bit-identical port voltage repeats its last result (output bitwise equal, HC 15 % less time)
+    case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 2e-3; t.yfloor = 0.4; t.zohW = 0.1; t.preRoll = 0.005; t.capThr = 1e-300; t.cmpEvents = true; break;   // capThr: a charge device evaluated at a bit-identical port voltage repeats its last result (output bitwise equal, HC 15 % less time)
     default: break;
   }
   return t;
