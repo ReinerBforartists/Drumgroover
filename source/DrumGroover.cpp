@@ -9,7 +9,6 @@
 #include "dsp/909Playback.h"
 #include "dsp/909FactoryDefaults.h"
 #include "dsp/909ModelRunner.h"
-#include "dsp/909HcPackages.h"
 #include "dsp/BakeAbort.h"
 
 #include <fstream>
@@ -197,14 +196,6 @@ void DggAppLog(const std::string& msg)
   catch (...) { /* logging must never crash the plugin */ }
 }
 
-constexpr bool DggHcEmbedded()
-{
-#if defined(DGG_HC_EMBEDDED)
-  return true;
-#else
-  return false;
-#endif
-}
 
 bool VariantFileValid(const std::filesystem::path& path);   // defined with the other cache helpers below (used by OnWebContentLoaded)
 void CountFactoryDefaultFiles(double sr, int target, int& ready, int& total);   // defined behind FactoryDefaultEntries()
@@ -1021,8 +1012,6 @@ std::atomic<int> gLiveInstances{0};
 
 DrumGroover::~DrumGroover()
 {
-  for (auto& pool : m909CustomPools) for (auto& v : pool.Voices()) v.SetEngine(nullptr);   // before the engine can go away
-  m909HcLive.reset();
   if (gLiveInstances.fetch_sub(1) == 1)
     dgg::TR808VariantPoolBaker::Instance().Shutdown();
 }
@@ -1507,8 +1496,7 @@ void DrumGroover::OnWebContentLoaded()
   // from its first frame. Cleared in OnIdle once that bake has finished and the index exists.
   const bool noIndex = !std::filesystem::exists(GetCacheDir() / "default.index");
   if (noIndex) gFirstRunBake.store(true);
-  // A new model version (kTr909ModelVersion) gives the 909 default sets new names, while default.index of an earlier start still exists: without this the sounds
-  // would be recalculated silently and stay missing for minutes. So the dialog also shows when a 909 default set of the current version is not complete on disk.
+  // A 909 default set that is not complete on disk (the factory sets of this sample rate) must show the dialog too: without it the sounds would be recalculated silently and stay missing for minutes.
   std::string missingSet;
   {
     const int target909 = mCacheVariantCount.load(std::memory_order_relaxed);
@@ -1521,7 +1509,7 @@ void DrumGroover::OnWebContentLoaded()
     }
     if (!missingSet.empty()) gFirstRunBake.store(true);
   }
-  DggAppLog(std::string("UI loaded: 909 model version ") + std::to_string(dgg::kTr909ModelVersion) + ", HC model " + dgg::hch::kModelVer + (DggHcEmbedded() ? " (embedded)" : " (Models folder)")
+  DggAppLog(std::string("UI loaded")
     + ", sample rate " + std::to_string(static_cast<int>(std::lround(GetSampleRate()))) + ", cache " + GetCacheDir().string()
     + "; default.index " + (noIndex ? "missing" : "present") + ", first-start dialog " + (gFirstRunBake.load() ? "ON" : "off")
     + (missingSet.empty() ? "" : "; 909 default set incomplete: " + missingSet));
@@ -3402,17 +3390,6 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
       MarkSlotStarted(baseName, k);
       const dgg::BakeScope bakeScope(abortGen);   // Pause and Close raise the counter: a hit being rendered then stops and is not stored
       thread_local dgg::Tr909FullModelRunner runner;
-      thread_local const bool runnerHcInit = [&] {
-        dgg::Tr909HcPackageStore::Instance().SetDirectory(GetCacheDir().parent_path() / "Models");
-        runner.SetHcPackages(dgg::Tr909HcPackageStore::Instance().Provider());
-        static std::once_flag logged;
-        std::call_once(logged, [] {
-          std::string st;
-          for (int a : dgg::kTr909Anchors) st += " a" + std::to_string(a) + (dgg::Tr909HcPackageStore::Instance().Get(a) ? "=ok" : "=MISSING");
-          DggAppLog(std::string("HC hybrid packages (model ") + dgg::hch::kModelVer + (DggHcEmbedded() ? ", embedded in the plugin" : ", from the Models folder") + "):" + st);
-        });
-        return true; }();
-        (void)runnerHcInit;
       std::vector<float> tap;
       const auto t0 = std::chrono::steady_clock::now();
       const dgg::Tr909BakeResult res = dgg::BakeAborted() ? dgg::Tr909BakeResult::RunFailed : dgg::Tr909BakeVariant(key, k, runner, tap);
@@ -3944,7 +3921,6 @@ void DrumGroover::HandleSetCustomInstruments(const nlohmann::json& payload)
     DGG_Log(std::string("HandleSetCustomInstruments: ") + dgg::CustomInstrument(k).name + " track='" + ids[k] + "' note=" + std::to_string(notes[k]));
   }
   if (gainsChanged) SendBridgeMessage("articulationLevelState", BuildArticulationGainsJson(mEngineMode.load(std::memory_order_relaxed) == static_cast<int>(EngineMode::LoFi)));
-  Prepare909HcLive();
 }
 
 // Preview of a custom instrument from the UI (knobs of its Drum Engine card, no track needed): the note-on travels the same MIDI path as
@@ -4171,20 +4147,6 @@ void DrumGroover::Setup909Pools(double sampleRate)
   }
 }
 
-// Hand Clap 909: the live engine (prepared noise seeds, render threads) exists while a track plays the Hand Clap; the voices use it as soon as it has an entry for the velocity
-// and play the baked set of the cache before that.
-void DrumGroover::Prepare909HcLive()
-{
-  bool wanted = false;
-  for (int k = 0; k < dgg::kNumCustomInstruments; ++k)
-    if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909 && static_cast<dgg::Tr909Voice>(dgg::CustomInstrument(k).arg) == dgg::Tr909Voice::Hc && mCustomNote[k].load(std::memory_order_relaxed) >= 0) wanted = true;
-  if (!wanted) return;
-  if (!m909HcLive) { dgg::Tr909HcPackageStore::Instance().SetDirectory(GetCacheDir().parent_path() / "Models"); m909HcLive = dgg::Tr909HcLiveEngine::Get(); }
-  m909HcLive->Configure(GetSampleRate());
-  for (int k = 0; k < dgg::kNumCustomInstruments; ++k)
-    if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909) for (auto& v : m909CustomPools[k].Voices()) v.SetEngine(m909HcLive.get());
-}
-
 // Builds the live Rim Shot hosts (worker thread, about 1.4 s and 14 MB each) when the 909 engine is selected; a hit before they are ready is silent. Called on every change of the engine or the sample rate.
 void DrumGroover::Prepare909Rim()
 {
@@ -4235,7 +4197,6 @@ void DrumGroover::OnReset()
   for (auto& pool : mTomPools) pool.SetSampleRate(sr);
   Setup909Pools(sr);
   Prepare909Rim();
-  Prepare909HcLive();
   for (auto& pool : mCustomPools) pool.SetSampleRate(sr);
   for (auto& pool : mCustomRmPools) pool.SetSampleRate(sr);
   for (auto& pool : mCustomHcPools) pool.SetSampleRate(sr);

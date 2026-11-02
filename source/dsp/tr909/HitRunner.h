@@ -50,7 +50,7 @@ inline HitTuning HitTuningFor(Tr909Voice v, bool fast20)
     case Tr909Voice::Ht: t.ytol = fast20 ? 3e-3 : 7e-4; t.yfloor = 0.4; t.ytailT = 0.1; t.ytailMul = 4.0; t.ytail2T = 0.02; t.ytail2Mul = 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Sd: t.ytol = fast20 ? 3e-2 : 2e-3; t.yfloor = 0.7; t.ytailT = 0.2; t.ytailMul = 6.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Bd: t.ytol = fast20 ? 1e-2 : 2e-3; t.yfloor = 0.7; break;
-    case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 1e-3; t.yfloor = 0.4; t.zohW = 0.1; t.preRoll = 0.005; t.chordFirst = 1e9; t.capThr = 3e-4; break;
+    case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 1e-3; t.yfloor = 0.4; t.zohW = 0.1; t.preRoll = 0.005; break;
     default: break;
   }
   return t;
@@ -214,7 +214,6 @@ public:
   double idle() const { return m_->yIdle; }
   long steps() const { return m_->steps; }
   long unrecovered() const { return m_->fails; }
-  auto& ModelState() { return *m_; }   // read access to the integrator state for the hybrid reduced model (HcHybrid.h) at its hand-over
 
 private:
   static constexpr double kH0 = 1e-5 / 64.0;

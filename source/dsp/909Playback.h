@@ -21,7 +21,7 @@ struct Tr909SetKeyHash
   size_t operator()(const Tr909SetKey& k) const
   {
     uint64_t h = k.params * 0x9E3779B97F4A7C15ULL;
-    h ^= (static_cast<uint64_t>(k.voice) << 56) ^ (static_cast<uint64_t>(k.accentCode) << 40) ^ (static_cast<uint64_t>(k.noise) << 36) ^ (static_cast<uint64_t>(k.sampleRateHz) << 8) ^ static_cast<uint64_t>(k.modelVersion);
+    h ^= (static_cast<uint64_t>(k.voice) << 56) ^ (static_cast<uint64_t>(k.accentCode) << 40) ^ (static_cast<uint64_t>(k.noise) << 36) ^ (static_cast<uint64_t>(k.sampleRateHz) << 8);
     h ^= h >> 33; h *= 0xFF51AFD7ED558CCDULL; h ^= h >> 33;
     return static_cast<size_t>(h);
   }

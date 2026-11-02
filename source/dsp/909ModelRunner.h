@@ -4,7 +4,6 @@
 #pragma once
 #include "909BakeHost.h"
 #include "tr909/HitRunner.h"
-#include "tr909/HcHybrid.h"
 #include "tr909/models/lt_a25.h"
 #include "tr909/models/lt_a50.h"
 #include "tr909/models/lt_a75.h"
@@ -35,7 +34,6 @@
 #include "tr909/models/hc_a75.h"
 #include "tr909/models/hc_a100.h"
 #include "tr909/models/hc_a127.h"
-#include <functional>
 #include <memory>
 
 namespace dgg {
@@ -43,11 +41,6 @@ namespace dgg {
 class Tr909FullModelRunner : public Tr909ModelRunner, public Tr909LiveSource
 {
 public:
-  // Table packages of the hand clap (HC) hybrid model (one per accent anchor, tr909/HcHybrid.h). With a provider that returns a package for the anchor, the HC runs on the
-  // hybrid model at the 5 us noise path; without one (or on the 20 us path, or when the package cannot be read) the HC runs on the full model as before.
-  // Set before the first run; the packages must outlive the runner.
-  using HcPackageProvider = std::function<const hch::HcPackage*(int anchorCode)>;
-  void SetHcPackages(HcPackageProvider p) { hcPkgs_ = std::move(p); }
   bool Run(const Tr909RunRequest& req, std::vector<float>& out) override
   {
     int a = -1;
@@ -132,34 +125,6 @@ private:
     pcmfast::HitNoise noise_; pcmfast::HostDecimator dec_; long produced_ = 0, want_ = 0;
   };
 
-  // HC on the hybrid model: tables from the package, state at 40 ms cached per noise seed. Anything the hybrid does not cover goes to the full model of the same anchor.
-  template <class Mdl>
-  struct HcSlot : SlotBase
-  {
-    HcSlot(HcPackageProvider prov, int anchorCode) : prov_(std::move(prov)), code_(anchorCode) {}
-    bool Ensure(bool fast20) { if (fast20) return false; if (!pkg_) pkg_ = prov_(code_); if (!pkg_) return false; if (!tried_) { tried_ = true; ok_ = hs_.Load(*pkg_); } return ok_; }
-    bool Render(Tr909Voice v, bool fast20, uint64_t seed, double seconds, int fs, std::vector<float>& out) override
-    {
-      if (!Ensure(fast20)) { if (fast20) return full_.Render(v, fast20, seed, seconds, fs, out); out.clear(); return false; }   // the 5 us path exists only as the hybrid model (model version 3)
-      // like HitRunner::Render: the samples the decimator has produced up to the end of the hit, at most seconds x fs
-      const long want = static_cast<long>(seconds * fs); out.clear(); out.resize(static_cast<size_t>(std::max(want, 0L)));
-      if (!hs_.Begin(seed, static_cast<double>(fs), seconds)) { out.clear(); return false; }
-      long got = 0; while (got < want) { if (::dgg::BakeAborted()) { out.clear(); return false; } const int w = hs_.Pull(out.data() + got, static_cast<int>(std::min<long>(want - got, 4096))); if (w <= 0) break; got += w; }
-      out.resize(static_cast<size_t>(got)); return got > 0;
-    }
-    void Warm(Tr909Voice v, bool fast20) override { if (!Ensure(fast20) && fast20) full_.Warm(v, fast20); }
-    bool Begin(Tr909Voice v, bool fast20, uint64_t seed, double seconds, int fs) override
-    {
-      useHybrid_ = Ensure(fast20); if (!useHybrid_) { if (fast20) { useFull_ = true; return full_.Begin(v, fast20, seed, seconds, fs); } useFull_ = false; return false; }
-      useFull_ = false;
-      return hs_.Begin(seed, static_cast<double>(fs), seconds);
-    }
-    int Pull(float* out, int n) override { return useHybrid_ ? hs_.Pull(out, n) : (useFull_ ? full_.Pull(out, n) : 0); }
-    // builds the cached state of a noise seed (about 0.2 s); call on a worker thread before the first Begin of that seed
-    bool Prepare(uint64_t seed, bool fast20) { return Ensure(fast20) && hs_.Prepare(seed); }
-    HcPackageProvider prov_; int code_; const hch::HcPackage* pkg_ = nullptr; hch::HitStream<Mdl> hs_; Slot<Mdl> full_; bool tried_ = false, ok_ = false, useHybrid_ = false, useFull_ = false;
-  };
-
   SlotBase* SlotFor(Tr909Voice v, int anchorCode)
   {
     int a = -1; for (int i = 0; i < kTr909AnchorCount; ++i) if (kTr909Anchors[i] == anchorCode) a = i;
@@ -169,17 +134,8 @@ private:
     return slot.get();
   }
 
-  std::unique_ptr<SlotBase> Make(Tr909Voice v, int a)
+  static std::unique_ptr<SlotBase> Make(Tr909Voice v, int a)
   {
-    if (v == Tr909Voice::Hc && hcPkgs_)   // the package is looked up when the slot is used (Ensure), so a directory that is set later is found
-    {
-      const int code = kTr909Anchors[a];
-      if (a == 0) return std::unique_ptr<SlotBase>(new HcSlot<Tr909_HC_A25>(hcPkgs_, code));
-      if (a == 1) return std::unique_ptr<SlotBase>(new HcSlot<Tr909_HC_A50>(hcPkgs_, code));
-      if (a == 2) return std::unique_ptr<SlotBase>(new HcSlot<Tr909_HC_A75>(hcPkgs_, code));
-      if (a == 3) return std::unique_ptr<SlotBase>(new HcSlot<Tr909_HC_A100>(hcPkgs_, code));
-      if (a == 4) return std::unique_ptr<SlotBase>(new HcSlot<Tr909_HC_A127>(hcPkgs_, code));
-    }
 #define DGG_909_SLOT(V, VOICE, CODE, IDX) if (v == Tr909Voice::VOICE && a == IDX) return std::unique_ptr<SlotBase>(new Slot<Tr909_##V##_A##CODE>());
 #define DGG_909_VOICE(V, VOICE) DGG_909_SLOT(V, VOICE, 25, 0) DGG_909_SLOT(V, VOICE, 50, 1) DGG_909_SLOT(V, VOICE, 75, 2) DGG_909_SLOT(V, VOICE, 100, 3) DGG_909_SLOT(V, VOICE, 127, 4)
     DGG_909_VOICE(BD, Bd) DGG_909_VOICE(SD, Sd) DGG_909_VOICE(LT, Lt) DGG_909_VOICE(MT, Mt) DGG_909_VOICE(HT, Ht) DGG_909_VOICE(HC, Hc)
@@ -189,7 +145,6 @@ private:
   }
 
   std::unique_ptr<SlotBase> slots_[static_cast<int>(Tr909Voice::kCount)][kTr909AnchorCount];
-  HcPackageProvider hcPkgs_;
   SlotBase* live_[2] = {nullptr, nullptr}; double liveW_[2] = {0.0, 0.0}; int liveN_ = 0;
 };
 

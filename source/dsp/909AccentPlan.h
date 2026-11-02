@@ -86,10 +86,6 @@ inline int Tr909AccentRuns(Tr909Voice v, int code, Tr909AccentRun out[2])
 // "<BaseName>_v<k>.f32" like every other set; k selects the noise seed of the variant (seed = k), so the seed is part of the file name.
 enum class Tr909NoisePath : int { Reference5us = 0, Fast20us = 1 };
 
-// Version of the 909 fast models, the noise sources and the blend rule. It is part of every set name (like the "_m<N>" of the other cache sets):
-// changing a model invalidates the files baked with the old one. Increase it with every change of a header, tolerance or noise source.
-// 3: closed hi-hat on the hybrid reduced model (tr909/HcHybrid.h, tables hc_a<anchor>.hcpk, state hc909-lev7-fine1-gap3); the sets baked with the full HC model (2) are not used.
-constexpr int kTr909ModelVersion = 3;
 
 struct Tr909SetKey
 {
@@ -98,25 +94,23 @@ struct Tr909SetKey
   int accentCode = 0;
   Tr909NoisePath noise = Tr909NoisePath::Reference5us;
   int sampleRateHz = 48000;                 // rate of the baked samples (the cache is rate specific)
-  int modelVersion = kTr909ModelVersion;    // model the file was baked with
-  bool IsCurrent() const { return modelVersion == kTr909ModelVersion; }
-  bool operator==(const Tr909SetKey& o) const { return voice == o.voice && params == o.params && accentCode == o.accentCode && noise == o.noise && sampleRateHz == o.sampleRateHz && modelVersion == o.modelVersion; }
+  bool operator==(const Tr909SetKey& o) const { return voice == o.voice && params == o.params && accentCode == o.accentCode && noise == o.noise && sampleRateHz == o.sampleRateHz; }
 };
 
 inline std::string Tr909SetBaseName(const Tr909SetKey& k)
 {
   char b[128];
-  std::snprintf(b, sizeof b, "909_%s_p%016llx_c%03d_n%d_sr%d_m%d", Tr909VoiceName(k.voice), static_cast<unsigned long long>(k.params), std::clamp(k.accentCode, 0, kTr909MaxAccentCode), static_cast<int>(k.noise), k.sampleRateHz, k.modelVersion);
+  std::snprintf(b, sizeof b, "909_%s_p%016llx_c%03d_n%d_sr%d", Tr909VoiceName(k.voice), static_cast<unsigned long long>(k.params), std::clamp(k.accentCode, 0, kTr909MaxAccentCode), static_cast<int>(k.noise), k.sampleRateHz);
   return b;
 }
 
 inline bool Tr909DecodeSetBaseName(const std::string& name, Tr909SetKey& k)
 {
-  char vb[8] = {0}; unsigned long long p = 0; int c = 0, n = 0, sr = 0, mv = 0;
-  if (std::sscanf(name.c_str(), "909_%2[a-z]_p%16llx_c%3d_n%d_sr%d_m%d", vb, &p, &c, &n, &sr, &mv) != 6) return false;
+  char vb[8] = {0}; unsigned long long p = 0; int c = 0, n = 0, sr = 0;
+  if (std::sscanf(name.c_str(), "909_%2[a-z]_p%16llx_c%3d_n%d_sr%d", vb, &p, &c, &n, &sr) != 5) return false;
   Tr909Voice v;
   if (!Tr909VoiceFromName(vb, v) || c < 0 || c > kTr909MaxAccentCode || (n != 0 && n != 1)) return false;
-  Tr909SetKey t; t.voice = v; t.params = p; t.accentCode = c; t.noise = static_cast<Tr909NoisePath>(n); t.sampleRateHz = sr; t.modelVersion = mv;
+  Tr909SetKey t; t.voice = v; t.params = p; t.accentCode = c; t.noise = static_cast<Tr909NoisePath>(n); t.sampleRateHz = sr;
   if (Tr909SetBaseName(t) != name) return false;   // the name must be exactly what the key spells
   k = t; return true;
 }
