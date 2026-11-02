@@ -36,6 +36,7 @@ struct HitTuning
   double capThr = 0.0;       // bypass of the nonlinear capacitance charges within this port voltage change (V) of the last full evaluation; 0: off (FullFast2::CapQm)
   double chordFirst = 5.0;   // a chord step whose first Newton correction (V) exceeds this refactors the Jacobian; 1e9: never (HC: 1.00 -> 0.36 factorisations per step in the engine phase, output changes by < -100 dB, tools handoff R304)
   bool cmpEvents = false;    // comparator input ports get the same event prediction as the op-amp input stages: a step never runs through the switching region unseen (HC: the flank times of the claps)
+  double knotPairT = -1.0; int knotMaxJ = 6;   // knotPairT >= 0: from this time (s after the trigger) a step may span 2^(j-5) noise knots, j <= knotMaxJ, the noise handled as linear segments between the knots
   double preRoll = 0.0;      // seconds of noise before the trigger (a multiple of the noise knot spacing): the noise-driven states then belong to the noise sequence of the hit
 };
 
@@ -51,7 +52,7 @@ inline HitTuning HitTuningFor(Tr909Voice v, bool fast20)
     case Tr909Voice::Ht: t.ytol = fast20 ? 3e-3 : 7e-4; t.yfloor = 0.4; t.ytailT = 0.1; t.ytailMul = 4.0; t.ytail2T = 0.02; t.ytail2Mul = 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Sd: t.ytol = fast20 ? 3e-2 : 2e-3; t.yfloor = 0.7; t.ytailT = 0.2; t.ytailMul = 6.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Bd: t.ytol = fast20 ? 1e-2 : 2e-3; t.yfloor = 0.7; break;
-    case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 2e-3; t.yfloor = 0.4; t.zohW = 0.1; t.preRoll = 0.005; t.capThr = 1e-300; t.cmpEvents = true; break;   // capThr: a charge device evaluated at a bit-identical port voltage repeats its last result (output bitwise equal, HC 15 % less time)
+    case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 2e-3; t.yfloor = 0.4; t.zohW = 0.1; t.preRoll = 0.005; t.capThr = 1e-300; t.cmpEvents = true; t.knotPairT = 0.05; t.knotMaxJ = 7; break;   // capThr: a charge device evaluated at a bit-identical port voltage repeats its last result (output bitwise equal, HC 15 % less time)
     default: break;
   }
   return t;
@@ -141,15 +142,24 @@ public:
     long long nextBp = 1LL << 40; for (long long b : bp) if (b > n_) { nextBp = b; break; }
     if (n_ < preN_) nextBp = std::min(nextBp, preN_);   // the trigger starts here
     if (Mdl::kNT == 2) nextBp = std::min(nextBp, (n_ / knotN_ + 1) * knotN_);
+    long long nextCorner = 1LL << 40; for (long long b : bp) if (b > n_) { nextCorner = b; break; }
     int jj = tu_.fixedJ >= 0 ? tu_.fixedJ : j_; while (jj > 0 && n_ + (1LL << jj) > nextBp) --jj;
+    int nseg = 1;
+    if (Mdl::kNT == 2 && tu_.knotPairT >= 0.0 && knotN_ == 32 && n_ >= preN_ && (n_ - preN_) * kH0 >= tu_.knotPairT && ((n_ - preN_) % knotN_) == 0 && tu_.fixedJ < 0 && j_ >= 6)
+    {
+      int jp = std::min(j_, tu_.knotMaxJ); while (jp >= 6 && n_ + (1LL << jp) > nextCorner) --jp;
+      if (jp >= 6) { jj = jp; nseg = 1 << (jp - 5); }
+    }
     const double h = h0 * static_cast<double>(1LL << jj);
     const double xa[2] = {Mdl::kNT == 2 ? noise_->At(kStartTime + (n_ - preN_) * h0) : 0.0, HitTrigger((n_ - preN_) * h0)};
     const double xb[2] = {Mdl::kNT == 2 ? noise_->At(kStartTime + (n_ + (1LL << jj) - preN_) * h0) : 0.0, HitTrigger((n_ + (1LL << jj) - preN_) * h0)};
     const double* const x0 = Mdl::kNT == 2 ? xa : &xa[1]; const double* const x1 = Mdl::kNT == 2 ? xb : &xb[1];
+    double xseg[9 * 2]; const double* x0s = x0; const double* x1s = x1;
+    if (nseg > 1) { for (int m = 0; m <= nseg; ++m) { const long long nn = n_ + static_cast<long long>(m) * knotN_ - preN_; xseg[2 * m] = noise_->At(kStartTime + nn * h0); xseg[2 * m + 1] = HitTrigger(nn * h0); } x0s = xseg; x1s = xseg + 2 * nseg; }
     const long it0 = m.its, ret0 = m.retries, fail0 = m.fails;
     double pOld[Mdl::kNP]; for (int a = 0; a < Mdl::kNP; ++a) pOld[a] = m.p[a];
     for (int k = 0; k < Mdl::kNF; ++k) gF[k] = m.f0[k];
-    const double y = m.Step(pj_[jj], x0, x1); n_ += 1LL << jj;
+    const double y = m.Step(pj_[jj], x0s, x1s, 0, nseg); n_ += 1LL << jj;
     t_ = (n_ - preN_) * h0; y_ = y;
     gEnv_ = std::fmax(std::fabs(y), gEnv_ * std::exp(-h / kYenvTau));
     const long used = m.its - it0; const bool hard = (m.retries != ret0) || (m.fails != fail0) || used > jdown;

@@ -543,15 +543,15 @@ template <class M> struct FullFast2
     return y;
   }
   // one step of propagator pi; x0 / x1: values of the NT time-dependent sources at the start / end of the step
-  double Step(int pi, const double* x0, const double* x1, int depth = 0)
+  double Step(int pi, const double* x0, const double* x1, int depth = 0, int nseg = 1)
   {
     const double aL = accLast, aN = acc; double zs[R], fs[NF], ps[NP]; for (int i = 0; i < R; ++i) zs[i] = z[i]; for (int i = 0; i < NF; ++i) fs[i] = f0[i]; for (int i = 0; i < NP; ++i) ps[i] = p[i];
-    bool ok = true; double y = StepOnce(pi, x0, x1, ok);
+    bool ok = true; double y = StepOnce(pi, x0, x1, ok, nseg);
     if (ok) return y;
     if (activeSet && !noFallback)   // the reduced Newton matrix may have been the reason: the same step with the full matrix first
     {
       for (int i = 0; i < R; ++i) z[i] = zs[i]; for (int i = 0; i < NF; ++i) f0[i] = fs[i]; for (int i = 0; i < NP; ++i) p[i] = ps[i]; luOk = false; --steps; accLast = aL; ++asFallbacks;
-      activeSet = false; ok = true; y = StepOnce(pi, x0, x1, ok); activeSet = true; luOk = false;
+      activeSet = false; ok = true; y = StepOnce(pi, x0, x1, ok, nseg); activeSet = true; luOk = false;
       if (ok) return y;
     }
     int ph = pi < (int)halfIdx.size() ? halfIdx[pi] : -1;
@@ -559,19 +559,47 @@ template <class M> struct FullFast2
     if (depth >= maxDepth || ph < 0) { ++fails; return y; }
     for (int i = 0; i < R; ++i) z[i] = zs[i]; for (int i = 0; i < NF; ++i) f0[i] = fs[i]; for (int i = 0; i < NP; ++i) p[i] = ps[i]; luOk = false; --steps; ++retries; accLast = aL;
     double xm[NT > 0 ? NT : 1]; for (int t = 0; t < NT; ++t) xm[t] = 0.5 * (x0[t] + x1[t]);
-    acc = 0.5 * (aL + aN); Step(ph, x0, xm, depth + 1); acc = aN; return Step(ph, xm, x1, depth + 1);
+    acc = 0.5 * (aL + aN);
+    if (nseg > 1) { const double* xmid = x0 + (nseg / 2) * NT; Step(ph, x0, xmid, depth + 1, nseg / 2); acc = aN; return Step(ph, xmid, x1, depth + 1, nseg / 2); }
+    Step(ph, x0, xm, depth + 1); acc = aN; return Step(ph, xm, x1, depth + 1);
   }
-  double StepOnce(int pi, const double* x0, const double* x1, bool& ok)
+  double StepOnce(int pi, const double* x0, const double* x1, bool& ok, int nseg = 1)
   {
     const Prop& P = props[pi]; const double h = P.h; double zk[R], pk[NP], dx[NT > 0 ? NT : 1]; lastPi = pi;
     capH = h; for (int i = 0; i < NP; ++i) ps0[i] = p[i]; ++q0Gen;
     if (predW > 0.0 && hPrevStep > 0.0) { const double r = std::fmin(h / hPrevStep, 2.0) * predW; for (int i = 0; i < NP; ++i) p[i] += r * (ps0[i] - pStartPrev[i]); }
     unsigned long long tp0 = 0, tp1 = 0; PROF_T(tp0);
     for (int t = 0; t < NT; ++t) dx[t] = (x1[t] - x0[t]) / h;
+    double aIn[R];
+    if (nseg > 1)
+    {   // the input is piecewise linear with kinks at the noise knots inside the step (x0 points to nseg + 1 values): response of every segment with the base propagator, then merged pairwise,
+      // block A followed by block B of length l: Phi_l * resp(A) + resp(B)
+      int q = 0; while ((1 << q) < nseg) ++q; int chain[4]; chain[0] = pi; for (int k = 1; k <= q; ++k) chain[k] = halfIdx[chain[k - 1]];
+      const Prop& PB = props[chain[q]]; const double hb = PB.h; double sv[8][R];
+      for (int m = 0; m < nseg; ++m)
+      {
+        const double* xa = x0 + m * NT; const double* xb = x0 + (m + 1) * NT; const double a0 = accLast + (acc - accLast) * m / nseg, a1 = accLast + (acc - accLast) * (m + 1) / nseg;
+        for (int i = 0; i < R; ++i)
+        {
+          double c = PB.ConeC[i] + PB.Ga[i * NU] * a0 + PB.Gb[i * NU] * a1;
+          for (int t = 0; t < NT; ++t) c += PB.Ga[i * NU + 1 + 2 * t] * xa[t] + PB.Gb[i * NU + 1 + 2 * t] * xb[t] + (PB.Ga[i * NU + 2 + 2 * t] + PB.Gb[i * NU + 2 + 2 * t]) * ((xb[t] - xa[t]) / hb);
+          sv[m][i] = c;
+        }
+      }
+      int cnt = nseg;
+      for (int k = 1; k <= q; ++k)
+      {
+        const Prop& PK = props[chain[q - k + 1]];
+        for (int m = 0; m < cnt / 2; ++m) { double out[R]; MatVec(PK.Phi.data(), R, R, sv[2 * m], R, out, sv[2 * m + 1]); for (int i = 0; i < R; ++i) sv[m][i] = out[i]; }
+        cnt /= 2;
+      }
+      for (int i = 0; i < R; ++i) aIn[i] = sv[0][i];
+      for (int t = 0; t < NT; ++t) dx[t] = (x1[t] - x0[(nseg - 1) * NT + t]) / hb;   // derivative of the input at the end of the step (ports and output)
+    }
     for (int i = 0; i < R; ++i)
     {
-      double a = P.ConeC[i] + P.Ga[i * NU] * accLast + P.Gb[i * NU] * acc;
-      for (int t = 0; t < NT; ++t) a += P.Ga[i * NU + 1 + 2 * t] * x0[t] + P.Gb[i * NU + 1 + 2 * t] * x1[t] + (P.Ga[i * NU + 2 + 2 * t] + P.Gb[i * NU + 2 + 2 * t]) * dx[t];
+      double a = nseg > 1 ? aIn[i] : P.ConeC[i] + P.Ga[i * NU] * accLast + P.Gb[i * NU] * acc;
+      if (nseg == 1) for (int t = 0; t < NT; ++t) a += P.Ga[i * NU + 1 + 2 * t] * x0[t] + P.Gb[i * NU + 1 + 2 * t] * x1[t] + (P.Ga[i * NU + 2 + 2 * t] + P.Gb[i * NU + 2 + 2 * t]) * dx[t];
       if (fastDot && matVec) { zk[i] = a; continue; }
       const double* ph = &P.Phi[i * R]; a = Dot(ph, z, R, a);
       const double* gf = &P.GaF[i * NF]; a = Dot(gf, f0, NF, a);
