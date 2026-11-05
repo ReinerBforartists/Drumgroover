@@ -21,13 +21,17 @@ inline bool Tr909LanesAvailable()
   }();
   return ok;
 }
-// Renders n (1..4) hits of the LT model at anchor index anchorIdx (0..4 for the codes 25 / 50 / 75 / 100 / 127) with the 5 us reference noise at once; out[i] for seeds[i] at fs. aborted: the bake abort
+// Renders n (1..4) hits of the LT (Tr909LaneRenderLT), MT (Tr909LaneRenderMT) or HT (Tr909LaneRenderHT) model at anchor index anchorIdx (0..4 for the codes 25 / 50 / 75 / 100 / 127) with the 5 us reference noise at once; out[i] for seeds[i] at fs. aborted: the bake abort
 // test of the caller (polled every few hundred steps). False: not rendered (solver failure, abort, unsupported) - the caller renders the hits one by one. Call only when Tr909LanesAvailable().
 bool Tr909LaneRenderLT(int anchorIdx, const uint64_t* seeds, int n, double seconds, double fs, std::vector<float>* out, bool (*aborted)());
+bool Tr909LaneRenderMT(int anchorIdx, const uint64_t* seeds, int n, double seconds, double fs, std::vector<float>* out, bool (*aborted)());
+bool Tr909LaneRenderHT(int anchorIdx, const uint64_t* seeds, int n, double seconds, double fs, std::vector<float>* out, bool (*aborted)());
 }  // namespace dgg
 #else
 namespace dgg {
 inline bool Tr909LanesAvailable() { return false; }
 inline bool Tr909LaneRenderLT(int, const uint64_t*, int, double, double, std::vector<float>*, bool (*)()) { return false; }
+inline bool Tr909LaneRenderMT(int, const uint64_t*, int, double, double, std::vector<float>*, bool (*)()) { return false; }
+inline bool Tr909LaneRenderHT(int, const uint64_t*, int, double, double, std::vector<float>*, bool (*)()) { return false; }
 }  // namespace dgg
 #endif

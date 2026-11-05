@@ -30,6 +30,8 @@ struct HitTuning
   double ytail2T = 0.0, ytail2Mul = 1.0;   // milder stage before ytailT
   double dpTol = 0.3;        // limit of the port voltage change per step
   double zohW = 0.2;         // share of zero-order hold in the current interpolation
+  bool noTanhEvents = false; // true: the op-amp input stage event prediction does not limit the step size
+  int jGrow = 1;             // the step size may grow by this many powers of two per step
   bool quasiLinearCaps = false;
   int fixedJ = -1;           // >= 0: fixed step 2^fixedJ x 0.156 us (only shortened to meet a pulse corner or noise knot); -1: adaptive
   int knotSpan = 1;          // a step may span this many noise knots (1: every knot ends a step)
@@ -47,9 +49,9 @@ inline HitTuning HitTuningFor(Tr909Voice v, bool fast20)
   HitTuning t;
   switch (v)
   {
-    case Tr909Voice::Lt: t.ytol = fast20 ? 1e-2 : 3e-3; t.yfloor = 1.0; t.ytailT = 0.1; t.ytailMul = fast20 ? 4.0 : 8.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
-    case Tr909Voice::Mt: t.ytol = fast20 ? 3e-3 : 1.5e-3; t.yfloor = 0.7; t.ytailT = 0.1; t.ytailMul = 1.6; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
-    case Tr909Voice::Ht: t.ytol = fast20 ? 3e-3 : 7e-4; t.yfloor = 0.4; t.ytailT = 0.1; t.ytailMul = 4.0; t.ytail2T = 0.02; t.ytail2Mul = 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
+    case Tr909Voice::Lt: t.ytol = fast20 ? 1e-2 : 3e-3; t.yfloor = 1.0; t.ytailT = 0.1; t.ytailMul = fast20 ? 4.0 : 8.0; t.dpTol = 1.0; t.quasiLinearCaps = true; t.noTanhEvents = !fast20; t.jGrow = fast20 ? 1 : 3; break;
+    case Tr909Voice::Mt: t.ytol = 3e-3; t.yfloor = 0.7; t.ytailT = 0.1; t.ytailMul = 1.6; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
+    case Tr909Voice::Ht: t.ytol = fast20 ? 3e-3 : 1.5e-3; t.yfloor = 0.4; t.ytailT = 0.1; t.ytailMul = 4.0; t.ytail2T = 0.02; t.ytail2Mul = 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Sd: t.ytol = fast20 ? 3e-2 : 9e-4; t.yfloor = 0.7; t.ytailT = fast20 ? 0.2 : 0.3; t.ytailMul = fast20 ? 6.0 : 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Bd: t.ytol = fast20 ? 1e-2 : 2e-3; t.yfloor = 0.7; break;
     case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 2e-3; t.yfloor = 0.7; t.zohW = 0.1; t.preRoll = 0.005; t.capThr = 1e-300; t.cmpEvents = true; t.knotPairT = 0.05; t.knotMaxJ = 7; break;   // capThr: a charge device evaluated at a bit-identical port voltage repeats its last result (output bitwise equal, HC 15 % less time)
@@ -171,7 +173,7 @@ public:
       const int pp = Mdl::kDevPort[d], idx = Mdl::kDevIdx[d]; const double k = Mdl::kTanh[3 * idx] / Mdl::kTanh[3 * idx + 1];
       const double xn = k * m.p[pp], xo = k * pOld[pp], rate = (xn - xo) / h, ax = std::fabs(xn), toward = (xn > 0 ? -rate : rate);
       double c = 1e300; if (ax < kXs) c = kXs / std::fmax(std::fabs(rate), 1e-30); else if (toward > 0) c = 0.5 * (ax - kXs) / toward;
-      if (c < hMax) { hMax = c; lim = 1; }
+      if (c < hMax && !tu_.noTanhEvents) { hMax = c; lim = 1; }
     }
     if (tu_.cmpEvents) for (int d = 0; d < Mdl::kNumDev; ++d) if (Mdl::kDevType[d] == 4)
     {   // comparator: the tanh argument is the second port voltage itself
@@ -197,7 +199,7 @@ public:
     if (dpMax > tu_.dpTol) { const double c = h * tu_.dpTol / dpMax; if (c < hMax) { hMax = c; lim = 3; } }
     ++limCount[lim];
     int jn = 0; while (jn < jmax && h0 * static_cast<double>(1LL << (jn + 1)) <= hMax) ++jn;
-    j_ = hard ? std::max(0, std::min(jn, jj - 1)) : std::min(jn, jj + 1);
+    j_ = hard ? std::max(0, std::min(jn, jj - 1)) : std::min(jn, jj + tu_.jGrow);
     if (tu_.fixedJ >= 0) j_ = tu_.fixedJ;
   }
 

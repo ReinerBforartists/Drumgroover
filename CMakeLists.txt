@@ -119,6 +119,8 @@ iplug_add_plugin(${PROJECT_NAME}
     source/dsp/Scheduler.cpp
     source/dsp/PreviewScheduler.cpp
     source/dsp/tr909/HitLanesLT.cpp
+    source/dsp/tr909/HitLanesMT.cpp
+    source/dsp/tr909/HitLanesHT.cpp
   WEB_RESOURCES
     ${DGG_WEB_RESOURCES}
   FORMATS VST3
@@ -128,6 +130,6 @@ iplug_add_plugin(${PROJECT_NAME}
 # The lane engine of the 909 cache bake (tr909/HitLanes.h) is always compiled with AVX2, independent of DGG_AVX2: 256-bit code mixed with legacy-SSE code is about nine times slower. The entry is
 # only called after a run-time check of the CPU (Tr909LanesAvailable); the unit has its own namespace, so none of its AVX2 code is shared with the rest of the plugin.
 if(MSVC)
-  set_source_files_properties(source/dsp/tr909/HitLanesLT.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
+  set_source_files_properties(source/dsp/tr909/HitLanesLT.cpp source/dsp/tr909/HitLanesMT.cpp source/dsp/tr909/HitLanesHT.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
 endif()
 

@@ -97,8 +97,8 @@ template <class M> struct Eng
   static inline void Junction(const double* q, double nvt, double xbv, V vd, V& ii, V& gg)
   {
     const double Is = q[0];
-    const V e1 = vexp(vmin(vd / V(nvt), V(80.0)));
-    ii = V(Is) * (e1 - V(1.0)) + V(kGmin) * vd; gg = V(Is) * e1 / V(nvt) + V(kGmin);
+    const double inv = 1.0 / nvt; const V e1 = vexp(vmin(vd * V(inv), V(80.0)));
+    ii = V(Is) * (e1 - V(1.0)) + V(kGmin) * vd; gg = V(Is * inv) * e1 + V(kGmin);
     if (xbv < 1e29)
     {
       const V rev = le(vd, V(-xbv));   // vd <= -xbv: breakdown branch
@@ -110,7 +110,7 @@ template <class M> struct Eng
       }
     }
   }
-  static inline void CapQ(const double* r, V v, V& q, V& c, bool wantC)
+  inline void CapQ(const double* r, V v, V& q, V& c, bool wantC)
   {
     const int kind = (int)r[0]; const double C0 = r[2], cj0 = r[3], vj = r[4], m = r[5], tt = r[6];
     V qj(0.0), cj(0.0);
@@ -121,7 +121,8 @@ template <class M> struct Eng
       if (mask(low))
       {
         const V t = V(1.0) - v / V(vj);
-        ql = V(vj * cj0 / (1.0 - m)) * (V(1.0) - vpow(t, V(1.0 - m))); if (wantC) cl = V(cj0) / vpow(t, V(m));
+        const V pm = m == 0.5 ? vsqrt(t) : vpow(t, V(m));   // t^m once; t^(1-m) = t / t^m
+        ql = V(vj * cj0 / (1.0 - m)) * (V(1.0) - t / pm); if (wantC) cl = V(cj0) / pm;
       }
       if (mask(low) != 15)
       {
@@ -139,10 +140,10 @@ template <class M> struct Eng
     else { q = qj; c = cj; }
     q = q - V(C0) * v; c = c - V(C0);
   }
-  static inline void DiodeStatic(int idx, V v, V& i, V& g)
+  inline void DiodeStatic(int idx, V v, V& i, V& g)
   {
     const double* q = &M::kDio[5 * idx]; const double Is = q[0], N = q[1], Rs = q[2], Bv = q[3], Ibv = q[4], nvt = N * kVt;
-    const double xbv = Bv > 1e20 ? 1e30 : Bv - nvt * std::log(std::fmax(Ibv / Is, 1.0));
+    const double xbv = sc.dioXbv[idx];
     const V deep = vand(lt(v, V(-40.0 * nvt)), gt(v, V(-xbv))); const int md = mask(deep);
     if (md == 15) { i = -V(Is) + V(kGmin) * v; g = V(kGmin); return; }
     V ii, gg;
@@ -150,8 +151,14 @@ template <class M> struct Eng
     else
     {
       V vj = v; const V lim = V(6.0 * nvt);
-      for (int k = 0; k < 80; ++k) { Junction(q, nvt, xbv, vj, ii, gg); V dv = (vj + ii * V(Rs) - v) / (V(1.0) + gg * V(Rs)); dv = vmin(vmax(dv, -lim), lim); vj = vj - dv; if (mask(lt(vabs(dv), V(1e-13))) == 15) break; }
-      Junction(q, nvt, xbv, vj, ii, gg); gg = gg / (V(1.0) + gg * V(Rs));
+      bool conv = false;
+      for (int k = 0; k < 80; ++k)
+      {
+        Junction(q, nvt, xbv, vj, ii, gg); V dv = (vj + ii * V(Rs) - v) / (V(1.0) + gg * V(Rs)); dv = vmin(vmax(dv, -lim), lim); vj = vj - dv;
+        if (mask(lt(vabs(dv), V(1e-9))) == 15) { ii = ii - gg * dv; conv = true; break; }   // Newton step below 1e-9 V: the current is moved to the new point along its slope
+      }
+      if (!conv) Junction(q, nvt, xbv, vj, ii, gg);
+      gg = gg / (V(1.0) + gg * V(Rs));
     }
     if (md) { ii = sel(deep, -V(Is) + V(kGmin) * v, ii); gg = sel(deep, V(kGmin), gg); }
     i = ii; g = gg;
@@ -315,6 +322,33 @@ template <class M> struct Eng
             if (mask(lt(vabs(LU[c * NP + c]), V(1e-12)))) badPivot = true;
           };
           int c = 0;
+          for (; c + 3 < n; c += 4)   // four pivot columns per sweep over the trailing block
+          {
+            V* R0 = &LU[c * NP]; V* R1 = &LU[(c + 1) * NP]; V* R2 = &LU[(c + 2) * NP]; V* R3 = &LU[(c + 3) * NP];
+            pivot(c);
+            { const V inv = V(1.0) / R0[c]; const V u1 = R0[c + 1], u2 = R0[c + 2], u3 = R0[c + 3];
+              for (int i = c + 1; i < n; ++i) { V* ri = &LU[i * NP]; const V f = ri[c] * inv; ri[c] = f; ri[c + 1] = fnma(f, u1, ri[c + 1]); ri[c + 2] = fnma(f, u2, ri[c + 2]); ri[c + 3] = fnma(f, u3, ri[c + 3]); } }
+            pivot(c + 1);
+            { const V inv = V(1.0) / R1[c + 1]; const V u2 = R1[c + 2], u3 = R1[c + 3];
+              for (int i = c + 2; i < n; ++i) { V* ri = &LU[i * NP]; const V f = ri[c + 1] * inv; ri[c + 1] = f; ri[c + 2] = fnma(f, u2, ri[c + 2]); ri[c + 3] = fnma(f, u3, ri[c + 3]); } }
+            pivot(c + 2);
+            { const V inv = V(1.0) / R2[c + 2]; const V u3 = R2[c + 3];
+              for (int i = c + 3; i < n; ++i) { V* ri = &LU[i * NP]; const V f = ri[c + 2] * inv; ri[c + 2] = f; ri[c + 3] = fnma(f, u3, ri[c + 3]); } }
+            pivot(c + 3);
+            { const V inv = V(1.0) / R3[c + 3]; for (int i = c + 4; i < n; ++i) LU[i * NP + c + 3] = LU[i * NP + c + 3] * inv; }
+            { const V l10 = R1[c], l20 = R2[c], l21 = R2[c + 1], l30 = R3[c], l31 = R3[c + 1], l32 = R3[c + 2];
+              for (int j = c + 4; j < n; ++j)
+              {
+                const V a0 = R0[j]; const V a1 = fnma(l10, a0, R1[j]); R1[j] = a1;
+                const V a2 = fnma(l21, a1, fnma(l20, a0, R2[j])); R2[j] = a2;
+                R3[j] = fnma(l32, a2, fnma(l31, a1, fnma(l30, a0, R3[j])));
+              } }
+            for (int i = c + 4; i < n; ++i)
+            {
+              V* ri = &LU[i * NP]; const V f0 = ri[c], f1 = ri[c + 1], f2 = ri[c + 2], f3 = ri[c + 3];
+              for (int j = c + 4; j < n; ++j) ri[j] = fnma(f3, R3[j], fnma(f2, R2[j], fnma(f1, R1[j], fnma(f0, R0[j], ri[j]))));
+            }
+          }
           for (; c + 1 < n; c += 2)
           {
             pivot(c);
@@ -455,7 +489,7 @@ public:
         {
           const double xn = kk * lanes::get(m.p[pp], l), xo = kk * lanes::get(pOld[pp], l), rate = (xn - xo) / h, ax = std::fabs(xn), toward = (xn > 0 ? -rate : rate);
           double c = 1e300; if (ax < kXs) c = kXs / std::fmax(std::fabs(rate), 1e-30); else if (toward > 0) c = 0.5 * (ax - kXs) / toward;
-          if (c < hMax[l]) hMax[l] = c;
+          if (c < hMax[l] && !tu.noTanhEvents) hMax[l] = c;
         }
       }
       if (gHprev > 0.0)
@@ -478,7 +512,7 @@ public:
       for (int q = 0; q < E::NF; ++q) gFprev[q] = gF[q]; gHprev = h;
       for (int l = 0; l < 4; ++l) { const double dp = lanes::get(dpv, l); if (dp > tu.dpTol) { const double c = h * tu.dpTol / dp; if (c < hMax[l]) hMax[l] = c; } }
       int jnmin = jmax; for (int l = 0; l < 4; ++l) { int jn = 0; while (jn < jmax && kH0 * double(1LL << (jn + 1)) <= hMax[l]) ++jn; jnmin = std::min(jnmin, jn); }
-      j = hard ? std::max(0, std::min(jnmin, jj - 1)) : std::min(jnmin, jj + 1);
+      j = hard ? std::max(0, std::min(jnmin, jj - 1)) : std::min(jnmin, jj + tu.jGrow);
     }
     for (int l = 0; l < n; ++l) { double smp; while (dec[l].Pop(smp)) out[l].push_back(static_cast<float>(smp)); if (out[l].size() > want) out[l].resize(want); }
     return true;

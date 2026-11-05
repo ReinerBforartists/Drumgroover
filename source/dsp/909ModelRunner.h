@@ -55,14 +55,16 @@ public:
     const bool fast20 = req.noise == Tr909NoisePath::Fast20us;
     return slot->Render(req.voice, fast20, req.noiseSeed, req.seconds, req.sampleRateHz, out);
   }
-  // Lane engine for the cache bake (HitLanesApi.h): LT only so far (measured and gated per voice, tools handoff R392), 5 us reference noise only.
-  int GroupSize(Tr909Voice v) const override { return v == Tr909Voice::Lt && Tr909LanesAvailable() ? 4 : 1; }
+  // Lane engine for the cache bake (HitLanesApi.h): LT, MT and HT so far (measured and gated per voice, tools handoff R392 / R393 / R394), 5 us reference noise only.
+  int GroupSize(Tr909Voice v) const override { return (v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht) && Tr909LanesAvailable() ? 4 : 1; }
   bool RunGroup(const Tr909RunRequest& req, const uint64_t* seeds, int n, std::vector<float>* out) override
   {
     int a = -1;
     for (int i = 0; i < kTr909AnchorCount; ++i) if (kTr909Anchors[i] == req.anchorCode) a = i;
-    if (a < 0 || req.voice != Tr909Voice::Lt || req.noise != Tr909NoisePath::Reference5us || n < 1 || n > GroupSize(req.voice)) return false;
-    return Tr909LaneRenderLT(a, seeds, n, req.seconds, static_cast<double>(req.sampleRateHz), out, &BakeAborted);
+    if (a < 0 || (req.voice != Tr909Voice::Lt && req.voice != Tr909Voice::Mt && req.voice != Tr909Voice::Ht) || req.noise != Tr909NoisePath::Reference5us || n < 1 || n > GroupSize(req.voice)) return false;
+    return req.voice == Tr909Voice::Lt ? Tr909LaneRenderLT(a, seeds, n, req.seconds, static_cast<double>(req.sampleRateHz), out, &BakeAborted)
+                                       : req.voice == Tr909Voice::Mt ? Tr909LaneRenderMT(a, seeds, n, req.seconds, static_cast<double>(req.sampleRateHz), out, &BakeAborted)
+                                                                     : Tr909LaneRenderHT(a, seeds, n, req.seconds, static_cast<double>(req.sampleRateHz), out, &BakeAborted);
   }
   bool Warm(Tr909Voice v, int accentCode, Tr909NoisePath np) override
   {
