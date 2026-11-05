@@ -47,7 +47,7 @@ inline HitTuning HitTuningFor(Tr909Voice v, bool fast20)
   HitTuning t;
   switch (v)
   {
-    case Tr909Voice::Lt: t.ytol = fast20 ? 1e-2 : 2e-3; t.yfloor = 1.0; t.ytailT = 0.1; t.ytailMul = 4.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
+    case Tr909Voice::Lt: t.ytol = fast20 ? 1e-2 : 3e-3; t.yfloor = 1.0; t.ytailT = 0.1; t.ytailMul = fast20 ? 4.0 : 8.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Mt: t.ytol = fast20 ? 3e-3 : 1.5e-3; t.yfloor = 0.7; t.ytailT = 0.1; t.ytailMul = 1.6; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Ht: t.ytol = fast20 ? 3e-3 : 7e-4; t.yfloor = 0.4; t.ytailT = 0.1; t.ytailMul = 4.0; t.ytail2T = 0.02; t.ytail2Mul = 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Sd: t.ytol = fast20 ? 3e-2 : 9e-4; t.yfloor = 0.7; t.ytailT = fast20 ? 0.2 : 0.3; t.ytailMul = fast20 ? 6.0 : 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;

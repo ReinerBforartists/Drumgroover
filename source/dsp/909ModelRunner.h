@@ -4,6 +4,7 @@
 #pragma once
 #include "909BakeHost.h"
 #include "tr909/HitRunner.h"
+#include "tr909/HitLanesApi.h"
 #include "tr909/models/lt_a25.h"
 #include "tr909/models/lt_a50.h"
 #include "tr909/models/lt_a75.h"
@@ -38,6 +39,8 @@
 
 namespace dgg {
 
+
+
 class Tr909FullModelRunner : public Tr909ModelRunner, public Tr909LiveSource
 {
 public:
@@ -52,7 +55,15 @@ public:
     const bool fast20 = req.noise == Tr909NoisePath::Fast20us;
     return slot->Render(req.voice, fast20, req.noiseSeed, req.seconds, req.sampleRateHz, out);
   }
-
+  // Lane engine for the cache bake (HitLanesApi.h): LT only so far (measured and gated per voice, tools handoff R392), 5 us reference noise only.
+  int GroupSize(Tr909Voice v) const override { return v == Tr909Voice::Lt && Tr909LanesAvailable() ? 4 : 1; }
+  bool RunGroup(const Tr909RunRequest& req, const uint64_t* seeds, int n, std::vector<float>* out) override
+  {
+    int a = -1;
+    for (int i = 0; i < kTr909AnchorCount; ++i) if (kTr909Anchors[i] == req.anchorCode) a = i;
+    if (a < 0 || req.voice != Tr909Voice::Lt || req.noise != Tr909NoisePath::Reference5us || n < 1 || n > GroupSize(req.voice)) return false;
+    return Tr909LaneRenderLT(a, seeds, n, req.seconds, static_cast<double>(req.sampleRateHz), out, &BakeAborted);
+  }
   bool Warm(Tr909Voice v, int accentCode, Tr909NoisePath np) override
   {
     Tr909AccentRun runs[2]; const int n = Tr909AccentRuns(v, accentCode, runs);

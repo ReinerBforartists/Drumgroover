@@ -3380,35 +3380,51 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
 
   const int total = (int)missing.size();
   dgg::TR808VariantPoolBaker::Instance().PlanUnits(total);
-  const int immediate = std::max(1, std::min(total, std::max(2, dgg::TR808VariantPoolBaker::Instance().FreeThreads())));
+  // Variants are baked in groups of up to four at once when the model of the voice has a lane engine on this machine (909BakeHost.h Tr909BakeVariantGroup); one or two left over are baked singly (a group of
+  // fewer than three hits is not faster than the single hits). The units of the progress display stay the variants.
+  const int groupSize = dgg::Tr909FullModelRunner().GroupSize(key.voice);
+  std::vector<std::vector<int>> groups;
+  for (size_t i = 0; i < missing.size();)
+  {
+    const size_t left = missing.size() - i; const size_t take = (groupSize > 1 && left >= 3) ? std::min<size_t>(groupSize, left) : 1;
+    groups.emplace_back(missing.begin() + i, missing.begin() + i + take); i += take;
+  }
+  const int jobs = (int)groups.size();
+  const int immediate = std::max(1, std::min(jobs, std::max(2, dgg::TR808VariantPoolBaker::Instance().FreeThreads())));
   auto remainingImmediate = std::make_shared<std::atomic<int>>(immediate);
   const uint64_t cancelGen = dgg::TR808VariantPoolBaker::Instance().CancelGeneration();
 
   auto bakeSlot = [=](int slot) {
     return [=](const dgg::TR808VariantPoolBaker::ProgressFn& report) {
-      const int k = missing[slot];
-      MarkSlotStarted(baseName, k);
+      const std::vector<int>& ks = groups[slot]; const int cnt = (int)ks.size();
+      for (int k : ks) MarkSlotStarted(baseName, k);
       const dgg::BakeScope bakeScope(abortGen);   // Pause and Close raise the counter: a hit being rendered then stops and is not stored
       thread_local dgg::Tr909FullModelRunner runner;
-      std::vector<float> tap;
+      std::vector<float> taps[4]; dgg::Tr909BakeResult results[4];
       const auto t0 = std::chrono::steady_clock::now();
-      const dgg::Tr909BakeResult res = dgg::BakeAborted() ? dgg::Tr909BakeResult::RunFailed : dgg::Tr909BakeVariant(key, k, runner, tap);
-      const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-      dgg::TR808VariantPoolBaker::Instance().RecordBake(ms);
-      const auto path = VariantFilePath(baseName, k);
+      if (dgg::BakeAborted()) { for (int i = 0; i < cnt; ++i) results[i] = dgg::Tr909BakeResult::RunFailed; }
+      else if (cnt == 1) results[0] = dgg::Tr909BakeVariant(key, ks[0], runner, taps[0]);
+      else dgg::Tr909BakeVariantGroup(key, ks.data(), cnt, runner, taps, results);
+      const double msAll = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(), ms = msAll / cnt;
       const bool aborted = dgg::BakeAborted();
-      if (!aborted && res == dgg::Tr909BakeResult::Ok && (rebakeAll || !VariantFileValid(path)) && !tap.empty())
+      for (int i = 0; i < cnt; ++i)
       {
-        if (SaveVariantToDisk(path, tap)) dgg::Tr909VariantPool::Instance().AddVariant(key, std::vector<float>(tap));
-        EvictCacheIfOverBudget();
+        const int k = ks[i]; const dgg::Tr909BakeResult res = results[i]; std::vector<float>& tap = taps[i];
+        dgg::TR808VariantPoolBaker::Instance().RecordBake(ms);
+        const auto path = VariantFilePath(baseName, k);
+        if (!aborted && res == dgg::Tr909BakeResult::Ok && (rebakeAll || !VariantFileValid(path)) && !tap.empty())
+        {
+          if (SaveVariantToDisk(path, tap)) dgg::Tr909VariantPool::Instance().AddVariant(key, std::vector<float>(tap));
+          EvictCacheIfOverBudget();
+        }
+        DGG_Log("BakeTiming: " + baseName + " v" + std::to_string(k) + " took " + std::to_string(ms) + "ms ("
+          + std::to_string(tap.size()) + " samples, result=" + std::to_string(static_cast<int>(res)) + (cnt > 1 ? ", group of " + std::to_string(cnt) : std::string()) + ")");
+        DggAppLog("909 bake " + baseName + " v" + std::to_string(k) + ": " + (aborted ? "stopped (Pause or Close, not stored)" : res == dgg::Tr909BakeResult::Ok ? "Ok" : res == dgg::Tr909BakeResult::AccentNotValidated ? "AccentNotValidated" : "RunFailed")
+          + ", " + std::to_string(tap.size()) + " samples, " + std::to_string(static_cast<int>(ms)) + " ms" + (cnt > 1 ? " (group of " + std::to_string(cnt) + ")" : std::string()));
       }
-      DGG_Log("BakeTiming: " + baseName + " v" + std::to_string(k) + " took " + std::to_string(ms) + "ms ("
-        + std::to_string(tap.size()) + " samples, result=" + std::to_string(static_cast<int>(res)) + ")");
-      DggAppLog("909 bake " + baseName + " v" + std::to_string(k) + ": " + (aborted ? "stopped (Pause or Close, not stored)" : res == dgg::Tr909BakeResult::Ok ? "Ok" : res == dgg::Tr909BakeResult::AccentNotValidated ? "AccentNotValidated" : "RunFailed")
-        + ", " + std::to_string(tap.size()) + " samples, " + std::to_string(static_cast<int>(ms)) + " ms");
-      report(1, 1);
-      dgg::TR808VariantPoolBaker::Instance().FinishUnits(aborted ? 0 : 1);
-      UnmarkSlotInFlight(baseName, k, abortGen);
+      report(cnt, cnt);
+      dgg::TR808VariantPoolBaker::Instance().FinishUnits(aborted ? 0 : cnt);
+      for (int k : ks) UnmarkSlotInFlight(baseName, k, abortGen);
     };
   };
 
@@ -3419,12 +3435,11 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
       [=](const dgg::TR808VariantPoolBaker::ProgressFn& report) {
         job(report);
         if (remainingImmediate->fetch_sub(1) == 1 && dgg::TR808VariantPoolBaker::Instance().CancelGeneration() == cancelGen)
-          for (int j = immediate; j < total; j++)
+          for (int j = immediate; j < jobs; j++)
             dgg::TR808VariantPoolBaker::Instance().Enqueue("tr909", bakeSlot(j));
       });
   }
 }
-
 // Stops enqueuing as soon as the bake was cancelled (CancelPending() changes the generation): this runs on its own thread and takes a while, so without the
 // check "Cancel" would drop the queue and the rest of the default sets would be queued again right behind it.
 void Enqueue909FactoryDefaults(double sr, int target, uint64_t cancelGen)
