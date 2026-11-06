@@ -76,6 +76,7 @@ public:
   void Scale(double s) { amp_ *= s; }   // test harness: scaled noise amplitude (linearity of the response to the noise)
   double At(double t)
   {
+    if (t < 0.0) t = 0.0;   // an idle run before the trigger that is longer than kStartTime (test harness, silent noise): the source stays at its start value
     const long idx = static_cast<long>(std::floor(t / step_)); Fill(idx + 1);
     const double fr = t / step_ - idx;
     const double a = eq_ != 0.0 ? Eq(idx) : smp_[idx], b = eq_ != 0.0 ? Eq(idx + 1) : smp_[idx + 1];
@@ -219,6 +220,9 @@ public:
 
   // Builds the model and its propagators without running a hit (the first Begin() does this otherwise; takes about a second per model).
   void Warm(const HitTuning& tu) { Prepare(tu); }
+  // Pot dependent model (PotSet.h): replaces A, Bg, XzS, DgS and the output row for all following hits; the arrays must outlive the runner / the next SetPot(). Not while a hit is running.
+  void SetPot(const typename Model::PotPtrs& p) { pot_ = p; usePot_ = true; potStale_ = true; }
+  void ClearPot() { usePot_ = false; potStale_ = true; }
 
   // Host-rate rendering: output voltage minus idle level at fsHost, `seconds` long.
   bool Render(const HitTuning& tu, HitNoise* noise, double seconds, double fsHost, std::vector<float>& out)
@@ -241,7 +245,9 @@ private:
   void Prepare(const HitTuning& tu)
   {
     // a new model state for every hit, the propagators of the previous hit are kept
-    if (built_) { auto props = std::move(m_->props); auto half = std::move(m_->halfIdx); m_.reset(new Model()); m_->Init(); m_->props = std::move(props); m_->halfIdx = std::move(half); }
+    if (potStale_) { if (built_) { m_.reset(new Model()); } pj_.clear(); built_ = false; potStale_ = false; }   // the pot set changed: the propagators of the earlier hits belong to other matrices
+    if (usePot_) m_->pm = pot_;   // before Init(): Init() / Reset() derive PD / PC from DgS
+    if (built_) { auto props = std::move(m_->props); auto half = std::move(m_->halfIdx); m_.reset(new Model()); if (usePot_) m_->pm = pot_; m_->Init(); m_->props = std::move(props); m_->halfIdx = std::move(half); }
     else { m_->Init(); built_ = true; }
     Model& m = *m_;
     m.dampOn = true; m.dampRatio = 0.01; m.noFallback = true; m.zohW = tu.zohW; m.chordFirst = tu.chordFirst; m.capThr = tu.capThr; m.fastDot = true; m.fastSolve = true;
@@ -266,7 +272,7 @@ private:
     }
   }
 
-  std::unique_ptr<Model> m_; std::vector<int> pj_; bool built_ = false;
+  std::unique_ptr<Model> m_; std::vector<int> pj_; bool built_ = false; typename Model::PotPtrs pot_{}; bool usePot_ = false, potStale_ = false;
   HitTuning tu_; HitNoise* noise_ = nullptr; long long knotN_ = 1, nEnd_ = 0, n_ = 0, preN_ = 0; int j_ = 0;
   double gFprev_[Mdl::kNF] = {0}, gHprev_ = 0.0, gEnv_ = 0.0, t_ = 0.0, y_ = 0.0;
 };

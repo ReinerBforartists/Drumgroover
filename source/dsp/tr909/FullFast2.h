@@ -186,6 +186,19 @@ template <class M> struct FullFast2
   static constexpr int nPortsOf(int ty) { return ty == 0 ? 2 : (ty == 3 ? 3 : (ty == 4 ? 2 : (ty == 5 ? 3 : 1))); }
   static constexpr int nCursOf(int ty) { return ty == 0 ? 2 : (ty == 3 ? 2 : 1); }
 
+  // Pot dependent part of the model (A, Bg, XzS, DgS and the output row). Default: the arrays of the model header (all pots at the nominal position of the Nava deck).
+  // SetPot() replaces them (generated pot data, PotSet.h); the pointers must stay valid until the next SetPot() / destruction. The state z is NOT touched (capacitor states continue).
+  struct PotPtrs { const double *A, *Bg, *XzS, *DgS, *Xo, *Dof, *Dou; double Do1; };
+  PotPtrs pm{ M::kA, M::kBg, M::kXzS, M::kDgS, M::kXo, M::kDof, M::kDou, M::kDo1 };
+  void UpdatePD()   // port voltage dependence on the inputs (needs DgS)
+  {
+    for (int i = 0; i < NP; ++i)
+    {
+      for (int u = 0; u < NU; ++u) { double v = 0.0; for (int s = 0; s < NS; ++s) v += M::kPp[i * NS + s] * pm.DgS[s * NG + u]; PD[i * NU + u] = v + M::kPuP[i * NU + u]; }
+      double v = M::kPc[i]; for (int s = 0; s < NS; ++s) v += M::kPp[i * NS + s] * pm.DgS[s * NG + NG - 1]; PC[i] = v;
+    }
+  }
+  void SetPot(const PotPtrs& s) { pm = s; UpdatePD(); props.clear(); luOk = false; }
   void Init()
   {
     for (int k = 0; k < M::kNumDio; ++k) { const double* q = &M::kDio[5 * k]; const double nvt = q[1] * kVt; dioXbv[k] = q[3] > 1e20 ? 1e30 : q[3] - nvt * std::log(std::fmax(q[4] / q[0], 1.0)); }
@@ -216,11 +229,7 @@ template <class M> struct FullFast2
     for (int i = 0; i < R; ++i) z[i] = (1.0 - t) * M::kZ0[g * R + i] + t * M::kZ0[g1 * R + i];
     for (int i = 0; i < NP; ++i) p[i] = (1.0 - t) * M::kP0[g * NP + i] + t * M::kP0[g1 * NP + i];
     yIdle = (1.0 - t) * M::kY0[g] + t * M::kY0[g1];
-    for (int i = 0; i < NP; ++i)
-    {
-      for (int u = 0; u < NU; ++u) { double v = 0.0; for (int s = 0; s < NS; ++s) v += M::kPp[i * NS + s] * M::kDgS[s * NG + u]; PD[i * NU + u] = v + M::kPuP[i * NU + u]; }
-      double v = M::kPc[i]; for (int s = 0; s < NS; ++s) v += M::kPp[i * NS + s] * M::kDgS[s * NG + NG - 1]; PC[i] = v;
-    }
+    UpdatePD();
     for (int i = 0; i < NP; ++i) ps0[i] = p[i]; capH = 1.0; ++q0Gen; EvalF(p, f0, nullptr); luOk = false;
   }
   void UIdle(double* u) const { for (int j = 0; j < NU; ++j) u[j] = M::kU0[j]; }   // inputs at the idle point (nominal accent entry)
@@ -230,7 +239,7 @@ template <class M> struct FullFast2
     for (size_t i = 0; i < props.size(); ++i) if (std::fabs(props[i].h - h) < 1e-15) return (int)i;
     Prop P; P.h = h;
     const bool qd = quadW != 0.0, qc = quadCW != 0.0; const int n = R + (qd ? 3 : 2) * NG; std::vector<double> N(n * n, 0.0);
-    for (int i = 0; i < R; ++i) { for (int j = 0; j < R; ++j) N[i * n + j] = M::kA[i * R + j] * h; for (int j = 0; j < NG; ++j) N[i * n + R + j] = M::kBg[i * NG + j] * h; }
+    for (int i = 0; i < R; ++i) { for (int j = 0; j < R; ++j) N[i * n + j] = pm.A[i * R + j] * h; for (int j = 0; j < NG; ++j) N[i * n + R + j] = pm.Bg[i * NG + j] * h; }
     for (int j = 0; j < NG; ++j) N[(R + j) * n + R + NG + j] = h;
     if (qd) for (int j = 0; j < NG; ++j) N[(R + NG + j) * n + R + 2 * NG + j] = h;
     const std::vector<double> E = Expm(N, n);
@@ -256,18 +265,18 @@ template <class M> struct FullFast2
     std::vector<double> XG(NS * NF, 0.0);
     for (int s = 0; s < NS; ++s) for (int k = 0; k < NF; ++k)
     {
-      double v = 0.0; for (int i = 0; i < R; ++i) v += M::kXzS[s * R + i] * P.GbF[i * NF + k];
-      for (int q = 0; q < NS; ++q) v += M::kDgS[s * NG + NU + q] * M::kTc[q * NF + k];
+      double v = 0.0; for (int i = 0; i < R; ++i) v += pm.XzS[s * R + i] * P.GbF[i * NF + k];
+      for (int q = 0; q < NS; ++q) v += pm.DgS[s * NG + NU + q] * M::kTc[q * NF + k];
       XG[s * NF + k] = v;
     }
     P.XG = XG;
     for (int a = 0; a < NP; ++a)
     {
       for (int k = 0; k < NF; ++k) { double v = 0.0; for (int s = 0; s < NS; ++s) v += M::kPp[a * NS + s] * XG[s * NF + k]; P.Zp[a * NF + k] = v; }
-      for (int i = 0; i < R; ++i) { double v = 0.0; for (int s = 0; s < NS; ++s) v += M::kPp[a * NS + s] * M::kXzS[s * R + i]; P.PXz[a * R + i] = v; }
+      for (int i = 0; i < R; ++i) { double v = 0.0; for (int s = 0; s < NS; ++s) v += M::kPp[a * NS + s] * pm.XzS[s * R + i]; P.PXz[a * R + i] = v; }
     }
     P.ZpT.assign(NF * NP, 0.0); for (int a = 0; a < NP; ++a) for (int k = 0; k < NF; ++k) P.ZpT[k * NP + a] = P.Zp[a * NF + k];
-    P.wOut.assign(NF, 0.0); for (int k = 0; k < NF; ++k) { double v = M::kDof[k]; for (int i = 0; i < R; ++i) v += M::kXo[i] * P.GbF[i * NF + k]; P.wOut[k] = v; }   // output sensitivity to the end-of-step device currents
+    P.wOut.assign(NF, 0.0); for (int k = 0; k < NF; ++k) { double v = pm.Dof[k]; for (int i = 0; i < R; ++i) v += pm.Xo[i] * P.GbF[i * NF + k]; P.wOut[k] = v; }   // output sensitivity to the end-of-step device currents
     P.Zmax.assign(NF, 0.0); for (int k = 0; k < NF; ++k) for (int a = 0; a < NP; ++a) P.Zmax[k] = std::fmax(P.Zmax[k], std::fabs(P.Zp[a * NF + k]));
     props.push_back(std::move(P)); return (int)props.size() - 1;
   }
@@ -537,9 +546,9 @@ template <class M> struct FullFast2
   double NodeErr(int pi, const double* df) const { const Prop& P = props[pi]; double m = 0.0; for (int s = 0; s < NS; ++s) { double v = 0.0; const double* g = &P.XG[s * NF]; for (int k = 0; k < NF; ++k) v += g[k] * df[k]; m = std::fmax(m, std::fabs(v)); } return m; }
   double Output(const double* f, const double* x1, const double* dx) const
   {
-    double y = M::kDo1 + M::kDou[0] * acc; for (int t = 0; t < NT; ++t) y += M::kDou[1 + 2 * t] * x1[t] + M::kDou[2 + 2 * t] * dx[t];
-    for (int i = 0; i < R; ++i) y += M::kXo[i] * z[i];
-    for (int k = 0; k < NF; ++k) y += M::kDof[k] * f[k];
+    double y = pm.Do1 + pm.Dou[0] * acc; for (int t = 0; t < NT; ++t) y += pm.Dou[1 + 2 * t] * x1[t] + pm.Dou[2 + 2 * t] * dx[t];
+    for (int i = 0; i < R; ++i) y += pm.Xo[i] * z[i];
+    for (int k = 0; k < NF; ++k) y += pm.Dof[k] * f[k];
     return y;
   }
   // one step of propagator pi; x0 / x1: values of the NT time-dependent sources at the start / end of the step
@@ -764,8 +773,8 @@ template <class M> struct FullFast2
       if (mm < kSoftTol)
       {
         double p2[NP], f2[NF], df[NF]; for (int a = 0; a < NP; ++a) p2[a] = p[a] + F[a]; for (int k = 0; k < NF; ++k) f2[k] = 0.0; EvalF(p2, f2, nullptr); for (int k = 0; k < NF; ++k) df[k] = f2[k] - f1[k];
-        double zerr = 0.0, yerr = 0.0; for (int i = 0; i < R; ++i) { double v = 0.0; for (int k = 0; k < NF; ++k) v += P.GbF[i * NF + k] * df[k]; zerr = std::fmax(zerr, std::fabs(v)); yerr += M::kXo[i] * v; }
-        for (int k = 0; k < NF; ++k) yerr += M::kDof[k] * df[k];
+        double zerr = 0.0, yerr = 0.0; for (int i = 0; i < R; ++i) { double v = 0.0; for (int k = 0; k < NF; ++k) v += P.GbF[i * NF + k] * df[k]; zerr = std::fmax(zerr, std::fabs(v)); yerr += pm.Xo[i] * v; }
+        for (int k = 0; k < NF; ++k) yerr += pm.Dof[k] * df[k];
         double rres = 0.0; for (int a = 0; a < NP; ++a) { if (elimActive && isQ[a]) continue; const double* zp = &zbase[a * NF]; double zf = 0.0; for (int k = 0; k < NF; ++k) zf += zp[k] * f2[k]; rres = std::fmax(rres, std::fabs(pk[a] + zf - p2[a])); }
         if (std::fabs(yerr) < kSoftY && zerr < kSoftZ && rres < kSoftRes) { for (int a = 0; a < NP; ++a) p[a] = p2[a]; for (int k = 0; k < NF; ++k) f1[k] = f2[k]; ok = true; ++softAccepts; }
       }

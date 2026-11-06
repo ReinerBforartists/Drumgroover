@@ -248,10 +248,10 @@ template <class M> struct Eng
   static constexpr int nCurs(int ty) { return S::nCursOf(ty); }
   V OutputV(const V* x1, const V* dx) const
   {
-    V yv = V(M::kDo1 + M::kDou[0] * acc);
-    for (int t = 0; t < NT; ++t) yv = yv + V(M::kDou[1 + 2 * t]) * x1[t] + V(M::kDou[2 + 2 * t]) * dx[t];
-    for (int i = 0; i < R; ++i) yv = yv + V(M::kXo[i]) * z[i];
-    for (int k = 0; k < NF; ++k) yv = yv + V(M::kDof[k]) * f0[k];
+    V yv = V(sc.pm.Do1 + sc.pm.Dou[0] * acc);
+    for (int t = 0; t < NT; ++t) yv = yv + V(sc.pm.Dou[1 + 2 * t]) * x1[t] + V(sc.pm.Dou[2 + 2 * t]) * dx[t];
+    for (int i = 0; i < R; ++i) yv = yv + V(sc.pm.Xo[i]) * z[i];
+    for (int k = 0; k < NF; ++k) yv = yv + V(sc.pm.Dof[k]) * f0[k];
     return yv;
   }
   // returns true when every lane converged; z, f0, p are updated (on failure they are undefined, the caller restores)
@@ -519,13 +519,16 @@ public:
   }
   // Builds the model and its propagators (about a second).
   void Warm(const HitTuning& tu) { Setup(tu); }
+  // Pot dependent model (PotSet.h), as HitRunner::SetPot: the model and its propagators are rebuilt at the next Warm / RenderGroup; the arrays must outlive the runner / the next SetPot(). Not while a group is rendering.
+  void SetPot(const typename FullFast2<Mdl>::PotPtrs& p) { pot_ = p; usePot_ = true; e_.reset(); }
+  void ClearPot() { usePot_ = false; e_.reset(); }
 
 private:
   static constexpr double kH0 = 1e-5 / 64.0, kStartTime = 0.05;
   void Setup(const HitTuning& tu)
   {
     if (e_) return;
-    e_.reset(new E()); e_->Init(); e_->sc.zohW = tu.zohW; e_->sc.chordFirst = tu.chordFirst; e_->chordFirst = tu.chordFirst;
+    e_.reset(new E()); if (usePot_) e_->sc.pm = pot_; e_->Init(); e_->sc.zohW = tu.zohW; e_->sc.chordFirst = tu.chordFirst; e_->chordFirst = tu.chordFirst;
     pj_.resize(11); for (int j = 0; j <= 10; ++j) pj_[j] = e_->sc.Prepare(kH0 * double(1 << j));
     for (int j = 1; j <= 10; ++j) e_->sc.SetHalf(pj_[j], pj_[j - 1]);
     e_->sc.SetHalf(pj_[0], e_->sc.Prepare(kH0 * 0.5));
@@ -536,7 +539,7 @@ private:
     for (int i = 0; i < E::R; ++i) m.z[i] = V(m.sc.z[i]); for (int i = 0; i < E::NF; ++i) m.f0[i] = V(m.sc.f0[i]); for (int i = 0; i < E::NP; ++i) m.p[i] = V(m.sc.p[i]);
     m.steps = m.its = m.facs = m.fails = m.retries = m.pivotFail = 0; m.luOk = false;
   }
-  std::unique_ptr<E> e_; std::vector<int> pj_;
+  std::unique_ptr<E> e_; std::vector<int> pj_; typename FullFast2<Mdl>::PotPtrs pot_{}; bool usePot_ = false;
 };
 
 }}   // namespace dgg::pcmfast
