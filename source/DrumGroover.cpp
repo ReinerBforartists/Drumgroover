@@ -2937,6 +2937,8 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
     ForEachTomPool([&](const dgg::InstrumentDef& d, auto& pool) {
       if (index >= 0 && index != d.paramIndex) return;
       for (auto& v : pool.Voices()) SetParamOn(v, param, value);
+      dgg::Tr909Voice v909;
+      if (dgg::Tr909VoiceForInstrument(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetTr909CustomParam(v, param, value);   // the 909 tom of the row follows the card (Level, Tuning, Pitch)
     });
   }
   else if (family == "custom")
@@ -4150,14 +4152,14 @@ void DrumGroover::Setup909Pools(double sampleRate)
   for (int i = 0; i < dgg::kNumInstruments; ++i)
   {
     dgg::Tr909Voice v;
-    if (dgg::Tr909VoiceForInstrument(dgg::kInstruments[i], v)) for (auto& voice : m909Pools[i].Voices()) voice.SetVoice(v);
+    if (dgg::Tr909VoiceForInstrument(dgg::kInstruments[i], v)) for (auto& voice : m909Pools[i].Voices()) { voice.SetVoice(v); voice.basePitch = dgg::Tr909BasePitchForInstrument(dgg::kInstruments[i]); if (dgg::kInstruments[i].kind == dgg::EngineKind::Tom) { voice.levelBaked = voice.levelKnob = dgg::DefaultOf(dgg::kInstruments[i], "levelKnob", voice.levelKnob); voice.pitchRatio = dgg::DefaultOf(dgg::kInstruments[i], "pitchRatio", 1.0); } }
     m909Pools[i].SetSampleRate(sampleRate);
   }
   for (auto& p : m909RimPools) p.SetSampleRate(sampleRate);
   for (int k = 0; k < dgg::kNumCustomInstruments; ++k)
   {
     if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909)
-      for (auto& voice : m909CustomPools[k].Voices()) voice.SetVoice(static_cast<dgg::Tr909Voice>(dgg::CustomInstrument(k).arg));
+      for (auto& voice : m909CustomPools[k].Voices()) { voice.SetVoice(static_cast<dgg::Tr909Voice>(dgg::CustomInstrument(k).arg)); voice.basePitch = dgg::Tr909CustomBasePitch(dgg::CustomInstrument(k)); }
     m909CustomPools[k].SetSampleRate(sampleRate);
   }
 }

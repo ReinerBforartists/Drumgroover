@@ -90,8 +90,8 @@ public:
     Tr909SetKey k; k.voice = mVoice; k.params = 0; k.noise = mNoise; k.sampleRateHz = static_cast<int>(std::lround(mSampleRate));
     k.accentCode = Tr909CodeForVelocity(mVoice, velocity01);
     mBuf = Tr909VariantPool::Instance().GetRandom(k); mPos = 0; mFrac = 0.0;
-    mRate = std::clamp(pitchRatio, 0.25, 4.0);
-    mLevelGain = std::clamp(levelKnob, 0.0, 1.0) / kLevelKnobBaked;
+    mRate = std::clamp(pitchRatio * basePitch, 0.25, 4.0);
+    mLevelGain = std::clamp(levelKnob, 0.0, 1.0) / levelBaked;
     if (!mBuf) { ++mMisses; Tr909MissQueue::Instance().Push(k); }
   }
   void Process(double* out, int nFrames) override
@@ -122,10 +122,12 @@ public:
   unsigned misses() const { return mMisses; }
 
   double pitchRatio = 1.0;   // digital transpose of the baked set (not a circuit knob)
+  double basePitch = 1.0;    // fixed transposition of the instrument (the floor toms are the low tom pitched down, 909Kit.h); the Pitch knob acts on top of it
   // Output level pot of the voice (0..1). The sets are baked at kLevelKnobBaked; the pot is the feedback resistor of the output op-amp, which scales the output
   // exactly (Hand Clap: engine at 0.25 / 0.5 / 1.0 gives gains 0.500 / 1 / 2.001, no clipping), so the level is a gain on the baked set.
   double levelKnob = 0.5;
   static constexpr double kLevelKnobBaked = 0.5;
+  double levelBaked = kLevelKnobBaked;   // the knob position at which the sets sound as baked (unity gain); a kit row uses its default so that the default sounds as baked
 
 private:
   Tr909Voice mVoice; Tr909NoisePath mNoise = Tr909NoisePath::Reference5us;

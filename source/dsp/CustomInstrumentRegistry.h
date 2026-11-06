@@ -11,7 +11,7 @@ namespace dgg {
 
 inline constexpr CustomInstrumentDef kCustomInstruments[] = {
   kCustomHighConga808, kCustomClaves808, kCustomHandClap808, kCustomMaracas808, kCustomCowbell808, kCustomPc2808,
-  kCustomHandClap909,
+  kCustomHandClap909, kCustomFloorTom3_909,
 };
 
 inline constexpr int kNumCustomInstruments = (int)(sizeof(kCustomInstruments) / sizeof(kCustomInstruments[0]));
