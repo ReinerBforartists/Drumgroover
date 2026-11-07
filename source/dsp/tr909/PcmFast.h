@@ -19,6 +19,7 @@
 
 namespace dgg { namespace pcmfast {
 
+constexpr double kChordMaxCorr = 0.2;   // volts: above this correction the next iteration is a full Newton iteration
 constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kTailRel = 0.0, kEnvDecay = 0.975, kAcAlpha = 0.0031, kAcEndLevel = 2e-4; constexpr int kAcEndPeriods = 400;   // volts on the port voltages; the correction is applied before the test, so the error left is of the order of the square
 
 // Gummel-Poon static currents of one BJT in node orientation: ic = s*cc (leaving the collector node into the device), ib = s*cb, and the 2x2 Jacobian wrt (vbe, vbc)
@@ -64,6 +65,26 @@ inline BjtOut BjtEval(const double* P, double vbe, double vbc)
   BjtOut o; o.ic = s * cc; o.ib = s * cb; o.d[0][0] = s * dccbe; o.d[0][1] = s * dccbc; o.d[1][0] = s * dcbbe; o.d[1][1] = s * dcbbc;
   (void)BR;
   return o;
+}
+
+// Diode with series resistance (Net909 dioJunction / dioRs): current and conductance at the terminal voltage v; vj is the internal junction voltage (warm start, updated).
+// P = {Is, N*Vt, Rs, knee of the breakdown branch}
+inline void DioJunction(const double* P, double vd, double& i, double& g)
+{
+  if (vd > -P[3]) { const double e = std::exp(std::fmin(vd / P[1], 80.0)); i = P[0] * (e - 1.0) + kGmin * vd; g = P[0] * e / P[1] + kGmin; }
+  else { const double e = std::exp(std::fmin(-(P[3] + vd) / P[1], 80.0)); i = -P[0] * e + kGmin * vd; g = P[0] * e / P[1] + kGmin; }
+}
+inline void DioEval(const double* P, double v, double& vj, double& i, double& g)
+{
+  if (P[2] <= 0.0) { vj = v; DioJunction(P, v, i, g); return; }
+  double ii, gg;
+  for (int k = 0; k < 60; ++k)
+  {
+    DioJunction(P, vj, ii, gg);
+    double dv = (vj + ii * P[2] - v) / (1.0 + gg * P[2]); const double lim = 6.0 * P[1]; dv = dv > lim ? lim : (dv < -lim ? -lim : dv);
+    vj -= dv; if (std::fabs(dv) < 1e-12) break;
+  }
+  DioJunction(P, vj, ii, gg); i = ii; g = gg / (1.0 + gg * P[2]);
 }
 
 inline int Ctz(uint32_t m)
@@ -115,7 +136,9 @@ template <int N> inline void LuSolve(const double (&A)[N][N], const int (&piv)[N
 
 template <class M> struct Voice
 {
-  static constexpr int R = M::kR, NU = M::kU, NP = M::kPorts, NF = M::kCur, NB = M::kNumBjt, NBITS = M::kBits, IACC = M::kAccentIdx;
+  static constexpr int R = M::kR, NU = M::kU, NP = M::kPorts, NF = M::kCur, NB = M::kNumBjt, NBITS = M::kBits, IACC = M::kAccentIdx, ND = DioCount<M>::value, NT = TanhCount<M>::value;   // currents: 2 per BJT, then one per diode, then one per op-amp input stage (deviation from the linear gm)
+  mutable double tanhG[NT > 0 ? NT : 1];   // slope of the op-amp stage currents at the last full evaluation
+  mutable double dp[ND > 0 ? ND : 1][5], dioVj[ND > 0 ? ND : 1], dioG[ND > 0 ? ND : 1];   // diode constants {Is, N Vt, Rs, breakdown knee, critical voltage}, internal junction voltage (warm start), conductance of the last full evaluation
   double coneEff[M::kSteps * R], pd1Eff[NP], accOut = 0.0;   // constant forcing of every step type including the accent input (RefreshAccent)
   double z[R], f0[NF], p[NP], u0[NU], vbcFix[NB], acc = M::kAccNom;   // vbcFix: vbc of the devices whose vbc is not a port (DC value at the accent)
     // acc: accent voltage of the hit (run-time input)
@@ -155,8 +178,15 @@ template <class M> struct Voice
     for (int k = 0; k < NB; ++k)
     {
       const double* q = &M::kBjt[9 * k]; for (int i = 0; i < 9; ++i) bp[k][i] = q[i];
-      bp[k][9] = 1.0 / (q[4] * kVt); bp[k][10] = 1.0 / (q[7] * kVt); bp[k][11] = 1.0 / q[5]; bp[k][12] = 1.0 / q[6]; bp[k][13] = 1.0 / q[2]; bp[k][14] = 1.0 / q[3]; bp[k][15] = 0.0;
+      bp[k][9] = 1.0 / (q[4] * kVt); bp[k][10] = 1.0 / (q[7] * kVt); bp[k][11] = 1.0 / q[5]; bp[k][12] = 1.0 / q[6]; bp[k][13] = 1.0 / q[2]; bp[k][14] = 1.0 / q[3]; bp[k][15] = kVt * std::log(kVt / (1.4142135623730951 * q[1]));   // [15]: critical junction voltage (limiting)
     }
+    if constexpr (ND > 0)
+      for (int m = 0; m < ND; ++m)
+      {
+        const double* q = &M::kDio[5 * m]; const double nvt = q[1] * kVt;
+        dp[m][0] = q[0]; dp[m][1] = nvt; dp[m][2] = q[2]; dp[m][3] = q[3] > 1e20 ? 1e30 : q[3] - nvt * std::log(std::fmax(q[4] / q[0], 1.0)); dp[m][4] = nvt * std::log(nvt / (1.4142135623730951 * q[0]));
+        dioVj[m] = p[M::kPortD[m]]; dioG[m] = 0.0;
+      }
     for (int i = 0; i < NU; ++i) u0[i] = M::kU0[i];
     bitsPrev = 0; for (int i = 0; i < NBITS; ++i) if (M::kU0[i] > 0.5 * M::kVhigh) bitsPrev |= (1u << i);
     EvalF(p, f0, nullptr); lastOut = OutputNow(); period = 0; stepIdx = 0; layout = 0; newtonIts = 0; stepsDone = 0; outDc = OutputNow(); env = 0.0; peak = 1e-12; acLow = outDc; acEnv = 0.0; acPeak = 0.0; quietPeriods = 0; finished = false;
@@ -186,6 +216,14 @@ template <class M> struct Voice
         if (jf) { jf[k][0] = o.d[0][0]; jf[k][1] = o.d[0][1]; jf[k][2] = o.d[1][0]; jf[k][3] = o.d[1][1]; }
       }
     }
+    if constexpr (ND > 0)
+      for (int m = 0; m < ND; ++m) { double i, g; DioEval(dp[m], q[M::kPortD[m]], dioVj[m], i, g); f[2 * NB + m] = i; if (jf) dioG[m] = g; }
+    if constexpr (NT > 0)
+      for (int t = 0; t < NT; ++t)
+      {
+        const double gm = M::kTanh[2 * t], im = M::kTanh[2 * t + 1], th = std::tanh(gm * q[M::kPortT[t]] / im);
+        f[2 * NB + ND + t] = im * th - gm * q[M::kPortT[t]]; if (jf) tanhG[t] = -gm * th * th;
+      }
   }
   double OutputNow() const   // output of the present state with the present bits (before the first step: the DC output of the hit)
   {
@@ -237,11 +275,11 @@ template <class M> struct Voice
     double f1[NF]; const long itsBefore = newtonIts; bool fCurrent = false;
     if (!noSolve)
     {
-    double J[NP][NP]; int piv[NP]; double jf[NB][4]; bool luOk = false;
+    double J[NP][NP]; int piv[NP]; double jf[NB][4]; bool luOk = false; double lastMx = 0.0;
     for (int it = 0; it < 40; ++it)
     {
       double F[NP];
-      if (it == 0 || !luOk)   // full Newton iteration: currents, block Jacobians, factorization
+      if (it == 0 || !luOk || lastMx > kChordMaxCorr)   // full Newton iteration (also while the correction is large: the Jacobian of the first iteration does not hold for a junction that moved far): currents, block Jacobians, factorization
       {
         EvalF(p, f1, jf); ++newtonIts;
         for (int attempt = 0; attempt < 2; ++attempt)   // 1st: diagonal pivots (J = I - Zp Jf is diagonally dominant in practice); 2nd: partial pivoting if a pivot was small
@@ -256,6 +294,8 @@ template <class M> struct Voice
               J[i][M::kPortBe[k]] -= zr[2 * k] * jf[k][0] + zr[2 * k + 1] * jf[k][2];
               if (M::kPortBc[k] >= 0) J[i][M::kPortBc[k]] -= zr[2 * k] * jf[k][1] + zr[2 * k + 1] * jf[k][3];
             }
+            if constexpr (ND > 0) for (int m = 0; m < ND; ++m) J[i][M::kPortD[m]] -= zr[2 * NB + m] * dioG[m];
+            if constexpr (NT > 0) for (int t = 0; t < NT; ++t) J[i][M::kPortT[t]] -= zr[2 * NB + ND + t] * tanhG[t];
           }
           if (attempt == 0) { luOk = LuFactorNoPivot<NP>(J); if (luOk) { for (int i = 0; i < NP; ++i) piv[i] = i; break; } }
           else luOk = LuFactor<NP>(J, piv);
@@ -269,15 +309,41 @@ template <class M> struct Voice
       }
       LuSolve<NP>(J, piv, F);
       double mx = 0.0; for (int i = 0; i < NP; ++i) mx = std::fmax(mx, std::fabs(F[i]));
+      lastMx = mx;
       const double sc = mx > 0.5 ? 0.5 / mx : 1.0;
-      for (int i = 0; i < NP; ++i) p[i] += sc * F[i];
-      if (mx < newtonTol)   // converged: carry the currents to the corrected ports with the Jacobian of this step (error of second order in the correction)
+      for (int i = 0; i < NP; ++i) F[i] *= sc;
+      bool limited = false;   // junction voltage limiting (SPICE pnjlim): a forward step of a junction beyond its critical voltage grows only logarithmically, so a junction does not run onto the exponential branch
+      for (int k = 0; k < NB; ++k)
+        for (int pt = 0; pt < 2; ++pt)
+        {
+          const int idx = pt == 0 ? M::kPortBe[k] : M::kPortBc[k]; if (idx < 0) continue;
+          const double vold = p[idx], vnew = vold + F[idx];
+          if (vnew > bp[k][15] && std::fabs(vnew - vold) > 2.0 * kVt)
+          {
+            double vl; if (vold > 0.0) { const double arg = 1.0 + (vnew - vold) / kVt; vl = arg > 0.0 ? vold + kVt * std::log(arg) : bp[k][15]; } else vl = kVt * std::log(vnew / kVt);
+            F[idx] = vl - vold; limited = true;
+          }
+        }
+      if constexpr (ND > 0)
+        for (int m = 0; m < ND; ++m)
+        {
+          const int idx = M::kPortD[m]; const double vold = p[idx], vnew = vold + F[idx];
+          if (vnew > dp[m][4] && std::fabs(vnew - vold) > 2.0 * dp[m][1])
+          {
+            double vl; if (vold > 0.0) { const double arg = 1.0 + (vnew - vold) / dp[m][1]; vl = arg > 0.0 ? vold + dp[m][1] * std::log(arg) : dp[m][4]; } else vl = dp[m][1] * std::log(vnew / dp[m][1]);
+            F[idx] = vl - vold; limited = true;
+          }
+        }
+      for (int i = 0; i < NP; ++i) p[i] += F[i];
+      if (mx < newtonTol && !limited)   // converged: carry the currents to the corrected ports with the Jacobian of this step (error of second order in the correction)
       {
         for (int k = 0; k < NB; ++k)
         {
-          const double d0 = sc * F[M::kPortBe[k]], d1 = M::kPortBc[k] >= 0 ? sc * F[M::kPortBc[k]] : 0.0;
+          const double d0 = F[M::kPortBe[k]], d1 = M::kPortBc[k] >= 0 ? F[M::kPortBc[k]] : 0.0;
           f1[2 * k] += jf[k][0] * d0 + jf[k][1] * d1; f1[2 * k + 1] += jf[k][2] * d0 + jf[k][3] * d1;
         }
+        if constexpr (ND > 0) for (int m = 0; m < ND; ++m) f1[2 * NB + m] += dioG[m] * F[M::kPortD[m]];
+        if constexpr (NT > 0) for (int t = 0; t < NT; ++t) f1[2 * NB + ND + t] += tanhG[t] * F[M::kPortT[t]];
         fCurrent = true; break;
       }
     }

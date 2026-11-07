@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <type_traits>
 #include <vector>
 
 namespace dgg { namespace pcmfast {
@@ -65,6 +66,15 @@ inline std::vector<double> ExpmDense(std::vector<double> a, int n)
   return e;
 }
 
+template <class M, class = void> struct HasBd : std::false_type {};
+template <class M> struct HasBd<M, std::void_t<decltype(M::kHasBd)>> : std::true_type {};
+
+template <class M, class = void> struct DioCount : std::integral_constant<int, 0> {};
+template <class M> struct DioCount<M, std::void_t<decltype(M::kNumDio)>> : std::integral_constant<int, M::kNumDio> {};
+
+template <class M, class = void> struct TanhCount : std::integral_constant<int, 0> {};
+template <class M> struct TanhCount<M, std::void_t<decltype(M::kNumTanh)>> : std::integral_constant<int, M::kNumTanh> {};
+
 // The step tables of model M for the PCM period T (seconds): step lengths h, Phi, GaF, GbF, Cone, Zp, and the input columns GaUc / GbUc / GsUc (NU x R per step, column-major as the header).
 template <class M> struct PcmSteps
 {
@@ -102,6 +112,16 @@ template <class M> struct PcmSteps
           for (int k = 0; k < NSn; ++k) { S0[static_cast<size_t>(i) * NSn + k] += Ga(i, NU + k) * (1.0 - ws) + Gb(i, NU + k) * (1.0 - we); S1[static_cast<size_t>(i) * NSn + k] += Ga(i, NU + k) * ws + Gb(i, NU + k) * we; }
           cc[i] += Ga(i, NG - 1) + Gb(i, NG - 1);
         }
+        if constexpr (HasBd<M>::value)   // capacitors from PCM input nodes: the ramp of an input couples through its derivative (u1 - u0) / hs
+          if (ramp)
+          {
+            const int N2 = 2 * R; std::vector<double> D(static_cast<size_t>(N2) * N2, 0.0);
+            for (int i = 0; i < R; ++i) { for (int k = 0; k < R; ++k) D[static_cast<size_t>(i) * N2 + k] = A[static_cast<size_t>(i) * R + k] * hs; D[static_cast<size_t>(i) * N2 + R + i] = hs; }
+            const std::vector<double> ED = ExpmDense(D, N2);
+            std::vector<double> Psi(static_cast<size_t>(R) * R); for (int i = 0; i < R; ++i) for (int k = 0; k < R; ++k) Psi[static_cast<size_t>(i) * R + k] = ED[static_cast<size_t>(i) * N2 + R + k];
+            const std::vector<double> Pb = MatMul(Psi, R, R, std::vector<double>(M::kBd, M::kBd + R * NU), NU);
+            for (int i = 0; i < R; ++i) for (int k = 0; k < NU; ++k) { const double v = Pb[static_cast<size_t>(i) * NU + k] / hs; Qo[static_cast<size_t>(i) * NU + k] -= v; Qn[static_cast<size_t>(i) * NU + k] += v; }
+          }
         tau += hs;
       }
       std::vector<double> Zw = MatMul(XzS, NSn, R, S1, NSn); for (size_t i = 0; i < Zw.size(); ++i) Zw[i] += DgW[i];
