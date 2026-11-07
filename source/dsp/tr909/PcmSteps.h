@@ -75,6 +75,9 @@ template <class M> struct DioCount<M, std::void_t<decltype(M::kNumDio)>> : std::
 template <class M, class = void> struct TanhCount : std::integral_constant<int, 0> {};
 template <class M> struct TanhCount<M, std::void_t<decltype(M::kNumTanh)>> : std::integral_constant<int, M::kNumTanh> {};
 
+template <class M, class = void> struct ResCount : std::integral_constant<int, 0> {};
+template <class M> struct ResCount<M, std::void_t<decltype(M::kNumRes)>> : std::integral_constant<int, M::kNumRes> {};
+
 // The step tables of model M for the PCM period T (seconds): step lengths h, Phi, GaF, GbF, Cone, Zp, and the input columns GaUc / GbUc / GsUc (NU x R per step, column-major as the header).
 template <class M> struct PcmSteps
 {

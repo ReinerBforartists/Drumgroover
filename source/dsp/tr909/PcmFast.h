@@ -19,6 +19,7 @@
 
 namespace dgg { namespace pcmfast {
 
+constexpr double kSettlePeriod = 0.1; constexpr int kSettlePeriods = 300;   // idle settling: PCM period in seconds and number of periods
 constexpr double kChordMaxCorr = 0.2;   // volts: above this correction the next iteration is a full Newton iteration
 constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kTailRel = 0.0, kEnvDecay = 0.975, kAcAlpha = 0.0031, kAcEndLevel = 2e-4; constexpr int kAcEndPeriods = 400;   // volts on the port voltages; the correction is applied before the test, so the error left is of the order of the square
 
@@ -136,7 +137,10 @@ template <int N> inline void LuSolve(const double (&A)[N][N], const int (&piv)[N
 
 template <class M> struct Voice
 {
-  static constexpr int R = M::kR, NU = M::kU, NP = M::kPorts, NF = M::kCur, NB = M::kNumBjt, NBITS = M::kBits, IACC = M::kAccentIdx, ND = DioCount<M>::value, NT = TanhCount<M>::value;   // currents: 2 per BJT, then one per diode, then one per op-amp input stage (deviation from the linear gm)
+  static constexpr int R = M::kR, NU = M::kU, NP = M::kPorts, NF = M::kCur, NB = M::kNumBjt, NBITS = M::kBits, IACC = M::kAccentIdx, ND = DioCount<M>::value, NT = TanhCount<M>::value, NR = ResCount<M>::value;   // currents: 2 per BJT, then one per diode, then one per op-amp input stage (deviation from the linear gm)
+  double resG[NR > 0 ? NR : 1];   // conductances of the pot resistors (run-time parameters; the nominal values are the header's kResG0)
+  void SetResG(int m, double g) { if constexpr (NR > 0) { if (!resInit) { for (int i = 0; i < NR; ++i) resG[i] = M::kResG0[i]; resInit = true; } resG[m] = g; } }
+  bool resInit = false, idleMode = false;
   mutable double tanhG[NT > 0 ? NT : 1];   // slope of the op-amp stage currents at the last full evaluation
   mutable double dp[ND > 0 ? ND : 1][5], dioVj[ND > 0 ? ND : 1], dioG[ND > 0 ? ND : 1];   // diode constants {Is, N Vt, Rs, breakdown knee, critical voltage}, internal junction voltage (warm start), conductance of the last full evaluation
   double coneEff[M::kSteps * R], pd1Eff[NP], accOut = 0.0;   // constant forcing of every step type including the accent input (RefreshAccent)
@@ -180,6 +184,7 @@ template <class M> struct Voice
       const double* q = &M::kBjt[9 * k]; for (int i = 0; i < 9; ++i) bp[k][i] = q[i];
       bp[k][9] = 1.0 / (q[4] * kVt); bp[k][10] = 1.0 / (q[7] * kVt); bp[k][11] = 1.0 / q[5]; bp[k][12] = 1.0 / q[6]; bp[k][13] = 1.0 / q[2]; bp[k][14] = 1.0 / q[3]; bp[k][15] = kVt * std::log(kVt / (1.4142135623730951 * q[1]));   // [15]: critical junction voltage (limiting)
     }
+    if constexpr (NR > 0) { if (!resInit) { for (int m = 0; m < NR; ++m) resG[m] = M::kResG0[m]; resInit = true; } }
     if constexpr (ND > 0)
       for (int m = 0; m < ND; ++m)
       {
@@ -189,8 +194,17 @@ template <class M> struct Voice
       }
     for (int i = 0; i < NU; ++i) u0[i] = M::kU0[i];
     bitsPrev = 0; for (int i = 0; i < NBITS; ++i) if (M::kU0[i] > 0.5 * M::kVhigh) bitsPrev |= (1u << i);
+    if constexpr (NR > 0) { bool moved = false; for (int m = 0; m < NR; ++m) if (resG[m] != M::kResG0[m]) moved = true; if (moved) SettleIdle(); }
     EvalF(p, f0, nullptr); lastOut = OutputNow(); period = 0; stepIdx = 0; layout = 0; newtonIts = 0; stepsDone = 0; outDc = OutputNow(); env = 0.0; peak = 1e-12; acLow = outDc; acEnv = 0.0; acPeak = 0.0; quietPeriods = 0; finished = false;
     for (int i = 0; i < 4; ++i) periodsByLayout[i] = 0;
+  }
+  // Idle state for pot resistors away from their nominal values (the DC tables are for the nominal ones): the idle circuit (bits at their initial values, no trigger) runs
+  // with a long PCM period (long steps, constant bits) until the slow nodes have settled; the step tables of the hit are restored afterwards.
+  void SettleIdle()
+  {
+    const PcmSteps<M> saved = st; st.Build(kSettlePeriod); RefreshAccent(); idleMode = true;
+    for (int i = 0; i < kSettlePeriods * M::kLayoutN[0]; ++i) Step();
+    idleMode = false; st = saved; RefreshAccent();
   }
   // restart of the PCM sequence while the analog state continues (the digital counters are reset, the capacitors keep their charge)
   void Retrigger()
@@ -224,6 +238,8 @@ template <class M> struct Voice
         const double gm = M::kTanh[2 * t], im = M::kTanh[2 * t + 1], th = std::tanh(gm * q[M::kPortT[t]] / im);
         f[2 * NB + ND + t] = im * th - gm * q[M::kPortT[t]]; if (jf) tanhG[t] = -gm * th * th;
       }
+    if constexpr (NR > 0)
+      for (int m = 0; m < NR; ++m) f[2 * NB + ND + NT + m] = resG[m] * q[M::kPortR[m]];
   }
   double OutputNow() const   // output of the present state with the present bits (before the first step: the DC output of the hit)
   {
@@ -239,7 +255,7 @@ template <class M> struct Voice
     PF_T0;
     if (stepIdx == 0)   // new PCM period: new bits at the end of the ramp; the layout of the period follows the signal level
     {
-      bitsNow = (period < M::kPeriods) ? M::kPcm[period] : M::kPcm[M::kPeriods - 1];
+      bitsNow = idleMode ? bitsPrev : ((period < M::kPeriods) ? M::kPcm[period] : M::kPcm[M::kPeriods - 1]);
       if (freezeA >= 0 && period >= freezeA) bitsNow = (bitsNow & 0x3Fu) | (M::kPcm[freezeAH >= 0 ? freezeAH : M::kPeriods - 1] & ~0x3Fu), bitsNow ^= flipMask;
       if (freezeP >= 0 && period > freezeP) bitsNow = (bitsNow & ~0x3Fu) | (M::kPcm[freezeP] & 0x3Fu);
       layout = (M::kLayouts > 1 && env < tailRel * peak) ? 1 : 0; ++periodsByLayout[layout];
@@ -296,6 +312,7 @@ template <class M> struct Voice
             }
             if constexpr (ND > 0) for (int m = 0; m < ND; ++m) J[i][M::kPortD[m]] -= zr[2 * NB + m] * dioG[m];
             if constexpr (NT > 0) for (int t = 0; t < NT; ++t) J[i][M::kPortT[t]] -= zr[2 * NB + ND + t] * tanhG[t];
+            if constexpr (NR > 0) for (int m = 0; m < NR; ++m) J[i][M::kPortR[m]] -= zr[2 * NB + ND + NT + m] * resG[m];
           }
           if (attempt == 0) { luOk = LuFactorNoPivot<NP>(J); if (luOk) { for (int i = 0; i < NP; ++i) piv[i] = i; break; } }
           else luOk = LuFactor<NP>(J, piv);
@@ -344,6 +361,7 @@ template <class M> struct Voice
         }
         if constexpr (ND > 0) for (int m = 0; m < ND; ++m) f1[2 * NB + m] += dioG[m] * F[M::kPortD[m]];
         if constexpr (NT > 0) for (int t = 0; t < NT; ++t) f1[2 * NB + ND + t] += tanhG[t] * F[M::kPortT[t]];
+        if constexpr (NR > 0) for (int m = 0; m < NR; ++m) f1[2 * NB + ND + NT + m] += resG[m] * F[M::kPortR[m]];
         fCurrent = true; break;
       }
     }
