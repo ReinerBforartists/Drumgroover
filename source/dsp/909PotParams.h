@@ -1,6 +1,7 @@
 // TR-909 fast voices: the circuit pot positions of a set (Tr909SetKey::params).
 //
 // params packs one byte per circuit pot of the voice, in the generator's order (LT / MT / HT: Tune, Decay, Level; BD: Tune, Attack, Level, Decay; SD: Tune, Tone, Level, Snappy; HC: Level).
+// Crash and Ride: Level (VR24 / VR26; their second pot VR25 / VR27 is not a run-time parameter of the PCM models yet).
 // A pot position is q / kTr909PotSteps with q = 0..kTr909PotSteps (finer than the 0.01 step of the UI knobs); the byte is q XOR kTr909PotNominalQ, so params == 0 is every pot at 0.5, the nominal position of the model headers.
 // Level pots here are circuit pots (VR12, HC VR20), not a gain after the voice.
 #pragma once
@@ -16,7 +17,7 @@ constexpr int kTr909PotNominalQ = kTr909PotSteps / 2;
 
 inline int Tr909PotCount(Tr909Voice v)
 {
-  switch (v) { case Tr909Voice::Bd: case Tr909Voice::Sd: return 4; case Tr909Voice::Lt: case Tr909Voice::Mt: case Tr909Voice::Ht: return 3; case Tr909Voice::Hc: return 1; default: return 0; }
+  switch (v) { case Tr909Voice::Bd: case Tr909Voice::Sd: return 4; case Tr909Voice::Lt: case Tr909Voice::Mt: case Tr909Voice::Ht: return 3; case Tr909Voice::Hc: case Tr909Voice::Cr: case Tr909Voice::Ri: return 1; default: return 0; }
 }
 inline int Tr909PotQuantise(double x) { return std::clamp(static_cast<int>(std::lround(std::clamp(x, 0.0, 1.0) * kTr909PotSteps)), 0, kTr909PotSteps); }
 inline uint64_t Tr909PackPots(Tr909Voice v, const double* pots)

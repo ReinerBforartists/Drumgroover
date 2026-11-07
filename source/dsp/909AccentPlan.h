@@ -15,11 +15,18 @@
 
 namespace dgg {
 
-enum class Tr909Voice : int { Bd = 0, Sd, Lt, Mt, Ht, Hc, kCount };
+enum class Tr909Voice : int { Bd = 0, Sd, Lt, Mt, Ht, Hc, Cr, Ri, kCount };   // Cr: Crash, Ri: Ride (PCM voices)
+
+// The PCM voices (Crash, Ride) play a ROM replacement through an analog path: the accent is a run-time input of the model, there is no noise source (every variant of a set is the same hit).
+inline bool Tr909IsPcmVoice(Tr909Voice v) { return v == Tr909Voice::Cr || v == Tr909Voice::Ri; }
+// Length of a rendered hit in seconds (the PCM voices ring until the circuit has settled: this is the cap).
+// Number of variants of a set: the PCM voices have no noise, every variant would be the same hit, so a set has one.
+inline int Tr909VariantTarget(Tr909Voice v, int target) { return Tr909IsPcmVoice(v) ? 1 : target; }
+inline double Tr909HitSeconds(Tr909Voice v) { return Tr909IsPcmVoice(v) ? 6.0 : 0.35; }
 
 inline const char* Tr909VoiceName(Tr909Voice v)
 {
-  static const char* const n[] = {"bd", "sd", "lt", "mt", "ht", "hc"};
+  static const char* const n[] = {"bd", "sd", "lt", "mt", "ht", "hc", "cr", "ri"};
   return n[static_cast<int>(v)];
 }
 inline bool Tr909VoiceFromName(const char* s, Tr909Voice& v)
@@ -61,6 +68,11 @@ inline Tr909AccentPlan Tr909PlanAccent(Tr909Voice v, int code)
 {
   Tr909AccentPlan p;
   code = std::clamp(code, 0, kTr909MaxAccentCode);
+  if (Tr909IsPcmVoice(v))   // the accent is a run-time input of the model: any code from the lowest anchor up is an exact run
+  {
+    if (code >= kTr909Anchors[0]) { p.kind = Tr909AccentKind::Exact; p.loAnchor = p.hiAnchor = code; }
+    return p;
+  }
   for (int i = 0; i < kTr909AnchorCount; ++i)
     if (kTr909Anchors[i] == code) { p.kind = Tr909AccentKind::Exact; p.loAnchor = p.hiAnchor = code; return p; }
   if (code < kTr909Anchors[0] || code < Tr909BlendMinCode(v)) return p;   // below the lowest anchor or outside the validated range

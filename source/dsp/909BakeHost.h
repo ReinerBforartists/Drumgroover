@@ -60,7 +60,7 @@ inline Tr909BakeResult Tr909BakeVariant(const Tr909SetKey& key, int variantIndex
   for (int i = 0; i < n; ++i)
   {
     Tr909RunRequest r; r.voice = key.voice; r.params = key.params; r.anchorCode = runs[i].anchorCode; r.noise = key.noise;
-    r.noiseSeed = Tr909NoiseSeed(variantIndex); r.sampleRateHz = key.sampleRateHz;
+    r.noiseSeed = Tr909NoiseSeed(variantIndex); r.sampleRateHz = key.sampleRateHz; r.seconds = Tr909HitSeconds(key.voice);
     if (!runner.Run(r, y[i]) || y[i].empty()) return Tr909BakeResult::RunFailed;
   }
   if (n == 1) { out = std::move(y[0]); return Tr909BakeResult::Ok; }
@@ -87,7 +87,7 @@ inline void Tr909BakeVariantGroup(const Tr909SetKey& key, const int* variantInde
   std::vector<float> y[2][4];
   for (int r = 0; grouped && r < nr; ++r)
   {
-    Tr909RunRequest rq; rq.voice = key.voice; rq.params = key.params; rq.anchorCode = runs[r].anchorCode; rq.noise = key.noise; rq.sampleRateHz = key.sampleRateHz;
+    Tr909RunRequest rq; rq.voice = key.voice; rq.params = key.params; rq.anchorCode = runs[r].anchorCode; rq.noise = key.noise; rq.sampleRateHz = key.sampleRateHz; rq.seconds = Tr909HitSeconds(key.voice);
     uint64_t seeds[4]; for (int i = 0; i < n; ++i) seeds[i] = Tr909NoiseSeed(variantIndex[i]);
     if (!runner.RunGroup(rq, seeds, n, y[r])) grouped = false;
     for (int i = 0; grouped && i < n; ++i) if (y[r][i].empty()) grouped = false;

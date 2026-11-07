@@ -627,7 +627,7 @@ function deAppendKnobGroups(knobRow, family, groups, groups909, index, titleMap,
   let pitchCluster = null;
   for (const group of groups) {
     const cluster = deBuildKnobGroupRow(family, group, index, titleMap, note);
-    if (groups909 && group.title === 'Pitch') pitchCluster = cluster;
+    if (groups909 && group.params.length === 1 && group.params[0].key === 'pitchRatio') pitchCluster = cluster;   // the Pitch stage (digital transpose) belongs to every engine
     else if (groups909) cluster.dataset.engine = '808';
     knobRow.appendChild(cluster);
   }
@@ -701,9 +701,8 @@ function deBuildParamPanel(family, schema) {
 
       const knobRow = document.createElement('div');
       knobRow.className = 'de-knob-groups-row de-instance-card-knobs';
-      for (const group of groupsForCard) {
-        knobRow.appendChild(deBuildKnobGroupRow(family, group, idx, undefined, art.note));
-      }
+      const groups909 = tableRow && tableRow.controls909 ? deGroupsOfControls(tableRow.controls909) : undefined;   // rows that play a TR-909 voice (Crash, Ride)
+      deAppendKnobGroups(knobRow, family, groupsForCard, groups909, idx, undefined, art.note);
       main.appendChild(knobRow);
       container.appendChild(main);
 
@@ -767,6 +766,7 @@ function deBuildParamPanel(family, schema) {
         if (padEl) {
           const zoomShell = document.createElement('div');
           zoomShell.className = 'knob-cluster de-instance-card-pad-zoom';
+          if (groups909) zoomShell.dataset.engine = '808';   // the morph pad belongs to the 808 circuit of the card
           padEl.replaceWith(zoomShell);
           zoomShell.appendChild(padEl);
           deWireClusterZoom(zoomShell);

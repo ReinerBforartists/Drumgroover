@@ -35,6 +35,9 @@
 #include "tr909/models/hc_a75.h"
 #include "tr909/models/hc_a100.h"
 #include "tr909/models/hc_a127.h"
+#include "tr909/models/crash_pcm.h"
+#include "tr909/models/ride_pcm.h"
+#include "tr909/PcmVoiceHost.h"
 #include "tr909/models/lt_a25_pot.h"
 #include "tr909/models/lt_a50_pot.h"
 #include "tr909/models/lt_a75_pot.h"
@@ -81,12 +84,13 @@ public:
   {
     int a = -1;
     for (int i = 0; i < kTr909AnchorCount; ++i) if (kTr909Anchors[i] == req.anchorCode) a = i;
+    if (req.voice < Tr909Voice::kCount && Tr909IsPcmVoice(req.voice)) a = 0;   // the PCM voices have one model, the accent is its run-time input
     if (a < 0 || static_cast<int>(req.voice) < 0 || req.voice >= Tr909Voice::kCount) return false;
     std::unique_ptr<SlotBase>& slot = slots_[static_cast<int>(req.voice)][a];
     if (!slot) slot = Make(req.voice, a);
     if (!slot) return false;
     const bool fast20 = req.noise == Tr909NoisePath::Fast20us;
-    return slot->Render(req.voice, req.params, fast20, req.noiseSeed, req.seconds, req.sampleRateHz, out);
+    return slot->Render(req.voice, req.params, fast20, req.noiseSeed, req.seconds, req.sampleRateHz, out, req.anchorCode);
   }
   // Lane engine for the cache bake (HitLanesApi.h): LT, MT and HT so far (measured and gated per voice, tools handoff R392 / R393 / R394), 5 us reference noise only.
   int GroupSize(Tr909Voice v) const override { return (v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht) && Tr909LanesAvailable() ? 4 : 1; }
@@ -115,7 +119,7 @@ public:
     for (int i = 0; i < n; ++i)
     {
       SlotBase* s = SlotFor(v, runs[i].anchorCode); if (!s) { liveN_ = 0; return false; }
-      if (!s->Begin(v, params, np == Tr909NoisePath::Fast20us, noiseSeed, seconds, sampleRateHz)) { liveN_ = 0; return false; }
+      if (!s->Begin(v, params, np == Tr909NoisePath::Fast20us, noiseSeed, seconds, sampleRateHz, runs[i].anchorCode)) { liveN_ = 0; return false; }
       live_[i] = s; liveW_[i] = runs[i].weight;
     }
     liveN_ = n; return true;
@@ -137,11 +141,11 @@ private:
   struct SlotBase
   {
     virtual ~SlotBase() = default;
-    virtual bool Render(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, std::vector<float>& out) = 0;
+    virtual bool Render(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, std::vector<float>& out, int accentCode) = 0;
     // Pot dependent model of the pot state `params` (909PotParams.h): nullptr for params == 0 (the arrays of the model header), else the set assembled by this slot, filled into lp.
     virtual const Tr909LanePot* LanePotFor(Tr909Voice v, uint64_t params, Tr909LanePot& lp) = 0;
     virtual void Warm(Tr909Voice v, uint64_t params, bool fast20) = 0;
-    virtual bool Begin(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs) = 0;
+    virtual bool Begin(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, int accentCode) = 0;
     virtual int Pull(float* out, int n) = 0;
   };
 
@@ -171,14 +175,14 @@ private:
       else if (runnerId_ != sel->id) { runner.SetPot(potSet.Ptrs()); runnerId_ = sel->id; }
     }
     uint64_t runnerId_ = 0;
-    bool Render(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, std::vector<float>& out) override
+    bool Render(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, std::vector<float>& out, int) override
     {
       ApplyPots(v, params);
       pcmfast::HitNoise noise; noise.Start(seed, fast20 ? 20 * 1e-6 : 5e-6, fast20 ? 0.13 : 0.0);   // 20 * 1e-6: the exact step the validation used
       return runner.Render(pcmfast::HitTuningFor(v, fast20), &noise, seconds, static_cast<double>(fs), out);
     }
     void Warm(Tr909Voice v, uint64_t params, bool fast20) override { ApplyPots(v, params); runner.Warm(pcmfast::HitTuningFor(v, fast20)); }
-    bool Begin(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs) override
+    bool Begin(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, int) override
     {
       ApplyPots(v, params);
       noise_.Start(seed, fast20 ? 20 * 1e-6 : 5e-6, fast20 ? 0.13 : 0.0);
@@ -200,9 +204,42 @@ private:
     pcmfast::HitNoise noise_; pcmfast::HostDecimator dec_; long produced_ = 0, want_ = 0;
   };
 
+  // A PCM voice (Crash, Ride): the reduced model with the ROM replacement inside, run through PcmVoiceHost (host rate decimator, Level = the output pot as an exact gain). The accent code is the accent input of the hit.
+  template <class M>
+  struct PcmSlot : SlotBase
+  {
+    pcmfast::PcmVoiceHost<M> host; int hostFs = 0; long want_ = 0;
+    void Prepare(Tr909Voice v, uint64_t params, int fs, int accentCode)
+    {
+      double p[8]; Tr909UnpackPots(v, params, p);
+      if (hostFs != fs) { host.Init(static_cast<double>(fs)); hostFs = fs; }
+      host.SetAccent(Tr909AccentVolts(accentCode)); host.SetLevel(p[0]);
+    }
+    const Tr909LanePot* LanePotFor(Tr909Voice, uint64_t, Tr909LanePot&) override { return nullptr; }
+    bool Render(Tr909Voice v, uint64_t params, bool, uint64_t, double seconds, int fs, std::vector<float>& out, int accentCode) override
+    {
+      Prepare(v, params, fs, accentCode); host.Trigger(); out.clear();
+      const long maxN = static_cast<long>(seconds * fs); float buf[512];
+      while (host.Active() && static_cast<long>(out.size()) < maxN)
+      {
+        const int n = static_cast<int>(std::min<long>(512, maxN - static_cast<long>(out.size())));
+        host.Render(buf, n); out.insert(out.end(), buf, buf + n);
+      }
+      return !out.empty();
+    }
+    void Warm(Tr909Voice, uint64_t, bool) override {}
+    bool Begin(Tr909Voice v, uint64_t params, bool, uint64_t, double seconds, int fs, int accentCode) override { Prepare(v, params, fs, accentCode); host.Trigger(); want_ = static_cast<long>(seconds * fs); return true; }
+    int Pull(float* out, int n) override
+    {
+      if (!host.Active() || want_ <= 0) return 0;
+      const int w = static_cast<int>(std::min<long>(n, want_)); host.Render(out, w); want_ -= w; return w;
+    }
+  };
+
   SlotBase* SlotFor(Tr909Voice v, int anchorCode)
   {
     int a = -1; for (int i = 0; i < kTr909AnchorCount; ++i) if (kTr909Anchors[i] == anchorCode) a = i;
+    if (v < Tr909Voice::kCount && Tr909IsPcmVoice(v)) a = 0;
     if (a < 0 || static_cast<int>(v) < 0 || v >= Tr909Voice::kCount) return nullptr;
     std::unique_ptr<SlotBase>& slot = slots_[static_cast<int>(v)][a];
     if (!slot) slot = Make(v, a);
@@ -214,6 +251,8 @@ private:
 #define DGG_909_SLOT(V, VOICE, CODE, IDX) if (v == Tr909Voice::VOICE && a == IDX) return std::unique_ptr<SlotBase>(new Slot<Tr909_##V##_A##CODE, Tr909_##V##_A##CODE##_Pot>());
 #define DGG_909_VOICE(V, VOICE) DGG_909_SLOT(V, VOICE, 25, 0) DGG_909_SLOT(V, VOICE, 50, 1) DGG_909_SLOT(V, VOICE, 75, 2) DGG_909_SLOT(V, VOICE, 100, 3) DGG_909_SLOT(V, VOICE, 127, 4)
     DGG_909_VOICE(BD, Bd) DGG_909_VOICE(SD, Sd) DGG_909_VOICE(LT, Lt) DGG_909_VOICE(MT, Mt) DGG_909_VOICE(HT, Ht) DGG_909_VOICE(HC, Hc)
+    if (v == Tr909Voice::Cr && a == 0) return std::unique_ptr<SlotBase>(new PcmSlot<CrashModelA0>());
+    if (v == Tr909Voice::Ri && a == 0) return std::unique_ptr<SlotBase>(new PcmSlot<RideModelA0>());
 #undef DGG_909_VOICE
 #undef DGG_909_SLOT
     return nullptr;

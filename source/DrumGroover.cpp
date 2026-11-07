@@ -1529,7 +1529,7 @@ void DrumGroover::OnWebContentLoaded()
     for (const dgg::Tr909SetKey& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(GetSampleRate()))))
     {
       const std::string base = dgg::Tr909SetBaseName(k);
-      for (int v = 1; v <= target909 && missingSet.empty(); ++v)
+      for (int v = 1; v <= dgg::Tr909VariantTarget(k.voice, target909) && missingSet.empty(); ++v)
         if (!VariantFileValid(VariantFilePath(base, v))) missingSet = base + " v" + std::to_string(v);
       if (!missingSet.empty()) break;
     }
@@ -2927,7 +2927,7 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
   DGG_Log("HandleSetVoiceParam: family='" + family + "' param='" + param + "' index=" + std::to_string(index) + " value=" + std::to_string(value));
 
   mVoiceParamsConfigured.store(true, std::memory_order_relaxed);
-  if (dgg::Tr909CachedVoice::IsPotName(param) && (family == "kick" || family == "snare" || family == "tom" || family == "custom") && mEngineMode.load(std::memory_order_relaxed) == static_cast<int>(EngineMode::Tr909)) Mark909Edit();
+  if (dgg::Tr909CachedVoice::IsPotName(param) && (family == "kick" || family == "snare" || family == "tom" || family == "custom" || family == "cymbal" || family == "ride") && mEngineMode.load(std::memory_order_relaxed) == static_cast<int>(EngineMode::Tr909)) Mark909Edit();
   if (family == "ride" || family == "hihat" || family == "cymbal")
   {
     mParamEditMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
@@ -2989,11 +2989,19 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
   {
     const int idx = (index >= 0 && index < (int)mCymbalPools.size()) ? index : 0;
     for (auto& v : mCymbalPools[idx].Voices()) SetRideVoiceParam(v, param, value);
+    ForEachCymbalPool([&](const dgg::InstrumentDef& d, auto&) {   // the 909 Crash of the row follows the card (Level)
+      dgg::Tr909Voice v909;
+      if ((index < 0 || d.paramIndex == index) && dgg::Tr909VoiceForInstrument(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetTr909CustomParam(v, param, value);
+    });
   }
   else if (family == "ride")
   {
     const int idx = (index >= 0 && index < (int)mRidePools.size()) ? index : 0;
     for (auto& v : mRidePools[idx].Voices()) SetRideVoiceParam(v, param, value);
+    ForEachRidePool([&](const dgg::InstrumentDef& d, auto&) {   // the 909 Ride of the row follows the card (Level)
+      dgg::Tr909Voice v909;
+      if ((index < 0 || d.paramIndex == index) && dgg::Tr909VoiceForInstrument(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetTr909CustomParam(v, param, value);
+    });
   }
   else
   {
@@ -3013,7 +3021,7 @@ void DrumGroover::HandleCommitVoiceParam(const nlohmann::json& payload)
   const int index = payload.value("index", -1);
   const bool rebake = ReadRebakeOnChange();
   // The normal set of the final values is always baked; with Preview accent on (and an Accent amount above 0 %) the accented set of the final values is baked as well.
-  if (family == "kick" || family == "snare" || family == "tom" || family == "custom")
+  if (family == "kick" || family == "snare" || family == "tom" || family == "custom" || family == "cymbal" || family == "ride")
   {
     // The release of a 909 circuit pot: the preview file goes (the preview sample stays active until the next drag replaces it), the cache sets of the final pot state of the voice(s) of the card are baked.
     gTr909Dragging.store(false, std::memory_order_relaxed);
@@ -3031,7 +3039,7 @@ void DrumGroover::HandleCommitVoiceParam(const nlohmann::json& payload)
       else
       {
         auto row = [&](const dgg::InstrumentDef& d, auto&) { dgg::Tr909Voice v909; if ((index < 0 || index == d.paramIndex) && dgg::Tr909VoiceForInstrument(d, v909)) bakeVoice(m909Pools[&d - dgg::kInstruments]); };
-        if (family == "kick") ForEachKickPool(row); else if (family == "snare") ForEachSnarePool(row); else ForEachTomPool(row);
+        if (family == "kick") ForEachKickPool(row); else if (family == "snare") ForEachSnarePool(row); else if (family == "cymbal") ForEachCymbalPool(row); else if (family == "ride") ForEachRidePool(row); else ForEachTomPool(row);
       }
     }
   }
@@ -3418,12 +3426,12 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
   std::vector<int> missing;
   if (rebakeAll)
   {
-    for (int k = 1; k <= target; k++) missing.push_back(k);
+    for (int k = 1; k <= dgg::Tr909VariantTarget(key.voice, target); k++) missing.push_back(k);
     pool.ClearKey(key);
   }
   else
   {
-    missing = MissingVariantSlots(baseName, target);
+    missing = MissingVariantSlots(baseName, dgg::Tr909VariantTarget(key.voice, target));
     if (missing.empty() && !loadIfComplete) return;
     LoadExistingVariantsIntoPool(pool, key, baseName);
   }
@@ -3576,10 +3584,11 @@ void CountFactoryDefaultFiles(double sr, int target, int& ready, int& total)
 {
   std::set<std::string> names;
   for (const auto& e : FactoryDefaultEntries()) names.insert(dgg::FactoryDefaultBaseName(e, sr));
-  for (const auto& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(sr)))) names.insert(dgg::Tr909SetBaseName(k));
   ready = 0; total = 0;
   for (const std::string& n : names)
     for (int v = 1; v <= target; ++v) { ++total; if (VariantFileValid(VariantFilePath(n, v))) ++ready; }
+  for (const auto& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(sr))))   // the 909 sets (the PCM voices have one variant)
+    for (int v = 1; v <= dgg::Tr909VariantTarget(k.voice, target); ++v) { ++total; if (VariantFileValid(VariantFilePath(dgg::Tr909SetBaseName(k), v))) ++ready; }
 }
 
 void EnqueueFactoryDefaultSet(const dgg::FactoryDefaultEntry& e, double sr, int target)
@@ -3704,7 +3713,7 @@ constexpr int kApplyMaxRetriesWithoutProgress = 3;
 int CountMissingFiles(const std::vector<dgg::VariantBakeTarget>& targets, int value)
 {
   int missing = 0;
-  for (const auto& t : targets) missing += (int)MissingVariantSlots(t.baseName, value).size();
+  for (const auto& t : targets) missing += (int)MissingVariantSlots(t.baseName, t.kind == 12 ? dgg::Tr909VariantTarget(t.key909.voice, value) : value).size();
   return missing;
 }
 
@@ -3728,7 +3737,7 @@ void DrumGroover::HandleQueryCacheBakeEstimate(const nlohmann::json& payload)
   int missing = 0, missingRide = 0, missingHiHat = 0, missingOther = 0;
   for (const auto& t : CurrentBakeTargets())
   {
-    const int n = (int)MissingVariantSlots(t.baseName, value).size();
+    const int n = (int)MissingVariantSlots(t.baseName, t.kind == 12 ? dgg::Tr909VariantTarget(t.key909.voice, value) : value).size();
     missing += n;
     (t.kind == 1 ? missingHiHat : t.kind >= 3 ? missingOther : missingRide) += n;
   }

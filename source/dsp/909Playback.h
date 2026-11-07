@@ -123,15 +123,15 @@ public:
     {
       // No baked set: the miss is reported so that the set gets baked. The hit plays the preview sample of its pot state when there is one, else it is computed live and played while it is computed (909LiveHost.h).
       ++mMisses; Tr909MissQueue::Instance().Push(k);
-      mBuf = Tr909PreviewSample::Instance().Get(mVoice, k.params);
+      mBuf = Tr909PreviewSample::Instance().Get(mVoice, k.params);   // (the PCM voices have no noise: a preview sample is the hit)
     }
     if (!mBuf)
     {
       // The first hit is computed live, on the audio thread (909LiveHost.h), however long the model takes.
       static std::atomic<unsigned> liveCounter{0};
       mLiveBuf.clear(); mLiveDone = false;
-      mLiveOn = Tr909LiveSynth::Instance().Start(this, k, Tr909NoiseSeed(1 + static_cast<int>(liveCounter.fetch_add(1, std::memory_order_relaxed) % 7)), 0.35);
-      if (mLiveOn) mLiveBuf.reserve(static_cast<size_t>(mSampleRate * 0.4));
+      mLiveOn = Tr909LiveSynth::Instance().Start(this, k, Tr909NoiseSeed(1 + static_cast<int>(liveCounter.fetch_add(1, std::memory_order_relaxed) % 7)), Tr909HitSeconds(mVoice));
+      if (mLiveOn) mLiveBuf.reserve(static_cast<size_t>(mSampleRate * (Tr909HitSeconds(mVoice) + 0.05)));
     }
   }
   void Process(double* out, int nFrames) override
@@ -185,7 +185,7 @@ public:
       case Tr909Voice::Lt: case Tr909Voice::Mt: case Tr909Voice::Ht: p[0] = tuneKnob; p[1] = decayKnob; p[2] = levelKnob; break;
       case Tr909Voice::Bd: p[0] = tuneKnob; p[1] = attackKnob; p[2] = levelKnob; p[3] = decayKnob; break;
       case Tr909Voice::Sd: p[0] = tuneKnob; p[1] = toneKnob; p[2] = levelKnob; p[3] = snappyKnob; break;
-      case Tr909Voice::Hc: p[0] = levelKnob; break;
+      case Tr909Voice::Hc: case Tr909Voice::Cr: case Tr909Voice::Ri: p[0] = levelKnob; break;
       default: break;
     }
   }

@@ -1,7 +1,7 @@
 // TR-909 mode: which instrument-table rows play a 909 fast voice.
 //
-// In the 909 engine mode the kick, the snare (SD circuit) and the rack and floor toms (not the congas) play the 909 voices of the same name;
-// every other kit row (hi-hats, cymbals) keeps playing the 808 voice. The rim shot rows play the live 909 Rim Shot (Tr909RimLiveForInstrument). The 909 voice goes to the mixer channel of the row.
+// In the 909 engine mode the kick, the snare (SD circuit), the rack and floor toms (not the congas), the cymbals (Crash) and the ride play the 909 voices of the same name;
+// every other kit row (hi-hats, mute hits) keeps playing the 808 voice. The rim shot rows play the live 909 Rim Shot (Tr909RimLiveForInstrument). The 909 voice goes to the mixer channel of the row.
 // The Hand Clap 909 is not a table row of the 808 table: it is defined in 909CustomInstruments.h.
 #pragma once
 #include "808InstrumentTable.h"
@@ -22,6 +22,9 @@ inline bool Tr909VoiceForInstrument(const InstrumentDef& d, Tr909Voice& v)
       // custom instrument Floor Tom 3 909 (909CustomInstruments.h), as the High Conga is for the 808.
       if (d.conga) { v = Tr909Voice::Lt; return true; }
       v = d.sheet == 0 ? Tr909Voice::Lt : d.sheet == 1 ? Tr909Voice::Mt : Tr909Voice::Ht; return true;
+    // The 909 has a Crash and a Ride cymbal (PCM voices): the Crash plays on the Cymbal rows, the Ride on the Ride rows; every articulation of a row plays the same 909 sound. The Mute rows keep the 808 voice (the 909 has no mute hit).
+    case EngineKind::Cymbal: if (d.isMute) return false; v = Tr909Voice::Cr; return true;
+    case EngineKind::Ride: if (StrEq(d.articulation, "Mute")) return false; v = Tr909Voice::Ri; return true;
     default: return false;
   }
 }
@@ -34,7 +37,7 @@ inline double Tr909BasePitchForInstrument(const InstrumentDef& d)
 }
 
 // Circuit pots of the 909 voice of a kit row, for the UI cards (the card keys are those of Tr909CachedVoice::SetPot): Kick Tune / Attack / Decay / Level, Snare Tune / Tone / Snappy / Level,
-// Toms Tune / Decay / Level. The Pitch knob of the row (digital transpose) is shared with the 808 circuit and stays where it is.
+// Toms Tune / Decay / Level, Crash and Ride Level. The Pitch knob of the row (digital transpose) is shared with the 808 circuit and stays where it is.
 inline nlohmann::json Tr909ControlsJson(const InstrumentDef& d)
 {
   Tr909Voice v;
@@ -43,6 +46,7 @@ inline nlohmann::json Tr909ControlsJson(const InstrumentDef& d)
   nlohmann::json c = nlohmann::json::array();
   if (v == Tr909Voice::Bd) { c.push_back(knob("tune909", "Tune", "Circuit", "Tuning of the drum.")); c.push_back(knob("attack909", "Attack", "Circuit", "Attack of the kick.")); c.push_back(knob("decay909", "Decay", "Circuit", "Decay of the kick.")); }
   else if (v == Tr909Voice::Sd) { c.push_back(knob("tune909", "Tune", "Circuit", "Tuning of the drum.")); c.push_back(knob("tone909", "Tone", "Circuit", "Tone of the snare.")); c.push_back(knob("snappy909", "Snappy", "Circuit", "Amount of the snare rattle.")); }
+  else if (Tr909IsPcmVoice(v)) {}   // Crash / Ride: the Level pot only (the second pot of the PCM voices is not a run-time parameter of the model yet)
   else { c.push_back(knob("tune909", "Tune", "Circuit", "Tuning of the drum.")); c.push_back(knob("decay909", "Decay", "Circuit", "Decay of the drum.")); }
   c.push_back(knob("level909", "Level", "Output", "Output level (circuit pot of the voice)."));
   return c;
