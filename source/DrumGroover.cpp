@@ -2928,7 +2928,7 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
   DGG_Log("HandleSetVoiceParam: family='" + family + "' param='" + param + "' index=" + std::to_string(index) + " value=" + std::to_string(value));
 
   mVoiceParamsConfigured.store(true, std::memory_order_relaxed);
-  if (dgg::Tr909CachedVoice::IsPotName(param) && (family == "kick" || family == "snare" || family == "tom" || family == "custom" || family == "cymbal" || family == "ride") && mEngineMode.load(std::memory_order_relaxed) == static_cast<int>(EngineMode::Tr909)) Mark909Edit();
+  if (dgg::Tr909CachedVoice::IsPotName(param) && (family == "kick" || family == "snare" || family == "tom" || family == "custom" || family == "cymbal" || family == "ride" || family == "hihat") && mEngineMode.load(std::memory_order_relaxed) == static_cast<int>(EngineMode::Tr909)) Mark909Edit();
   if (family == "ride" || family == "hihat" || family == "cymbal")
   {
     mParamEditMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
@@ -2962,6 +2962,8 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
     ForEachHiHatPool([&](const dgg::InstrumentDef& d, auto& pool) {
       if (d.paramIndex != target) return;
       for (auto& v : pool.Voices()) SetParamOn(v, param, value);
+      dgg::Tr909Voice v909;
+      if (dgg::Tr909VoiceForInstrument(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetTr909CustomParam(v, param, value);   // the 909 hi-hat of the row follows the card (Level, Decay)
     });
   }
   else if (family == "tom")
@@ -3022,7 +3024,7 @@ void DrumGroover::HandleCommitVoiceParam(const nlohmann::json& payload)
   const int index = payload.value("index", -1);
   const bool rebake = ReadRebakeOnChange();
   // The normal set of the final values is always baked; with Preview accent on (and an Accent amount above 0 %) the accented set of the final values is baked as well.
-  if (family == "kick" || family == "snare" || family == "tom" || family == "custom" || family == "cymbal" || family == "ride")
+  if (family == "kick" || family == "snare" || family == "tom" || family == "custom" || family == "cymbal" || family == "ride" || family == "hihat")
   {
     // The release of a 909 circuit pot: the preview file goes (the preview sample stays active until the next drag replaces it), the cache sets of the final pot state of the voice(s) of the card are baked.
     gTr909Dragging.store(false, std::memory_order_relaxed);
@@ -3040,7 +3042,7 @@ void DrumGroover::HandleCommitVoiceParam(const nlohmann::json& payload)
       else
       {
         auto row = [&](const dgg::InstrumentDef& d, auto&) { dgg::Tr909Voice v909; if ((index < 0 || index == d.paramIndex) && dgg::Tr909VoiceForInstrument(d, v909)) bakeVoice(m909Pools[&d - dgg::kInstruments]); };
-        if (family == "kick") ForEachKickPool(row); else if (family == "snare") ForEachSnarePool(row); else if (family == "cymbal") ForEachCymbalPool(row); else if (family == "ride") ForEachRidePool(row); else ForEachTomPool(row);
+        if (family == "kick") ForEachKickPool(row); else if (family == "snare") ForEachSnarePool(row); else if (family == "cymbal") ForEachCymbalPool(row); else if (family == "ride") ForEachRidePool(row); else if (family == "hihat") ForEachHiHatPool(row); else ForEachTomPool(row);
       }
     }
   }
@@ -4298,6 +4300,13 @@ void DrumGroover::Trigger909(const dgg::InstrumentDef& inst, double velocity01, 
   if (i < 0 || i >= dgg::kNumInstruments) return;
   m909Pools[i].SetNextGain(gain);
   m909Pools[i].Trigger(velocity01);
+  dgg::Tr909Voice v;
+  if (dgg::Tr909VoiceForInstrument(inst, v) && v == dgg::Tr909Voice::Hh)   // a closed hit chokes every open hi-hat (as in the 808 path)
+    for (int j = 0; j < dgg::kNumInstruments; ++j)
+    {
+      dgg::Tr909Voice w;
+      if (dgg::Tr909VoiceForInstrument(dgg::kInstruments[j], w) && w == dgg::Tr909Voice::Ho) m909Pools[j].ChokeAll();
+    }
 }
 
 void DrumGroover::ProcessMidiMsg(const IMidiMsg& msg)

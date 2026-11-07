@@ -140,11 +140,11 @@ The TR-909 engine (in development) needs waveforms for the hi-hat, crash and rid
 | Voice | Sound | Uploader | Licence | Source |
 | --- | --- | --- | --- | --- |
 | Closed hi-hat | "new 13 hat closed" (Freesound 112491, 12" Paiste hi-hat from the pack "John Bonham's Kit") | cdiupe | CC0 1.0 | <https://freesound.org/people/cdiupe/sounds/112491/> |
-| Open hi-hat | "Glitched Hat" (Freesound 87719) | Hippy664 | CC0 1.0 | <https://freesound.org/people/Hippy664/sounds/87719/> |
+| Open hi-hat | "HI-HAT_open_PO-12.aif" (Freesound 669732) | jannevse | CC0 1.0 | <https://freesound.org/people/jannevse/sounds/669732/> |
 | Crash | "crash-2" (Freesound 192418, pack "josomebody_poisoner_drumkit") | josomebody | CC0 1.0 | <https://freesound.org/people/josomebody/sounds/192418/> |
 | Ride | "ride thig 02" (Freesound 252214) | .Andre_Onate | CC0 1.0 | <https://freesound.org/people/.Andre_Onate/sounds/252214/> |
 
-All four sounds are dedicated to the public domain under CC0 1.0 (<http://creativecommons.org/publicdomain/zero/1.0/>); the licence was read on each Freesound page on 2026-10-22 (closed hi-hat) and 2026-11-07 (the other three).
+All four sounds are dedicated to the public domain under CC0 1.0 (<http://creativecommons.org/publicdomain/zero/1.0/>); the licence was read on each Freesound page on 2026-10-22 (closed hi-hat) and 2026-11-07 (the other three; the open hi-hat page, Freesound 669732, on 2026-11-08).
 
 ## 📜 License
 

@@ -194,7 +194,7 @@ template <class M> struct Voice
       }
     for (int i = 0; i < NU; ++i) u0[i] = M::kU0[i];
     bitsPrev = 0; for (int i = 0; i < NBITS; ++i) if (M::kU0[i] > 0.5 * M::kVhigh) bitsPrev |= (1u << i);
-    if constexpr (NR > 0) { bool moved = false; for (int m = 0; m < NR; ++m) if (std::fabs(resG[m] - M::kResG0[m]) > 1e-6 * M::kResG0[m]) moved = true; if (moved) SettleIdle(); }
+    if constexpr (NR > 0) { bool moved = false; for (int m = 0; m < NR; ++m) if (std::fabs(resG[m] - M::kResG0[m]) > 1e-6 * M::kResG0[m]) moved = true; if (moved) { for (int k = 0; k < NF; ++k) f0[k] = 0.0; SettleIdle(); } }
     EvalF(p, f0, nullptr); lastOut = OutputNow(); period = 0; stepIdx = 0; layout = 0; newtonIts = 0; stepsDone = 0; outDc = OutputNow(); env = 0.0; peak = 1e-12; acLow = outDc; acEnv = 0.0; acPeak = 0.0; quietPeriods = 0; finished = false;
     for (int i = 0; i < 4; ++i) periodsByLayout[i] = 0;
   }
