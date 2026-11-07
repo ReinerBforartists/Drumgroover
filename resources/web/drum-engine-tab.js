@@ -644,8 +644,6 @@ function deApplyEngineClusters(panel) {
   panel.querySelectorAll('.knob-cluster[data-engine]').forEach((el) => {
     el.style.display = (el.dataset.engine === '909') === is909 ? '' : 'none';
   });
-  // the XY pad morphs the 808 knobs: it has no meaning for the 909 pots
-  if (is909) panel.querySelectorAll('.de-instance-card-pad-zoom, .de-kick-pad').forEach((el) => { el.style.display = 'none'; });
 }
 
 function deBuildParamPanel(family, schema) {
@@ -983,6 +981,11 @@ const KICK_PAD_AXIS = {
   decayKnob01: { axis: 'y', type: 'linear', spread: 0.5 },
 };
 
+// The morph pad of the TR-909 pots: Kick Attack (x) / Decay (y), Snare Tone (x) / Snappy (y), the pot ranges 0..1 around the centre 0.5.
+const KICK909_PAD_AXIS = {
+  attack909: { axis: 'x', type: 'linear', spread: 0.5 },
+  decay909:  { axis: 'y', type: 'linear', spread: 0.5 },
+};
 const KICK_PAD_LOG_PARAMS = new Set(
   Object.keys(KICK_PAD_AXIS).filter((k) => KICK_PAD_AXIS[k].type === 'log')
 );
@@ -1022,6 +1025,7 @@ function deApplyVoiceValues(values, root) {
 
 function deBuildInstancePadUnit(cfg) {
   const { inst, container, titleRowEl, axisConfig, logParams, cornersCache, instanceDefaults, padTooltipCount, family } = cfg;
+  const padFam = cfg.padFamily || family;   // the key of the pad position (the 909 pad of a card has its own)
 
   function corners() { return deGetPadCorners(cornersCache, axisConfig, instanceDefaults, inst.index); }
 
@@ -1052,7 +1056,7 @@ function deBuildInstancePadUnit(cfg) {
   const volKnobRow = document.createElement('div');
   volKnobRow.style.display = 'flex';
   volKnobRow.style.gap = '6px';
-  volKnobRow.appendChild(deBuildArticulationLevelKnob(inst.note, inst.name));
+  if (!cfg.noVolume) volKnobRow.appendChild(deBuildArticulationLevelKnob(inst.note, inst.name));
   volStack.appendChild(volKnobRow);
   volUnit.appendChild(volStack);
   volKnobsContainer.appendChild(volUnit);
@@ -1061,10 +1065,10 @@ function deBuildInstancePadUnit(cfg) {
 
   volWrap.appendChild(volCluster);
 
-  body.append(pad, volWrap);
+  if (cfg.noVolume) body.append(pad); else body.append(pad, volWrap);
   wrap.appendChild(body);
 
-  const padKey = family ? family + ':' + inst.index : null;
+  const padKey = padFam ? padFam + ':' + inst.index : null;
   let x = 0.5, y = 0.5, timer = null, dragging = false;
 
   function setSynced(synced) { dot.classList.toggle('unsynced', !synced); }
@@ -1091,7 +1095,7 @@ function deBuildInstancePadUnit(cfg) {
         if (!dePadPositionsCache) dePadPositionsCache = {};
         dePadPositionsCache[padKey] = { x, y, synced: false };
         if (typeof hostBridge !== 'undefined' && hostBridge.send) {
-          hostBridge.send('setPadPos', { family: family, index: inst.index, x, y, synced: false });
+          hostBridge.send('setPadPos', { family: padFam, index: inst.index, x, y, synced: false });
         }
       }
     });
@@ -1141,8 +1145,8 @@ function deBuildInstancePadUnit(cfg) {
     updateDot();
     setSynced(true);
   }
-  if (family) {
-    dePadResyncCallbacks[family + ':' + inst.index] = resyncPad;
+  if (padFam) {
+    dePadResyncCallbacks[padFam + ':' + inst.index] = resyncPad;
   }
   resyncPad();
 
@@ -1170,11 +1174,13 @@ function deBuildInstancePadUnit(cfg) {
   pad.addEventListener('pointerup', () => {
     dragging = false;
     stopLoop();
+    // The pad of the 909 pots ends a knob drag: the final values are committed like those of a released knob (the cache sets of the final pot state are baked).
+    if (cfg.commitOnRelease) for (const key in axisConfig) if (sliders[key]) deSendVoiceParamCommit(family, key, Number(sliders[key].value), inst.index);
     if (padKey) {
       if (!dePadPositionsCache) dePadPositionsCache = {};
       dePadPositionsCache[padKey] = { x, y, synced: true };
       if (typeof hostBridge !== 'undefined' && hostBridge.send) {
-        hostBridge.send('setPadPos', { family: family, index: inst.index, x, y, synced: true });
+        hostBridge.send('setPadPos', { family: padFam, index: inst.index, x, y, synced: true });
       }
     }
   });
@@ -1185,8 +1191,23 @@ function deBuildInstancePadUnit(cfg) {
   resetBtn.className = 'btn btn-refresh';
   resetBtn.textContent = 'Reset';
   resetBtn.dataset.tooltip = 'Reset\nRestores all parameters to the default sound.';
-  titleRowEl.appendChild(resetBtn);
+  if (!cfg.noVolume) titleRowEl.appendChild(resetBtn);
+  const resetPad = () => {
+    x = 0.5;
+    y = 0.5;
+    updateDot();
+    setSynced(true);
+    if (padKey) {
+      if (!dePadPositionsCache) dePadPositionsCache = {};
+      dePadPositionsCache[padKey] = { x, y, synced: true };
+      if (typeof hostBridge !== 'undefined' && hostBridge.send) {
+        hostBridge.send('setPadPos', { family: padFam, index: inst.index, x, y, synced: true });
+      }
+    }
+  };
+  container.addEventListener('de-reset-pads', resetPad);
   resetBtn.addEventListener('click', () => {
+    container.dispatchEvent(new CustomEvent('de-reset-pads'));
     deApplyVoiceValues(instanceDefaults(inst.index), container);
     x = 0.5;
     y = 0.5;
@@ -1196,7 +1217,7 @@ function deBuildInstancePadUnit(cfg) {
       if (!dePadPositionsCache) dePadPositionsCache = {};
       dePadPositionsCache[padKey] = { x, y, synced: true };
       if (typeof hostBridge !== 'undefined' && hostBridge.send) {
-        hostBridge.send('setPadPos', { family: family, index: inst.index, x, y, synced: true });
+        hostBridge.send('setPadPos', { family: padFam, index: inst.index, x, y, synced: true });
       }
     }
   });
@@ -1205,8 +1226,8 @@ function deBuildInstancePadUnit(cfg) {
     if (!deVoiceParamStateCache || deVoiceParamStateConfigured) return;
     deApplyVoiceValues(instanceDefaults(inst.index), container);
   }
-  if (family) {
-    deInstanceSyncCallbacks[family + ':' + inst.index] = syncInstanceIfFresh;
+  if (padFam) {
+    deInstanceSyncCallbacks[padFam + ':' + inst.index] = syncInstanceIfFresh;
   }
   syncInstanceIfFresh();
   setSynced(true);
@@ -1253,10 +1274,25 @@ function deBuildInstanceCard(family, inst, padCfg) {
   if (padEl) {
     const zoomShell = document.createElement('div');
     zoomShell.className = 'knob-cluster de-instance-card-pad-zoom';
+    if (inst.groups909 && padCfg.pad909) zoomShell.dataset.engine = '808';
     padEl.replaceWith(zoomShell);
     zoomShell.appendChild(padEl);
     deWireClusterZoom(zoomShell);
     container.appendChild(zoomShell);
+  }
+  // The morph pad of the TR-909 pots of the card (the pad above morphs the knobs of the 808 circuit).
+  if (inst.groups909 && padCfg.pad909) {
+    const unit909 = deBuildInstancePadUnit({ inst, container, titleRowEl: resetSlot, family, ...padCfg, ...padCfg.pad909, noVolume: true });
+    const pad909 = unit909.querySelector('.de-kick-pad');
+    if (pad909) {
+      const zoomShell909 = document.createElement('div');
+      zoomShell909.className = 'knob-cluster de-instance-card-pad-zoom';
+      zoomShell909.dataset.engine = '909';
+      pad909.replaceWith(zoomShell909);
+      zoomShell909.appendChild(pad909);
+      deWireClusterZoom(zoomShell909);
+      container.appendChild(zoomShell909);
+    }
   }
 
   return container;
@@ -1265,6 +1301,11 @@ function deBuildInstanceCard(family, inst, padCfg) {
 const SNARE_PAD_AXIS = {
   toneKnob:   { axis: 'x', type: 'linear', spread: 0.5 },
   snappyKnob: { axis: 'y', type: 'linear', spread: 0.5 },
+};
+
+const SNARE909_PAD_AXIS = {
+  tone909:   { axis: 'x', type: 'linear', spread: 0.5 },
+  snappy909: { axis: 'y', type: 'linear', spread: 0.5 },
 };
 
 const SNARE_PAD_LOG_PARAMS = new Set(
@@ -1289,6 +1330,7 @@ const DE_INSTANCED_FAMILIES = {
       axisConfig: KICK_PAD_AXIS, logParams: KICK_PAD_LOG_PARAMS,
       cornersCache: deKickPadCornersCache, instanceDefaults: (index) => deInstanceDefaults('kick', index),
       padTooltipCount: 'all 19',
+      pad909: { axisConfig: KICK909_PAD_AXIS, logParams: new Set(), cornersCache: new Map(), padFamily: 'kick909', commitOnRelease: true },
     },
   },
   snare: {
@@ -1297,6 +1339,7 @@ const DE_INSTANCED_FAMILIES = {
       axisConfig: SNARE_PAD_AXIS, logParams: SNARE_PAD_LOG_PARAMS,
       cornersCache: deSnarePadCornersCache, instanceDefaults: (index) => deInstanceDefaults('snare', index),
       padTooltipCount: 'all 4',
+      pad909: { axisConfig: SNARE909_PAD_AXIS, logParams: new Set(), cornersCache: new Map(), padFamily: 'snare909', commitOnRelease: true },
     },
   },
 };
