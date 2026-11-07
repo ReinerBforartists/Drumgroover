@@ -37,6 +37,8 @@
 #include "tr909/models/hc_a127.h"
 #include "tr909/models/crash_pcm.h"
 #include "tr909/models/ride_pcm.h"
+#include "tr909/models/hh_pcm.h"
+#include "tr909/models/hho_pcm.h"
 #include "tr909/PcmVoiceHost.h"
 #include "909PcmTune.h"
 #include "tr909/models/lt_a25_pot.h"
@@ -213,8 +215,16 @@ private:
     void Prepare(Tr909Voice v, uint64_t params, int fs, int accentCode)
     {
       double p[8]; Tr909UnpackPots(v, params, p);
-      const double period = M::kPeriod / Tr909PcmClockRatio(p[1]);   // Tune pot: the PCM clock of the voice
+      // Crash / Ride: p[1] is the Tune pot (the PCM clock of the voice). Hats: p[1] is the Decay pot, a circuit resistor of the model (VR21 for the Closed Hat, VR23 for the Open Hat), the PCM clock is fixed.
+      const bool hat = pcmfast::ResCount<M>::value > 0;
+      const double period = hat ? M::kPeriod : M::kPeriod / Tr909PcmClockRatio(p[1]);
       if (hostFs != fs || period != curPeriod) { host.Init(static_cast<double>(fs)); hostFs = fs; host.SetPeriod(period); curPeriod = period; }
+      if constexpr (pcmfast::ResCount<M>::value > 0)
+      {
+        const double x = std::max(p[1], 0.001), xn = 0.5;   // the other decay resistor stays at its nominal position
+        const double g21 = v == Tr909Voice::Hh ? 1.0 / (100e3 * x) : 1.0 / (100e3 * xn), g23 = v == Tr909Voice::Ho ? 1.0 / (1e6 * std::pow(x, 2.74)) : 1.0 / (1e6 * std::pow(xn, 2.74));
+        host.voice.SetResG(0, g21); host.voice.SetResG(1, g23);
+      }
       host.SetAccent(Tr909AccentVolts(accentCode)); host.SetLevel(p[0]);
     }
     const Tr909LanePot* LanePotFor(Tr909Voice, uint64_t, Tr909LanePot&) override { return nullptr; }
@@ -255,6 +265,8 @@ private:
     DGG_909_VOICE(BD, Bd) DGG_909_VOICE(SD, Sd) DGG_909_VOICE(LT, Lt) DGG_909_VOICE(MT, Mt) DGG_909_VOICE(HT, Ht) DGG_909_VOICE(HC, Hc)
     if (v == Tr909Voice::Cr && a == 0) return std::unique_ptr<SlotBase>(new PcmSlot<CrashModelA0>());
     if (v == Tr909Voice::Ri && a == 0) return std::unique_ptr<SlotBase>(new PcmSlot<RideModelA0>());
+    if (v == Tr909Voice::Hh && a == 0) return std::unique_ptr<SlotBase>(new PcmSlot<HhModelA0>());
+    if (v == Tr909Voice::Ho && a == 0) return std::unique_ptr<SlotBase>(new PcmSlot<HhoModelA0>());
 #undef DGG_909_VOICE
 #undef DGG_909_SLOT
     return nullptr;

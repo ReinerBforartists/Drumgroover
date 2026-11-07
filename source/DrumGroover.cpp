@@ -789,6 +789,7 @@ nlohmann::json Tr909CustomParamsToJson(const dgg::Tr909CachedVoice& v)
     case dgg::Tr909Voice::Bd: j["tune909"] = p[0]; j["attack909"] = p[1]; j["level909"] = p[2]; j["decay909"] = p[3]; break;
     case dgg::Tr909Voice::Sd: j["tune909"] = p[0]; j["tone909"] = p[1]; j["level909"] = p[2]; j["snappy909"] = p[3]; break;
     case dgg::Tr909Voice::Hc: j["level909"] = p[0]; break;
+    case dgg::Tr909Voice::Hh: case dgg::Tr909Voice::Ho: j["level909"] = p[0]; j["decay909"] = p[1]; break;
     default: break;
   }
   return j;

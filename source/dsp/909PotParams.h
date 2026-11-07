@@ -17,7 +17,7 @@ constexpr int kTr909PotNominalQ = kTr909PotSteps / 2;
 
 inline int Tr909PotCount(Tr909Voice v)
 {
-  switch (v) { case Tr909Voice::Bd: case Tr909Voice::Sd: return 4; case Tr909Voice::Lt: case Tr909Voice::Mt: case Tr909Voice::Ht: return 3; case Tr909Voice::Hc: return 1; case Tr909Voice::Cr: case Tr909Voice::Ri: return 2; default: return 0; }
+  switch (v) { case Tr909Voice::Bd: case Tr909Voice::Sd: return 4; case Tr909Voice::Lt: case Tr909Voice::Mt: case Tr909Voice::Ht: return 3; case Tr909Voice::Hc: return 1; case Tr909Voice::Cr: case Tr909Voice::Ri: case Tr909Voice::Hh: case Tr909Voice::Ho: return 2; default: return 0; }
 }
 inline int Tr909PotQuantise(double x) { return std::clamp(static_cast<int>(std::lround(std::clamp(x, 0.0, 1.0) * kTr909PotSteps)), 0, kTr909PotSteps); }
 inline uint64_t Tr909PackPots(Tr909Voice v, const double* pots)

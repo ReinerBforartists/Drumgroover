@@ -15,10 +15,10 @@
 
 namespace dgg {
 
-enum class Tr909Voice : int { Bd = 0, Sd, Lt, Mt, Ht, Hc, Cr, Ri, kCount };   // Cr: Crash, Ri: Ride (PCM voices)
+enum class Tr909Voice : int { Bd = 0, Sd, Lt, Mt, Ht, Hc, Cr, Ri, Hh, Ho, kCount };   // Cr: Crash, Ri: Ride, Hh: Closed Hat, Ho: Open Hat (PCM voices)
 
 // The PCM voices (Crash, Ride) play a ROM replacement through an analog path: the accent is a run-time input of the model, there is no noise source (every variant of a set is the same hit).
-inline bool Tr909IsPcmVoice(Tr909Voice v) { return v == Tr909Voice::Cr || v == Tr909Voice::Ri; }
+inline bool Tr909IsPcmVoice(Tr909Voice v) { return v == Tr909Voice::Cr || v == Tr909Voice::Ri || v == Tr909Voice::Hh || v == Tr909Voice::Ho; }
 // Length of a rendered hit in seconds (the PCM voices ring until the circuit has settled: this is the cap).
 // Number of variants of a set: the PCM voices have no noise, every variant would be the same hit, so a set has one.
 inline int Tr909VariantTarget(Tr909Voice v, int target) { return Tr909IsPcmVoice(v) ? 1 : target; }
@@ -26,7 +26,7 @@ inline double Tr909HitSeconds(Tr909Voice v) { return Tr909IsPcmVoice(v) ? 6.0 : 
 
 inline const char* Tr909VoiceName(Tr909Voice v)
 {
-  static const char* const n[] = {"bd", "sd", "lt", "mt", "ht", "hc", "cr", "ri"};
+  static const char* const n[] = {"bd", "sd", "lt", "mt", "ht", "hc", "cr", "ri", "hh", "ho"};
   return n[static_cast<int>(v)];
 }
 inline bool Tr909VoiceFromName(const char* s, Tr909Voice& v)

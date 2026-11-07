@@ -187,6 +187,7 @@ public:
       case Tr909Voice::Sd: p[0] = tuneKnob; p[1] = toneKnob; p[2] = levelKnob; p[3] = snappyKnob; break;
       case Tr909Voice::Hc: p[0] = levelKnob; break;
       case Tr909Voice::Cr: case Tr909Voice::Ri: p[0] = levelKnob; p[1] = tuneKnob; break;
+      case Tr909Voice::Hh: case Tr909Voice::Ho: p[0] = levelKnob; p[1] = decayKnob; break;   // Level VR22; Decay VR21 (Closed) / VR23 (Open)
       default: break;
     }
   }

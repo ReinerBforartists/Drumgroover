@@ -1,7 +1,7 @@
 // TR-909 mode: which instrument-table rows play a 909 fast voice.
 //
 // In the 909 engine mode the kick, the snare (SD circuit), the rack and floor toms (not the congas), the cymbals (Crash) and the ride play the 909 voices of the same name;
-// every other kit row (hi-hats, mute hits) keeps playing the 808 voice. The rim shot rows play the live 909 Rim Shot (Tr909RimLiveForInstrument). The 909 voice goes to the mixer channel of the row.
+// the hi-hat rows play the Closed Hat or Open Hat 909 voice; the mute hits keep the 808 voice. The rim shot rows play the live 909 Rim Shot (Tr909RimLiveForInstrument). The 909 voice goes to the mixer channel of the row.
 // The Hand Clap 909 is not a table row of the 808 table: it is defined in 909CustomInstruments.h.
 #pragma once
 #include "808InstrumentTable.h"
@@ -25,6 +25,8 @@ inline bool Tr909VoiceForInstrument(const InstrumentDef& d, Tr909Voice& v)
     // The 909 has a Crash and a Ride cymbal (PCM voices): the Crash plays on the Cymbal rows, the Ride on the Ride rows; every articulation of a row plays the same 909 sound. The Mute rows keep the 808 voice (the 909 has no mute hit).
     case EngineKind::Cymbal: if (d.isMute) return false; v = Tr909Voice::Cr; return true;
     case EngineKind::Ride: if (StrEq(d.articulation, "Mute")) return false; v = Tr909Voice::Ri; return true;
+    // The hi-hat rows play the Closed Hat (rows of the Closed family) or the Open Hat (Open family) PCM voice.
+    case EngineKind::HiHat: v = StrEq(d.circuitFamily, "Open") ? Tr909Voice::Ho : Tr909Voice::Hh; return true;
     default: return false;
   }
 }
@@ -46,6 +48,7 @@ inline nlohmann::json Tr909ControlsJson(const InstrumentDef& d)
   nlohmann::json c = nlohmann::json::array();
   if (v == Tr909Voice::Bd) { c.push_back(knob("tune909", "Tune", "Circuit", "Tuning of the drum.")); c.push_back(knob("attack909", "Attack", "Circuit", "Attack of the kick.")); c.push_back(knob("decay909", "Decay", "Circuit", "Decay of the kick.")); }
   else if (v == Tr909Voice::Sd) { c.push_back(knob("tune909", "Tune", "Circuit", "Tuning of the drum.")); c.push_back(knob("tone909", "Tone", "Circuit", "Tone of the snare.")); c.push_back(knob("snappy909", "Snappy", "Circuit", "Amount of the snare rattle.")); }
+  else if (v == Tr909Voice::Hh || v == Tr909Voice::Ho) c.push_back(knob("decay909", "Decay", "Circuit", "Decay of the hi-hat (the circuit pot of the Closed / Open Hat)."));
   else if (Tr909IsPcmVoice(v)) c.push_back(knob("tune909", "Tune", "Circuit", "Playback speed of the cymbal sample (the PCM clock of the voice)."));
   else { c.push_back(knob("tune909", "Tune", "Circuit", "Tuning of the drum.")); c.push_back(knob("decay909", "Decay", "Circuit", "Decay of the drum.")); }
   c.push_back(knob("level909", "Level", "Output", "Output level (circuit pot of the voice)."));
