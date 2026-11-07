@@ -13,7 +13,9 @@ namespace dgg { namespace pcmfast {
 template <class M> class PcmVoiceHost
 {
 public:
-  void Init(double fsHost) { fs = fsHost; dec.Init(fsHost); double c = 0; for (int i = 0; i < M::kLayoutN[0]; ++i) { c += M::kStepLen[M::kLayoutFirst[0] + i]; cum[i + 1] = c; } cum[0] = 0; state = Idle; nOut = 0; }
+  void Init(double fsHost) { fs = fsHost; dec.Init(fsHost); if (voice.st.T == 0.0) voice.SetPeriod(M::kPeriod); RecomputeCum(); state = Idle; nOut = 0; }
+  // PCM clock period of the hits (seconds; the nominal M::kPeriod scaled by the Tune pot): not while a hit plays.
+  void SetPeriod(double period) { voice.SetPeriod(period); RecomputeCum(); }
   void SetAccent(double a) { accent = a; }                     // volts at the accent input, applied at the next Trigger
   void SetLevel(double lv) { level = lv < 0.001 ? 0.001 : (lv > 1.0 ? 1.0 : lv); }
   bool Active() const { return state != Idle; }
@@ -47,12 +49,13 @@ public:
   Voice<M> voice;
 
 private:
+  void RecomputeCum() { double c = 0; for (int i = 0; i < M::kLayoutN[0]; ++i) { c += voice.st.h[M::kLayoutFirst[0] + i]; cum[i + 1] = c; } cum[0] = 0; }
   enum State { Idle, Playing, Fading };
   void Advance()
   {
     if (state == Playing)
     {
-      const int p0 = voice.period, s0 = voice.stepIdx; const double y = voice.Step(); tLast = tBase + p0 * M::kPeriod + cum[s0 + 1]; dec.Push(tLast, y);
+      const int p0 = voice.period, s0 = voice.stepIdx; const double y = voice.Step(); tLast = tBase + p0 * voice.ClockPeriod() + cum[s0 + 1]; dec.Push(tLast, y);
       if (voice.finished) { state = Fading; tFade = 0.0; flushNodes = 0; yEnd = y; }
     }
     else   // after the hit: the remaining output offset relaxes with the slow time constant of the circuit (0.22 s, measured for CRASH and RIDE); then idle nodes until the filter has flushed

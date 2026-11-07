@@ -185,7 +185,8 @@ public:
       case Tr909Voice::Lt: case Tr909Voice::Mt: case Tr909Voice::Ht: p[0] = tuneKnob; p[1] = decayKnob; p[2] = levelKnob; break;
       case Tr909Voice::Bd: p[0] = tuneKnob; p[1] = attackKnob; p[2] = levelKnob; p[3] = decayKnob; break;
       case Tr909Voice::Sd: p[0] = tuneKnob; p[1] = toneKnob; p[2] = levelKnob; p[3] = snappyKnob; break;
-      case Tr909Voice::Hc: case Tr909Voice::Cr: case Tr909Voice::Ri: p[0] = levelKnob; break;
+      case Tr909Voice::Hc: p[0] = levelKnob; break;
+      case Tr909Voice::Cr: case Tr909Voice::Ri: p[0] = levelKnob; p[1] = tuneKnob; break;
       default: break;
     }
   }

@@ -37,7 +37,7 @@ inline double Tr909BasePitchForInstrument(const InstrumentDef& d)
 }
 
 // Circuit pots of the 909 voice of a kit row, for the UI cards (the card keys are those of Tr909CachedVoice::SetPot): Kick Tune / Attack / Decay / Level, Snare Tune / Tone / Snappy / Level,
-// Toms Tune / Decay / Level, Crash and Ride Level. The Pitch knob of the row (digital transpose) is shared with the 808 circuit and stays where it is.
+// Toms Tune / Decay / Level, Crash and Ride Tune / Level. The Pitch knob of the row (digital transpose) is shared with the 808 circuit and stays where it is.
 inline nlohmann::json Tr909ControlsJson(const InstrumentDef& d)
 {
   Tr909Voice v;
@@ -46,7 +46,7 @@ inline nlohmann::json Tr909ControlsJson(const InstrumentDef& d)
   nlohmann::json c = nlohmann::json::array();
   if (v == Tr909Voice::Bd) { c.push_back(knob("tune909", "Tune", "Circuit", "Tuning of the drum.")); c.push_back(knob("attack909", "Attack", "Circuit", "Attack of the kick.")); c.push_back(knob("decay909", "Decay", "Circuit", "Decay of the kick.")); }
   else if (v == Tr909Voice::Sd) { c.push_back(knob("tune909", "Tune", "Circuit", "Tuning of the drum.")); c.push_back(knob("tone909", "Tone", "Circuit", "Tone of the snare.")); c.push_back(knob("snappy909", "Snappy", "Circuit", "Amount of the snare rattle.")); }
-  else if (Tr909IsPcmVoice(v)) {}   // Crash / Ride: the Level pot only (the second pot of the PCM voices is not a run-time parameter of the model yet)
+  else if (Tr909IsPcmVoice(v)) c.push_back(knob("tune909", "Tune", "Circuit", "Playback speed of the cymbal sample (the PCM clock of the voice)."));
   else { c.push_back(knob("tune909", "Tune", "Circuit", "Tuning of the drum.")); c.push_back(knob("decay909", "Decay", "Circuit", "Decay of the drum.")); }
   c.push_back(knob("level909", "Level", "Output", "Output level (circuit pot of the voice)."));
   return c;

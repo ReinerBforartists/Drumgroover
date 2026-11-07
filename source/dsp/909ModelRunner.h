@@ -38,6 +38,7 @@
 #include "tr909/models/crash_pcm.h"
 #include "tr909/models/ride_pcm.h"
 #include "tr909/PcmVoiceHost.h"
+#include "909PcmTune.h"
 #include "tr909/models/lt_a25_pot.h"
 #include "tr909/models/lt_a50_pot.h"
 #include "tr909/models/lt_a75_pot.h"
@@ -208,11 +209,12 @@ private:
   template <class M>
   struct PcmSlot : SlotBase
   {
-    pcmfast::PcmVoiceHost<M> host; int hostFs = 0; long want_ = 0;
+    pcmfast::PcmVoiceHost<M> host; int hostFs = 0; long want_ = 0; double curPeriod = 0.0;
     void Prepare(Tr909Voice v, uint64_t params, int fs, int accentCode)
     {
       double p[8]; Tr909UnpackPots(v, params, p);
-      if (hostFs != fs) { host.Init(static_cast<double>(fs)); hostFs = fs; }
+      const double period = M::kPeriod / Tr909PcmClockRatio(p[1]);   // Tune pot: the PCM clock of the voice
+      if (hostFs != fs || period != curPeriod) { host.Init(static_cast<double>(fs)); hostFs = fs; host.SetPeriod(period); curPeriod = period; }
       host.SetAccent(Tr909AccentVolts(accentCode)); host.SetLevel(p[0]);
     }
     const Tr909LanePot* LanePotFor(Tr909Voice, uint64_t, Tr909LanePot&) override { return nullptr; }

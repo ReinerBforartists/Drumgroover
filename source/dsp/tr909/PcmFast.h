@@ -3,6 +3,7 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include "PcmSteps.h"
 #ifdef _MSC_VER
 #include <intrin.h>
 #endif
@@ -124,6 +125,9 @@ template <class M> struct Voice
   double lastOut = 0.0, lastH = 0.0, outDc = 0.0, env = 0.0, peak = 1e-12;   // last step length, DC output, level envelope and its maximum (layout choice)
   long periodsByLayout[4] = {0, 0, 0, 0}; double tailRel = kTailRel, newtonTol = kNewtonTol; int noSolve = 0;   // noSolve: timing probe only (no nonlinear solve); tailRel: switch to the cheaper layout below this fraction of the loudest envelope
   double prof[6] = {0, 0, 0, 0, 0, 0};
+  PcmSteps<M> st;   // step tables of the PCM period of the hit (built from the nominal period unless SetPeriod() was called)
+  void SetPeriod(double period) { st.Build(period); }
+  double ClockPeriod() const { return st.T; }
   uint32_t flipMask = 0;   // diagnosis only: address bits inverted while held
   double tap[16]; int tapCount = 0;   // output taps of the last Step (uniform instants m*T/kTaps inside the step)
   int freezeAH = -1;   // period whose address bits are held (default: the last one)
@@ -133,7 +137,8 @@ template <class M> struct Voice
 
   void RefreshAccent()
   {
-    for (int j = 0; j < M::kSteps; ++j) { const double* ca = &M::kGsUc[(j * NU + IACC) * R]; for (int i = 0; i < R; ++i) coneEff[j * R + i] = M::kCone[j * R + i] + acc * ca[i]; }
+    if (st.T == 0.0) st.Build(M::kPeriod);
+    for (int j = 0; j < M::kSteps; ++j) { const double* ca = &st.gsUc[(static_cast<size_t>(j) * NU + IACC) * R]; for (int i = 0; i < R; ++i) coneEff[j * R + i] = st.cone[static_cast<size_t>(j) * R + i] + acc * ca[i]; }
     for (int i = 0; i < NP; ++i) pd1Eff[i] = M::kPD1[i] + acc * M::kPDuc[IACC * NP + i];
     accOut = M::kDo1 + acc * M::kDou[IACC];
   }
@@ -201,9 +206,9 @@ template <class M> struct Voice
       if (freezeP >= 0 && period > freezeP) bitsNow = (bitsNow & ~0x3Fu) | (M::kPcm[freezeP] & 0x3Fu);
       layout = (M::kLayouts > 1 && env < tailRel * peak) ? 1 : 0; ++periodsByLayout[layout];
     }
-    const int j = M::kLayoutFirst[layout] + stepIdx; lastH = M::kStepLen[j];
-    const double* Phi = &M::kPhi[j * R * R];
-    const double* GaF = &M::kGaF[j * R * NF]; const double* GbF = &M::kGbF[j * R * NF]; const double* Cone = &coneEff[j * R]; const double* Zp = &M::kZp[j * NP * NF];
+    const int j = M::kLayoutFirst[layout] + stepIdx; lastH = st.h[j];
+    const double* Phi = &st.phi[static_cast<size_t>(j) * R * R];
+    const double* GaF = &st.gaF[static_cast<size_t>(j) * R * NF]; const double* GbF = &st.gbF[static_cast<size_t>(j) * R * NF]; const double* Cone = &coneEff[j * R]; const double* Zp = &st.zp[static_cast<size_t>(j) * NP * NF];
     double zk[R];
     for (int i = 0; i < R; ++i)
     {
@@ -214,11 +219,11 @@ template <class M> struct Voice
     }
     if (stepIdx == 0)   // ramp: old bits ramp to the new bits
     {
-      for (uint32_t m = bitsPrev; m; m &= m - 1) { const int k = Ctz(m); const double* c = &M::kGaUc[(j * NU + k) * R]; for (int i = 0; i < R; ++i) zk[i] += M::kVhigh * c[i]; }
-      for (uint32_t m = bitsNow; m; m &= m - 1) { const int k = Ctz(m); const double* c = &M::kGbUc[(j * NU + k) * R]; for (int i = 0; i < R; ++i) zk[i] += M::kVhigh * c[i]; }
+      for (uint32_t m = bitsPrev; m; m &= m - 1) { const int k = Ctz(m); const double* c = &st.gaUc[(static_cast<size_t>(j) * NU + k) * R]; for (int i = 0; i < R; ++i) zk[i] += M::kVhigh * c[i]; }
+      for (uint32_t m = bitsNow; m; m &= m - 1) { const int k = Ctz(m); const double* c = &st.gbUc[(static_cast<size_t>(j) * NU + k) * R]; for (int i = 0; i < R; ++i) zk[i] += M::kVhigh * c[i]; }
     }
     else          // hold: constant bits
-      for (uint32_t m = bitsNow; m; m &= m - 1) { const int k = Ctz(m); const double* c = &M::kGsUc[(j * NU + k) * R]; for (int i = 0; i < R; ++i) zk[i] += M::kVhigh * c[i]; }
+      for (uint32_t m = bitsNow; m; m &= m - 1) { const int k = Ctz(m); const double* c = &st.gsUc[(static_cast<size_t>(j) * NU + k) * R]; for (int i = 0; i < R; ++i) zk[i] += M::kVhigh * c[i]; }
     PF_LAP(0);
     double pk[NP];
     for (int i = 0; i < NP; ++i)
