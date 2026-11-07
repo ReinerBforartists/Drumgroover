@@ -32,22 +32,29 @@
 namespace dgg {
 namespace {
 template <class Mdl>
-bool RenderModel(const uint64_t* seeds, int n, double seconds, double fs, std::vector<float>* out, bool (*aborted)())
+bool RenderModel(const uint64_t* seeds, int n, double seconds, double fs, std::vector<float>* out, bool (*aborted)(), const Tr909LanePot* pot)
 {
   thread_local dgg_lane::pcmfast::HitLaneRunner<Mdl> runner;   // one engine per worker thread and model: its propagators are built once
+  thread_local uint64_t potId = 0;   // set currently installed in this thread's runner (0: header arrays)
+  const uint64_t want = pot ? pot->id : 0;
+  if (want != potId)
+  {
+    if (pot) runner.SetPot({ pot->A, pot->Bg, pot->XzS, pot->DgS, pot->Xo, pot->Dof, pot->Dou, pot->Do1 }); else runner.ClearPot();
+    potId = want;
+  }
   return runner.RenderGroup(dgg_lane::pcmfast::HitTuningFor(dgg_lane::Tr909Voice::Lt, false), seeds, n, seconds, fs, out, aborted);
 }
 }  // namespace
 
-bool Tr909LaneRenderLT(int anchorIdx, const uint64_t* seeds, int n, double seconds, double fs, std::vector<float>* out, bool (*aborted)())
+bool Tr909LaneRenderLT(int anchorIdx, const uint64_t* seeds, int n, double seconds, double fs, std::vector<float>* out, bool (*aborted)(), const Tr909LanePot* pot)
 {
   switch (anchorIdx)
   {
-    case 0: return RenderModel<Tr909_LT_A25>(seeds, n, seconds, fs, out, aborted);
-    case 1: return RenderModel<Tr909_LT_A50>(seeds, n, seconds, fs, out, aborted);
-    case 2: return RenderModel<Tr909_LT_A75>(seeds, n, seconds, fs, out, aborted);
-    case 3: return RenderModel<Tr909_LT_A100>(seeds, n, seconds, fs, out, aborted);
-    case 4: return RenderModel<Tr909_LT_A127>(seeds, n, seconds, fs, out, aborted);
+    case 0: return RenderModel<Tr909_LT_A25>(seeds, n, seconds, fs, out, aborted, pot);
+    case 1: return RenderModel<Tr909_LT_A50>(seeds, n, seconds, fs, out, aborted, pot);
+    case 2: return RenderModel<Tr909_LT_A75>(seeds, n, seconds, fs, out, aborted, pot);
+    case 3: return RenderModel<Tr909_LT_A100>(seeds, n, seconds, fs, out, aborted, pot);
+    case 4: return RenderModel<Tr909_LT_A127>(seeds, n, seconds, fs, out, aborted, pot);
     default: return false;
   }
 }

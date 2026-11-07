@@ -7,12 +7,15 @@
 // Fixed knob state: the models are the Nava circuit at its fixed knob positions; the knob state of the key (`params`) is always 0.
 #pragma once
 #include "909AccentPlan.h"
+#include "909PotParams.h"
+#include "909LiveHost.h"
 #include "808VariantPoolCache.h"
 #include "DrumVoice.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <memory>
+#include <string>
 
 namespace dgg {
 
@@ -77,6 +80,29 @@ private:
   Tr909SetKey mItems[kSize]; std::atomic<unsigned> mHead{0}, mTail{0};
 };
 
+// The preview sample of a knob drag (not part of the cache): one per voice, the sound of the pot state the knob is at, played by every hit of that pot state until another preview sample replaces it.
+// It is baked in the background while the knob moves (one hit) and is independent of the cache sets, which are baked after the release.
+class Tr909PreviewSample
+{
+public:
+  static Tr909PreviewSample& Instance() { static Tr909PreviewSample inst; return inst; }
+  void Set(Tr909Voice v, uint64_t params, std::vector<float> samples)
+  {
+    auto buf = std::make_shared<const std::vector<float>>(std::move(samples));
+    std::lock_guard<std::mutex> lock(mMutex); mSlot[static_cast<int>(v)] = { params, std::move(buf) };
+  }
+  // The preview sample of the voice when it was made for this pot state, else nullptr.
+  std::shared_ptr<const std::vector<float>> Get(Tr909Voice v, uint64_t params)
+  {
+    std::lock_guard<std::mutex> lock(mMutex); const Slot& s = mSlot[static_cast<int>(v)];
+    return s.buf && s.params == params ? s.buf : nullptr;
+  }
+  void Clear() { std::lock_guard<std::mutex> lock(mMutex); for (Slot& s : mSlot) s = Slot(); }
+private:
+  struct Slot { uint64_t params = 0; std::shared_ptr<const std::vector<float>> buf; };
+  std::mutex mMutex; Slot mSlot[static_cast<int>(Tr909Voice::kCount)];
+};
+
 class Tr909CachedVoice : public DrumVoice
 {
 public:
@@ -85,22 +111,49 @@ public:
   void SetVoice(Tr909Voice v) { mVoice = v; }
   void SetNoisePath(Tr909NoisePath p) { mNoise = p; }
 
+  ~Tr909CachedVoice() override { EndHit(); }
   void Trigger(double velocity01) override
   {
-    Tr909SetKey k; k.voice = mVoice; k.params = 0; k.noise = mNoise; k.sampleRateHz = static_cast<int>(std::lround(mSampleRate));
+    EndHit();
+    Tr909SetKey k; k.voice = mVoice; k.params = Params(); k.noise = mNoise; k.sampleRateHz = static_cast<int>(std::lround(mSampleRate));
     k.accentCode = Tr909CodeForVelocity(mVoice, velocity01);
     mBuf = Tr909VariantPool::Instance().GetRandom(k); mPos = 0; mFrac = 0.0;
     mRate = std::clamp(pitchRatio * basePitch, 0.25, 4.0);
-    mLevelGain = std::clamp(levelKnob, 0.0, 1.0) / levelBaked;
-    if (!mBuf) { ++mMisses; Tr909MissQueue::Instance().Push(k); }
+    if (!mBuf)
+    {
+      // No baked set: the miss is reported so that the set gets baked. The hit plays the preview sample of its pot state when there is one, else it is computed live and played while it is computed (909LiveHost.h).
+      ++mMisses; Tr909MissQueue::Instance().Push(k);
+      mBuf = Tr909PreviewSample::Instance().Get(mVoice, k.params);
+    }
+    if (!mBuf)
+    {
+      // The first hit is computed live, on the audio thread (909LiveHost.h), however long the model takes.
+      static std::atomic<unsigned> liveCounter{0};
+      mLiveBuf.clear(); mLiveDone = false;
+      mLiveOn = Tr909LiveSynth::Instance().Start(this, k, Tr909NoiseSeed(1 + static_cast<int>(liveCounter.fetch_add(1, std::memory_order_relaxed) % 7)), 0.35);
+      if (mLiveOn) mLiveBuf.reserve(static_cast<size_t>(mSampleRate * 0.4));
+    }
   }
   void Process(double* out, int nFrames) override
   {
-    if (!mBuf) return;
-    const std::vector<float>& b = *mBuf; const size_t n = b.size();
+    const float* b; size_t n; bool complete;
+    if (mBuf) { b = mBuf->data(); n = mBuf->size(); complete = true; }
+    else if (mLiveOn)
+    {
+      // the live hit computes the samples this block needs
+      const size_t need = mPos + static_cast<size_t>(nFrames * std::max(1.0, mRate)) + 8;
+      while (!mLiveDone && mLiveBuf.size() < need)
+      {
+        float tmp[256]; const int g = Tr909LiveSynth::Instance().Pull(this, tmp, 256);
+        mLiveBuf.insert(mLiveBuf.end(), tmp, tmp + g);
+        if (g < 256) mLiveDone = true;
+      }
+      b = mLiveBuf.data(); n = mLiveBuf.size(); complete = mLiveDone;
+    }
+    else return;
     if (std::fabs(mRate - 1.0) < 1e-12)
     {
-      for (int i = 0; i < nFrames && mPos < n; ++i, ++mPos) out[i] += kTr909VoltToSample * mLevelGain * static_cast<double>(b[mPos]);
+      for (int i = 0; i < nFrames && mPos < n; ++i, ++mPos) out[i] += kTr909VoltToSample * static_cast<double>(b[mPos]);
     }
     else
     {
@@ -109,30 +162,56 @@ public:
       for (int i = 0; i < nFrames && mPos < n; ++i)
       {
         const long j = static_cast<long>(mPos); const double t = mFrac;
+        if (!complete && static_cast<size_t>(j) + 2 >= n) break;
         const double y0 = at(j - 1), y1 = at(j), y2 = at(j + 1), y3 = at(j + 2);
-        out[i] += kTr909VoltToSample * mLevelGain * (y1 + 0.5 * t * (y2 - y0 + t * (2.0 * y0 - 5.0 * y1 + 4.0 * y2 - y3 + t * (3.0 * (y1 - y2) + y3 - y0))));
+        out[i] += kTr909VoltToSample * (y1 + 0.5 * t * (y2 - y0 + t * (2.0 * y0 - 5.0 * y1 + 4.0 * y2 - y3 + t * (3.0 * (y1 - y2) + y3 - y0))));
         mFrac += mRate;
         const size_t adv = static_cast<size_t>(mFrac); mPos += adv; mFrac -= static_cast<double>(adv);
       }
     }
-    if (mPos >= n) mBuf.reset();
+    if (mPos >= n && complete) EndHit();
   }
-  bool IsActive() const override { return mBuf != nullptr; }
-  void Choke() { mBuf.reset(); }
+  bool IsActive() const override { return mBuf != nullptr || mLiveOn; }
+  void Choke() { EndHit(); }
   unsigned misses() const { return mMisses; }
 
+  // Circuit pots of the voice (0..1, 909PotParams.h): a set is baked for one pot state, the state is part of the set key. Level is the output pot of the circuit (VR12 / HC VR20), not a gain.
+  double tuneKnob = 0.5, decayKnob = 0.5, attackKnob = 0.5, toneKnob = 0.5, snappyKnob = 0.5, levelKnob = 0.5;
+  // The pots in the order of the generator (909PotParams.h).
+  void PotValues(double* p) const
+  {
+    switch (mVoice)
+    {
+      case Tr909Voice::Lt: case Tr909Voice::Mt: case Tr909Voice::Ht: p[0] = tuneKnob; p[1] = decayKnob; p[2] = levelKnob; break;
+      case Tr909Voice::Bd: p[0] = tuneKnob; p[1] = attackKnob; p[2] = levelKnob; p[3] = decayKnob; break;
+      case Tr909Voice::Sd: p[0] = tuneKnob; p[1] = toneKnob; p[2] = levelKnob; p[3] = snappyKnob; break;
+      case Tr909Voice::Hc: p[0] = levelKnob; break;
+      default: break;
+    }
+  }
+  uint64_t Params() const { double p[8] = {0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5}; PotValues(p); return Tr909PackPots(mVoice, p); }
+  // Card keys of the 909 circuit pots (909Kit.h Tr909ControlsJson): own keys, so that the knobs of the 808 circuit of the same row keep their values.
+  static bool IsPotName(const std::string& n) { return n == "tune909" || n == "decay909" || n == "attack909" || n == "tone909" || n == "snappy909" || n == "level909"; }
+  // Sets a circuit pot by its card key; false for a key that is not a pot (the caller handles Pitch).
+  bool SetPot(const std::string& name, double v)
+  {
+    v = std::clamp(v, 0.0, 1.0);
+    if (name == "tune909") tuneKnob = v;
+    else if (name == "decay909") decayKnob = v;
+    else if (name == "attack909") attackKnob = v;
+    else if (name == "tone909") toneKnob = v;
+    else if (name == "snappy909") snappyKnob = v;
+    else if (name == "level909") levelKnob = v;
+    else return false;
+    return true;
+  }
   double pitchRatio = 1.0;   // digital transpose of the baked set (not a circuit knob)
   double basePitch = 1.0;    // fixed transposition of the instrument (the floor toms are the low tom pitched down, 909Kit.h); the Pitch knob acts on top of it
-  // Output level pot of the voice (0..1). The sets are baked at kLevelKnobBaked; the pot is the feedback resistor of the output op-amp, which scales the output
-  // exactly (Hand Clap: engine at 0.25 / 0.5 / 1.0 gives gains 0.500 / 1 / 2.001, no clipping), so the level is a gain on the baked set.
-  double levelKnob = 0.5;
-  static constexpr double kLevelKnobBaked = 0.5;
-  double levelBaked = kLevelKnobBaked;   // the knob position at which the sets sound as baked (unity gain); a kit row uses its default so that the default sounds as baked
-
 private:
   Tr909Voice mVoice; Tr909NoisePath mNoise = Tr909NoisePath::Reference5us;
-  std::shared_ptr<const std::vector<float>> mBuf; size_t mPos = 0; unsigned mMisses = 0;
-  double mFrac = 0.0, mRate = 1.0, mLevelGain = 1.0;
+  void EndHit() { mBuf.reset(); if (mLiveOn) { Tr909LiveSynth::Instance().Release(this); mLiveOn = false; } }
+  std::shared_ptr<const std::vector<float>> mBuf; std::vector<float> mLiveBuf; bool mLiveOn = false, mLiveDone = false; size_t mPos = 0; unsigned mMisses = 0;
+  double mFrac = 0.0, mRate = 1.0;
 };
 
 }  // namespace dgg

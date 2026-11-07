@@ -50,9 +50,11 @@ function deInstanceDefaults(family, index) {
 }
 
 // Knob groups of a row in the order of its controls: consecutive controls of the same group title form one group.
-function deGroupsOfRow(row) {
+function deGroupsOfRow(row) { return deGroupsOfControls(row.controls); }
+
+function deGroupsOfControls(controls) {
   const groups = [];
-  for (const c of row.controls) {
+  for (const c of controls) {
     let g = groups[groups.length - 1];
     if (!g || g.title !== c.group) { g = { title: c.group, params: [] }; groups.push(g); }
     g.params.push({ key: c.key, label: c.label, name: c.label, tooltip: c.tooltip, min: c.min, max: c.max, step: c.step });
@@ -62,7 +64,7 @@ function deGroupsOfRow(row) {
 
 // A card of an instance of the table. Instances of the Rim Shot circuit have no morph pad.
 function deInstanceOfRow(row) {
-  return { index: row.paramIndex, note: row.gm, name: row.name, groups: deGroupsOfRow(row), defaults: row.defaults, pad: row.engine.kind !== 'RmRim' };
+  return { index: row.paramIndex, note: row.gm, name: row.name, groups: deGroupsOfRow(row), groups909: row.controls909 ? deGroupsOfControls(row.controls909) : undefined, defaults: row.defaults, pad: row.engine.kind !== 'RmRim' };
 }
 
 let KICK_INSTANCES = [];
@@ -619,6 +621,33 @@ function deBuildKnobGroupRow(family, group, index, titleMap, note) {
   return cluster;
 }
 
+// The knob clusters of a card. Rows that play a TR-909 voice (groups909: the circuit pots of the 909 voice) get those clusters in front of the Pitch cluster; the clusters of the 808 circuit show in the
+// 808 / Lo-Fi engine modes, the 909 ones in the TR-909 mode (deApplyEngineClusters). Pitch (digital transpose) belongs to every engine.
+function deAppendKnobGroups(knobRow, family, groups, groups909, index, titleMap, note) {
+  let pitchCluster = null;
+  for (const group of groups) {
+    const cluster = deBuildKnobGroupRow(family, group, index, titleMap, note);
+    if (groups909 && group.title === 'Pitch') pitchCluster = cluster;
+    else if (groups909) cluster.dataset.engine = '808';
+    knobRow.appendChild(cluster);
+  }
+  if (!groups909) return;
+  for (const group of groups909) {
+    const cluster = deBuildKnobGroupRow(family, group, index, titleMap, note);
+    cluster.dataset.engine = '909';
+    if (pitchCluster) knobRow.insertBefore(cluster, pitchCluster); else knobRow.appendChild(cluster);
+  }
+}
+
+function deApplyEngineClusters(panel) {
+  const is909 = deEngineMode === 'tr909';
+  panel.querySelectorAll('.knob-cluster[data-engine]').forEach((el) => {
+    el.style.display = (el.dataset.engine === '909') === is909 ? '' : 'none';
+  });
+  // the XY pad morphs the 808 knobs: it has no meaning for the 909 pots
+  if (is909) panel.querySelectorAll('.de-instance-card-pad-zoom, .de-kick-pad').forEach((el) => { el.style.display = 'none'; });
+}
+
 function deBuildParamPanel(family, schema) {
   const panel = document.createElement('div');
   panel.className = 'de-param-panel';
@@ -631,7 +660,7 @@ function deBuildParamPanel(family, schema) {
     for (const inst of instances) {
       // An instance without a morph pad (Rim Shot circuit): its knob groups and Volume only.
       if (inst.pad === false)
-        cardsWrap.appendChild(deBuildTomInstanceCard({ groups: inst.groups }, { family, index: inst.index, note: inst.note, name: inst.name, defaults: inst.defaults }));
+        cardsWrap.appendChild(deBuildTomInstanceCard({ groups: inst.groups }, { family, index: inst.index, note: inst.note, name: inst.name, defaults: inst.defaults, groups909: inst.groups909 }));
       else cardsWrap.appendChild(deBuildInstanceCard(family, inst, padCfg));
     }
     panel.appendChild(cardsWrap);
@@ -823,9 +852,7 @@ function deBuildTomInstanceCard(schema, inst) {
 
   const knobRow = document.createElement('div');
   knobRow.className = 'de-knob-groups-row de-instance-card-knobs';
-  for (const group of schema.groups) {
-    knobRow.appendChild(deBuildKnobGroupRow(inst.family || 'tom', group, inst.index, undefined, inst.previewNote != null ? inst.previewNote : inst.note));
-  }
+  deAppendKnobGroups(knobRow, inst.family || 'tom', schema.groups, inst.groups909, inst.index, undefined, inst.previewNote != null ? inst.previewNote : inst.note);
   main.appendChild(knobRow);
   container.appendChild(main);
 
@@ -1208,9 +1235,7 @@ function deBuildInstanceCard(family, inst, padCfg) {
   const knobRow = document.createElement('div');
   knobRow.className = 'de-knob-groups-row de-instance-card-knobs';
   const titleMap = undefined;
-  for (const group of (inst.groups || DE_PARAM_SCHEMAS[family].groups)) {
-    knobRow.appendChild(deBuildKnobGroupRow(family, group, inst.index, titleMap, inst.note));
-  }
+  deAppendKnobGroups(knobRow, family, inst.groups || DE_PARAM_SCHEMAS[family].groups, inst.groups909, inst.index, titleMap, inst.note);
   main.appendChild(knobRow);
   container.appendChild(main);
 
@@ -2049,6 +2074,7 @@ function deRefreshParamPanelForFamily(family) {
   panel.querySelectorAll('.de-knob-groups-row, .de-kick-pad, .de-instance-card-pad-zoom, .de-param-instance-row').forEach((el) => {
     el.style.display = isLoFi ? 'none' : '';
   });
+  if (!isLoFi) deApplyEngineClusters(panel);
 }
 
 let deEngineParamsBuilt = false;

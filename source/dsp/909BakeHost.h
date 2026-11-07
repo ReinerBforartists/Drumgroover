@@ -38,10 +38,10 @@ class Tr909LiveSource
 {
 public:
   virtual ~Tr909LiveSource() = default;
-  // Builds the models of the hit (propagators, about a second per model) without running it; never on the audio thread.
-  virtual bool Warm(Tr909Voice voice, int accentCode, Tr909NoisePath noise) = 0;
+  // params: pot state of the hit (909PotParams.h, 0 = nominal). Builds the models of the hit (propagators, about a second per model) without running it; never on the audio thread.
+  virtual bool Warm(Tr909Voice voice, int accentCode, Tr909NoisePath noise, uint64_t params = 0) = 0;
   // Starts a hit; false when the accent has no validated model.
-  virtual bool Start(Tr909Voice voice, int accentCode, Tr909NoisePath noise, uint64_t noiseSeed, int sampleRateHz, double seconds) = 0;
+  virtual bool Start(Tr909Voice voice, int accentCode, Tr909NoisePath noise, uint64_t noiseSeed, int sampleRateHz, double seconds, uint64_t params = 0) = 0;
   // Writes the next samples of the running hit; fewer than n only at its end.
   virtual int Pull(float* out, int n) = 0;
   virtual bool Active() const = 0;

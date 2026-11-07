@@ -33,6 +33,34 @@ inline double Tr909BasePitchForInstrument(const InstrumentDef& d)
   return d.sheet == 1 ? 0.8908987181403393 : 0.7937005259840998;
 }
 
+// Circuit pots of the 909 voice of a kit row, for the UI cards (the card keys are those of Tr909CachedVoice::SetPot): Kick Tune / Attack / Decay / Level, Snare Tune / Tone / Snappy / Level,
+// Toms Tune / Decay / Level. The Pitch knob of the row (digital transpose) is shared with the 808 circuit and stays where it is.
+inline nlohmann::json Tr909ControlsJson(const InstrumentDef& d)
+{
+  Tr909Voice v;
+  if (!Tr909VoiceForInstrument(d, v)) return nullptr;
+  auto knob = [](const char* key, const char* label, const char* group, const char* tip) { return nlohmann::json{ {"key", key}, {"label", label}, {"group", group}, {"tooltip", tip}, {"min", 0.0}, {"max", 1.0}, {"step", 0.01} }; };
+  nlohmann::json c = nlohmann::json::array();
+  if (v == Tr909Voice::Bd) { c.push_back(knob("tune909", "Tune", "Circuit", "Tuning of the drum.")); c.push_back(knob("attack909", "Attack", "Circuit", "Attack of the kick.")); c.push_back(knob("decay909", "Decay", "Circuit", "Decay of the kick.")); }
+  else if (v == Tr909Voice::Sd) { c.push_back(knob("tune909", "Tune", "Circuit", "Tuning of the drum.")); c.push_back(knob("tone909", "Tone", "Circuit", "Tone of the snare.")); c.push_back(knob("snappy909", "Snappy", "Circuit", "Amount of the snare rattle.")); }
+  else { c.push_back(knob("tune909", "Tune", "Circuit", "Tuning of the drum.")); c.push_back(knob("decay909", "Decay", "Circuit", "Decay of the drum.")); }
+  c.push_back(knob("level909", "Level", "Output", "Output level (circuit pot of the voice)."));
+  return c;
+}
+
+// Adds "controls909" (and the pots' start values to "defaults", all at the nominal position 0.5) to the rows of the table JSON that play a 909 voice. The rows are those of kInstruments, in order.
+inline void AddTr909Controls(nlohmann::json& table)
+{
+  auto& rows = table["instruments"];
+  for (size_t i = 0; i < rows.size() && i < static_cast<size_t>(kNumInstruments); ++i)
+  {
+    nlohmann::json c = Tr909ControlsJson(kInstruments[i]);
+    if (c.is_null()) continue;
+    for (const auto& k : c) rows[i]["defaults"][k["key"].get<std::string>()] = 0.5;
+    rows[i]["controls909"] = std::move(c);
+  }
+}
+
 // The two Rim Shot rows (Snare Rimshot, Snare Rim Only) play the one 909 Rim Shot circuit, computed live (909RimLive.h; the 909 has no second rim circuit).
 inline bool Tr909RimLiveForInstrument(const InstrumentDef& d) { return d.kind == EngineKind::RmRim; }
 

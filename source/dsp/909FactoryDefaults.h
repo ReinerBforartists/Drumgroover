@@ -9,19 +9,28 @@
 
 namespace dgg {
 
+// The sets of one voice at one pot state (909PotParams.h): the accent codes of all velocity levels.
+inline std::vector<Tr909SetKey> Tr909KeysForParams(Tr909Voice voice, uint64_t params, int sampleRateHz)
+{
+  std::vector<Tr909SetKey> out;
+  std::set<int> codes;
+  for (int level = 0; level < kTr909VelocityLevels; ++level) codes.insert(Tr909CodeForVelocity(voice, static_cast<double>(level) / (kTr909VelocityLevels - 1)));
+  for (int code : codes)
+  {
+    Tr909SetKey k; k.voice = voice; k.params = params; k.accentCode = code;
+    k.noise = Tr909NoisePath::Reference5us; k.sampleRateHz = sampleRateHz;
+    out.push_back(k);
+  }
+  return out;
+}
+
 inline std::vector<Tr909SetKey> Tr909FactoryDefaultKeys(int sampleRateHz)
 {
   std::vector<Tr909SetKey> out;
   for (int v = 0; v < static_cast<int>(Tr909Voice::kCount); ++v)
   {
-    std::set<int> codes;
-    for (int level = 0; level < kTr909VelocityLevels; ++level) codes.insert(Tr909CodeForVelocity(static_cast<Tr909Voice>(v), static_cast<double>(level) / (kTr909VelocityLevels - 1)));
-    for (int code : codes)
-    {
-      Tr909SetKey k; k.voice = static_cast<Tr909Voice>(v); k.params = 0; k.accentCode = code;
-      k.noise = Tr909NoisePath::Reference5us; k.sampleRateHz = sampleRateHz;
-      out.push_back(k);
-    }
+    const std::vector<Tr909SetKey> keys = Tr909KeysForParams(static_cast<Tr909Voice>(v), 0, sampleRateHz);
+    out.insert(out.end(), keys.begin(), keys.end());
   }
   return out;
 }
