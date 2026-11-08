@@ -88,6 +88,23 @@ inline void DioEval(const double* P, double v, double& vj, double& i, double& g)
   DioJunction(P, vj, ii, gg); i = ii; g = gg / (1.0 + gg * P[2]);
 }
 
+// Excess junction charge of one capacitance (state-dependent part beyond the capacitance frozen in the linear model, see gen_crash_model.py CHARGE_BJT):
+// dq(v) = (q(v) - q0 - c0 (v - v0)) / unit and its slope dc = (c(v) - c0) / unit. P = {CJ, VJ, M, TF, IS, 1/(NF Vt), v0, c0, q0, beFlag, unit};
+// q = depletion charge (SPICE, FC = 0.5) + TF * forward current for the base-emitter junction; unit = coulomb of the channel variable.
+inline void QCharge(const double* P, double v, double& dq, double& dc)
+{
+  const double cj0 = P[0], vj = P[1], m = P[2], fc = 0.5; double qd, cd;
+  if (v < fc * vj) { const double t = 1.0 - v / vj, tm = std::pow(t, -m); qd = vj * cj0 / (1.0 - m) * (1.0 - t * tm); cd = cj0 * tm; }
+  else
+  {
+    const double f1 = vj * (1.0 - std::pow(1.0 - fc, 1.0 - m)) / (1.0 - m), f2 = std::pow(1.0 - fc, 1.0 + m), f3 = 1.0 - fc * (1.0 + m);
+    qd = cj0 * (f1 + (1.0 / f2) * (f3 * (v - fc * vj) + m / (2.0 * vj) * (v * v - fc * fc * vj * vj))); cd = cj0 / f2 * (f3 + m * v / vj);
+  }
+  double q = qd, c = cd;
+  if (P[9] > 0.5) { const double e = std::exp(std::fmin(v * P[5], 80.0)); q += P[3] * (P[4] * (e - 1.0) + kGmin * v); c += P[3] * (P[4] * e * P[5] + kGmin); }
+  dq = (q - P[8] - P[7] * (v - P[6])) / P[10]; dc = (c - P[7]) / P[10];
+}
+
 inline int Ctz(uint32_t m)
 {
 #ifdef _MSC_VER
@@ -137,10 +154,11 @@ template <int N> inline void LuSolve(const double (&A)[N][N], const int (&piv)[N
 
 template <class M> struct Voice
 {
-  static constexpr int R = M::kR, NU = M::kU, NP = M::kPorts, NF = M::kCur, NB = M::kNumBjt, NBITS = M::kBits, IACC = M::kAccentIdx, ND = DioCount<M>::value, NT = TanhCount<M>::value, NR = ResCount<M>::value;   // currents: 2 per BJT, then one per diode, then one per op-amp input stage (deviation from the linear gm)
+  static constexpr int R = M::kR, NU = M::kU, NP = M::kPorts, NF = M::kCur, NB = M::kNumBjt, NBITS = M::kBits, IACC = M::kAccentIdx, ND = DioCount<M>::value, NT = TanhCount<M>::value, NR = ResCount<M>::value, NQ = QCount<M>::value, Q0 = 2 * M::kNumBjt + DioCount<M>::value + TanhCount<M>::value + ResCount<M>::value;   // currents: 2 per BJT, then one per diode, then one per op-amp input stage (deviation from the linear gm)
   double resG[NR > 0 ? NR : 1];   // conductances of the pot resistors (run-time parameters; the nominal values are the header's kResG0)
   void SetResG(int m, double g) { if constexpr (NR > 0) { if (!resInit) { for (int i = 0; i < NR; ++i) resG[i] = M::kResG0[i]; resInit = true; } resG[m] = g; } }
   bool resInit = false, idleMode = false;
+  mutable double qG[NQ > 0 ? NQ : 1];   // slope of the excess junction charge channels at the last full evaluation
   mutable double tanhG[NT > 0 ? NT : 1];   // slope of the op-amp stage currents at the last full evaluation
   mutable double dp[ND > 0 ? ND : 1][5], dioVj[ND > 0 ? ND : 1], dioG[ND > 0 ? ND : 1];   // diode constants {Is, N Vt, Rs, breakdown knee, critical voltage}, internal junction voltage (warm start), conductance of the last full evaluation
   double coneEff[M::kSteps * R], pd1Eff[NP], accOut = 0.0;   // constant forcing of every step type including the accent input (RefreshAccent)
@@ -265,6 +283,8 @@ template <class M> struct Voice
       }
     if constexpr (NR > 0)
       for (int m = 0; m < NR; ++m) f[2 * NB + ND + NT + m] = resG[m] * q[M::kPortR[m]];
+    if constexpr (NQ > 0)
+      for (int j = 0; j < NQ; ++j) { double dq, dc; QCharge(&M::kQPar[11 * j], q[M::kQPort[j]], dq, dc); f[Q0 + j] = dq; if (jf) qG[j] = dc; }
   }
   double OutputNow() const   // output of the present state with the present bits (before the first step: the DC output of the hit)
   {
@@ -342,6 +362,7 @@ template <class M> struct Voice
             if constexpr (ND > 0) for (int m = 0; m < ND; ++m) J[i][M::kPortD[m]] -= zr[2 * NB + m] * dioG[m];
             if constexpr (NT > 0) for (int t = 0; t < NT; ++t) J[i][M::kPortT[t]] -= zr[2 * NB + ND + t] * tanhG[t];
             if constexpr (NR > 0) for (int m = 0; m < NR; ++m) J[i][M::kPortR[m]] -= zr[2 * NB + ND + NT + m] * resG[m];
+            if constexpr (NQ > 0) for (int j = 0; j < NQ; ++j) J[i][M::kQPort[j]] -= zr[Q0 + j] * qG[j];
           }
           if (attempt == 0) { luOk = LuFactorNoPivot<NP>(J); if (luOk) { for (int i = 0; i < NP; ++i) piv[i] = i; break; } }
           else luOk = LuFactor<NP>(J, piv);
@@ -391,6 +412,7 @@ template <class M> struct Voice
         if constexpr (ND > 0) for (int m = 0; m < ND; ++m) f1[2 * NB + m] += dioG[m] * F[M::kPortD[m]];
         if constexpr (NT > 0) for (int t = 0; t < NT; ++t) f1[2 * NB + ND + t] += tanhG[t] * F[M::kPortT[t]];
         if constexpr (NR > 0) for (int m = 0; m < NR; ++m) f1[2 * NB + ND + NT + m] += resG[m] * F[M::kPortR[m]];
+        if constexpr (NQ > 0) for (int j = 0; j < NQ; ++j) f1[Q0 + j] += qG[j] * F[M::kQPort[j]];
         fCurrent = true; break;
       }
     }

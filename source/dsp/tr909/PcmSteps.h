@@ -75,6 +75,9 @@ template <class M> struct DioCount<M, std::void_t<decltype(M::kNumDio)>> : std::
 template <class M, class = void> struct TanhCount : std::integral_constant<int, 0> {};
 template <class M> struct TanhCount<M, std::void_t<decltype(M::kNumTanh)>> : std::integral_constant<int, M::kNumTanh> {};
 
+template <class M, class = void> struct QCount : std::integral_constant<int, 0> {};
+template <class M> struct QCount<M, std::void_t<decltype(M::kNumQ)>> : std::integral_constant<int, M::kNumQ> {};
+
 template <class M, class = void> struct ResCount : std::integral_constant<int, 0> {};
 template <class M> struct ResCount<M, std::void_t<decltype(M::kNumRes)>> : std::integral_constant<int, M::kNumRes> {};
 
