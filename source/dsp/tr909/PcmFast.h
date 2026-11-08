@@ -3,6 +3,10 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <functional>
+#include <vector>
+#include <algorithm>
 #include "PcmSteps.h"
 #ifdef _MSC_VER
 #include <intrin.h>
@@ -21,7 +25,7 @@ namespace dgg { namespace pcmfast {
 
 constexpr double kSettlePeriod = 0.1; constexpr int kSettlePeriods = 300, kStagePeriods = 60, kRampPeriods = 100; constexpr double kStageLn = 0.4;   // idle settling: PCM period in seconds and number of periods
 constexpr double kChordMaxCorr = 0.2;   // volts: above this correction the next iteration is a full Newton iteration
-constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kTailRel = 0.0, kEnvDecay = 0.975, kAcAlpha = 0.0031, kAcEndLevel = 2e-4, kAcEndLevelHat = 2e-7; constexpr int kAcEndPeriods = 400;   // volts on the port voltages; the correction is applied before the test, so the error left is of the order of the square
+constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kNewtonTolHat = 3e-2, kBlockRelHat = 1e-4, kJReuseHat = 100, kDioMemoHat = 1e-9, kTailRel = 0.0, kEnvDecay = 0.975, kAcAlpha = 0.0031, kAcEndLevel = 2e-4, kAcEndLevelHat = 2e-7; constexpr int kAcEndPeriods = 400;   // volts on the port voltages; the correction is applied before the test, so the error left is of the order of the square
 
 // Gummel-Poon static currents of one BJT in node orientation: ic = s*cc (leaving the collector node into the device), ib = s*cb, and the 2x2 Jacobian wrt (vbe, vbc)
 struct BjtOut { double ic, ib, d[2][2]; };
@@ -77,6 +81,7 @@ inline void DioJunction(const double* P, double vd, double& i, double& g)
 }
 inline void DioEval(const double* P, double v, double& vj, double& i, double& g)
 {
+  if (v < -36.0 * P[1] && v > -P[3]) { vj = v; i = -P[0] + kGmin * v; g = kGmin; return; }   // deep reverse bias (exp(-36) < 3e-16, below the breakdown knee): constant saturation current plus gmin, the exponential term is far below gmin
   if (P[2] <= 0.0) { vj = v; DioJunction(P, v, i, g); return; }
   double ii, gg;
   for (int k = 0; k < 60; ++k)
@@ -105,6 +110,56 @@ inline void QCharge(const double* P, double v, double& dq, double& dc)
   dq = (q - P[8] - P[7] * (v - P[6])) / P[10]; dc = (c - P[7]) / P[10];
 }
 
+// Cubic Hermite table of the excess-charge channels (HH-K10): per channel dq(v) and its slope dc(v) on a uniform grid; dc is the derivative of the interpolating polynomial. Outside the grid the exact function is used.
+template <class M> struct QTable
+{
+  static constexpr double kV0 = -20.0, kV1 = 1.2, kH = 0.005; static constexpr int kN = static_cast<int>((kV1 - kV0) / kH + 0.5) + 1;
+  std::vector<double> t;   // per channel and node: dq, dc
+  QTable() { constexpr int NQc = QCount<M>::value; t.resize(static_cast<size_t>(NQc > 0 ? NQc : 1) * kN * 2); if constexpr (NQc > 0) for (int j = 0; j < NQc; ++j) for (int i = 0; i < kN; ++i) { double dq, dc; QCharge(&M::kQPar[11 * j], kV0 + i * kH, dq, dc); t[(static_cast<size_t>(j) * kN + i) * 2] = dq; t[(static_cast<size_t>(j) * kN + i) * 2 + 1] = dc; } }
+  static const QTable& Get() { static const QTable inst; return inst; }
+  void Eval(int j, double v, double& dq, double& dc) const
+  {
+    double x = (v - kV0) * (1.0 / kH);
+    if (x < 0.0 || x >= kN - 1) { QCharge(&M::kQPar[11 * j], v, dq, dc); return; }
+    const int i = static_cast<int>(x); const double s = x - i; const double* a = &t[(static_cast<size_t>(j) * kN + i) * 2]; const double q0 = a[0], m0 = a[1] * kH, q1 = a[2], m1 = a[3] * kH;
+    const double s2 = s * s, s3 = s2 * s;
+    dq = (2 * s3 - 3 * s2 + 1) * q0 + (s3 - 2 * s2 + s) * m0 + (-2 * s3 + 3 * s2) * q1 + (s3 - s2) * m1;
+    dc = ((6 * s2 - 6 * s) * q0 + (3 * s2 - 4 * s + 1) * m0 + (-6 * s2 + 6 * s) * q1 + (3 * s2 - 2 * s) * m1) * (1.0 / kH);
+  }
+};
+#ifdef PCMFAST_DOT_AVX2
+#include <immintrin.h>
+inline double Dot(const double* a, const double* b, int n)   // AVX2/FMA dot product, four accumulators over 16 elements per pass
+{
+  __m256d s0 = _mm256_setzero_pd(), s1 = s0, s2 = s0, s3 = s0; int k = 0;
+  for (; k + 16 <= n; k += 16)
+  {
+    s0 = _mm256_fmadd_pd(_mm256_loadu_pd(a + k), _mm256_loadu_pd(b + k), s0); s1 = _mm256_fmadd_pd(_mm256_loadu_pd(a + k + 4), _mm256_loadu_pd(b + k + 4), s1);
+    s2 = _mm256_fmadd_pd(_mm256_loadu_pd(a + k + 8), _mm256_loadu_pd(b + k + 8), s2); s3 = _mm256_fmadd_pd(_mm256_loadu_pd(a + k + 12), _mm256_loadu_pd(b + k + 12), s3);
+  }
+  for (; k + 4 <= n; k += 4) s0 = _mm256_fmadd_pd(_mm256_loadu_pd(a + k), _mm256_loadu_pd(b + k), s0);
+  s0 = _mm256_add_pd(_mm256_add_pd(s0, s1), _mm256_add_pd(s2, s3)); __m128d h = _mm_add_pd(_mm256_castpd256_pd128(s0), _mm256_extractf128_pd(s0, 1)); double r = _mm_cvtsd_f64(_mm_add_sd(h, _mm_unpackhi_pd(h, h)));
+  for (; k < n; ++k) r += a[k] * b[k];
+  return r;
+}
+#elif !defined(PCMFAST_DOT_SCALAR)
+#include <emmintrin.h>
+inline double Dot(const double* a, const double* b, int n)   // SSE2 dot product (baseline x64, no mixing with VEX code), four 2-wide accumulators over 8 elements per pass
+{
+  __m128d s0 = _mm_setzero_pd(), s1 = s0, s2 = s0, s3 = s0; int k = 0;
+  for (; k + 8 <= n; k += 8)
+  {
+    s0 = _mm_add_pd(s0, _mm_mul_pd(_mm_loadu_pd(a + k), _mm_loadu_pd(b + k))); s1 = _mm_add_pd(s1, _mm_mul_pd(_mm_loadu_pd(a + k + 2), _mm_loadu_pd(b + k + 2)));
+    s2 = _mm_add_pd(s2, _mm_mul_pd(_mm_loadu_pd(a + k + 4), _mm_loadu_pd(b + k + 4))); s3 = _mm_add_pd(s3, _mm_mul_pd(_mm_loadu_pd(a + k + 6), _mm_loadu_pd(b + k + 6)));
+  }
+  for (; k + 2 <= n; k += 2) s0 = _mm_add_pd(s0, _mm_mul_pd(_mm_loadu_pd(a + k), _mm_loadu_pd(b + k)));
+  s0 = _mm_add_pd(_mm_add_pd(s0, s1), _mm_add_pd(s2, s3)); double r = _mm_cvtsd_f64(_mm_add_sd(s0, _mm_unpackhi_pd(s0, s0)));
+  for (; k < n; ++k) r += a[k] * b[k];
+  return r;
+}
+#else
+inline double Dot(const double* a, const double* b, int n) { double r = 0.0; for (int k = 0; k < n; ++k) r += a[k] * b[k]; return r; }
+#endif
 inline int Ctz(uint32_t m)
 {
 #ifdef _MSC_VER
@@ -170,7 +225,79 @@ template <class M> struct Voice
   double lastOut = 0.0, lastH = 0.0, outDc = 0.0, env = 0.0, peak = 1e-12;   // last step length, DC output, level envelope and its maximum (layout choice)
   long periodsByLayout[4] = {0, 0, 0, 0}; double tailRel = kTailRel, newtonTol = kNewtonTol, acEndLevel = kAcEndLevel; int noSolve = 0;   // noSolve: timing probe only (no nonlinear solve); tailRel: switch to the cheaper layout below this fraction of the loudest envelope
   double prof[6] = {0, 0, 0, 0, 0, 0};
-  PcmSteps<M> st;   // step tables of the PCM period of the hit (built from the nominal period unless SetPeriod() was called)
+  // Block-triangular factorization of the Newton Jacobian: the port graph (row i depends on port c where a current with a Zp entry above blockRel*max|Zp| depends on c) is split into
+  // strongly connected blocks ordered so that a block depends only on earlier blocks; entries outside the structure are dropped from the Jacobian (the residual stays exact). blockRel = 0: dense LU.
+  struct JCache { double J[NP][NP]; double LU[NP * NP]; int pv[NP]; double inv[NP]; double jf[NB][4]; double dioG[ND > 0 ? ND : 1], tanhG[NT > 0 ? NT : 1], qG[NQ > 0 ? NQ : 1]; bool valid = false; int age = 0; };
+  JCache jc[M::kSteps];   // Jacobian and block factors per step type (jReuse > 0): reused for up to jReuse periods; invalidated when the reused Jacobian needs more than one extra iteration
+  double dioMemoThr = 0.0; mutable double dioMemoV[ND > 0 ? ND : 1], dioMemoI[ND > 0 ? ND : 1], dioMemoG[ND > 0 ? ND : 1]; mutable bool dioMemoOk[ND > 0 ? ND : 1] = {};   // diode evaluation memo (HH-K17): reuse within |dv| <= dioMemoThr volts
+  bool qTable = false;   // charge channels from the Hermite table instead of the exact function
+  int jReuse = 0; long jReuseUsed = 0; double jReuseTol = 0.1;   // jReuseTol: the correction limit of a step that starts with a reused Jacobian is newtonTol * jReuseTol
+  double blockRel = 0.0, blkT = -1.0; bool blkReady = false; int nBlk = 0, bOrd[NP], bStart[NP + 1], bOff[NP + 1], blkPiv[NP], bDepN[NP], bDep[NP][NP]; double blkInv[NP], blkLU[NP * NP];   // bDep: for the port at position r the ports of earlier blocks it depends on; blkInv: reciprocal pivots
+  void BuildBlocks()
+  {
+    std::vector<std::vector<int>> deps(NF);
+    for (int k = 0; k < NB; ++k) { deps[2 * k].push_back(M::kPortBe[k]); if (M::kPortBc[k] >= 0) deps[2 * k].push_back(M::kPortBc[k]); deps[2 * k + 1] = deps[2 * k]; }
+    if constexpr (ND > 0) for (int m = 0; m < ND; ++m) deps[2 * NB + m].push_back(M::kPortD[m]);
+    if constexpr (NT > 0) for (int t = 0; t < NT; ++t) deps[2 * NB + ND + t].push_back(M::kPortT[t]);
+    if constexpr (NR > 0) for (int m = 0; m < NR; ++m) deps[2 * NB + ND + NT + m].push_back(M::kPortR[m]);
+    if constexpr (NQ > 0) for (int q = 0; q < NQ; ++q) deps[Q0 + q].push_back(M::kQPort[q]);
+    std::vector<char> A(NP * NP, 0); double gmax = 0.0;
+    for (int j = M::kLayoutFirst[0]; j < M::kLayoutFirst[0] + M::kLayoutN[0]; ++j) for (int i = 0; i < NP; ++i) for (int k = 0; k < NF; ++k) gmax = std::fmax(gmax, std::fabs(st.zp[static_cast<size_t>(j) * NP * NF + i * NF + k]));
+    for (int j = M::kLayoutFirst[0]; j < M::kLayoutFirst[0] + M::kLayoutN[0]; ++j) for (int i = 0; i < NP; ++i) for (int k = 0; k < NF; ++k)
+      if (std::fabs(st.zp[static_cast<size_t>(j) * NP * NF + i * NF + k]) > blockRel * gmax) for (int c : deps[k]) A[i * NP + c] = 1;
+    std::vector<int> idx(NP, -1), low(NP, 0), comp(NP, -1), stk; std::vector<char> on(NP, 0); int counter = 0, nc = 0;
+    std::function<void(int)> dfs = [&](int u)
+    {
+      idx[u] = low[u] = counter++; stk.push_back(u); on[u] = 1;
+      for (int w = 0; w < NP; ++w) if (A[u * NP + w] && w != u) { if (idx[w] < 0) { dfs(w); low[u] = std::min(low[u], low[w]); } else if (on[w]) low[u] = std::min(low[u], idx[w]); }
+      if (low[u] == idx[u]) { for (;;) { const int w = stk.back(); stk.pop_back(); on[w] = 0; comp[w] = nc; if (w == u) break; } ++nc; }
+    };
+    for (int u = 0; u < NP; ++u) if (idx[u] < 0) dfs(u);
+    nBlk = nc; int pos = 0;   // component numbers are in dependency order (a component depends only on smaller numbers)
+    for (int b = 0; b < nc; ++b) { bStart[b] = pos; for (int u = 0; u < NP; ++u) if (comp[u] == b) bOrd[pos++] = u; }
+    bStart[nc] = pos;
+    for (int b = 0; b < nc; ++b) for (int r = bStart[b]; r < bStart[b + 1]; ++r) { const int i = bOrd[r]; bDepN[r] = 0; for (int q = 0; q < bStart[b]; ++q) if (A[i * NP + bOrd[q]]) bDep[r][bDepN[r]++] = bOrd[q]; }
+    int off = 0; for (int b = 0; b < nc; ++b) { bOff[b] = off; const int n = bStart[b + 1] - bStart[b]; off += n * n; } bOff[nc] = off;
+    blkT = st.T; blkReady = true; for (auto& c : jc) c.valid = false;
+  }
+  bool BlockFactor(const double (&J)[NP][NP])
+  {
+    for (int b = 0; b < nBlk; ++b)
+    {
+      const int s = bStart[b], n = bStart[b + 1] - s; double* A = &blkLU[bOff[b]];
+      for (int r = 0; r < n; ++r) for (int c = 0; c < n; ++c) A[r * n + c] = J[bOrd[s + r]][bOrd[s + c]];
+      for (int c = 0; c < n; ++c)
+      {
+        int pr = c; double mx = std::fabs(A[c * n + c]);
+        for (int i = c + 1; i < n; ++i) { const double a = std::fabs(A[i * n + c]); if (a > mx) { mx = a; pr = i; } }
+        if (mx < 1e-300) return false;
+        blkPiv[s + c] = pr;
+        if (pr != c) for (int j = 0; j < n; ++j) { const double t = A[c * n + j]; A[c * n + j] = A[pr * n + j]; A[pr * n + j] = t; }
+        const double inv = 1.0 / A[c * n + c]; blkInv[s + c] = inv;
+        for (int i = c + 1; i < n; ++i) { const double f = A[i * n + c] * inv; A[i * n + c] = f; if (f == 0.0) continue; for (int j = c + 1; j < n; ++j) A[i * n + j] -= f * A[c * n + j]; }
+      }
+    }
+    return true;
+  }
+  void BlockSolve(const double (&J)[NP][NP], double* F) const
+  {
+    for (int b = 0; b < nBlk; ++b)
+    {
+      const int s = bStart[b], n = bStart[b + 1] - s; const double* A = &blkLU[bOff[b]]; double rhs[NP];
+      for (int r = 0; r < n; ++r) { const int i = bOrd[s + r]; double a = F[i]; const int nd = bDepN[s + r]; for (int d = 0; d < nd; ++d) { const int c = bDep[s + r][d]; a -= J[i][c] * F[c]; } rhs[r] = a; }
+      for (int c = 0; c < n; ++c) { const int pr = blkPiv[s + c]; if (pr != c) { const double t = rhs[c]; rhs[c] = rhs[pr]; rhs[pr] = t; } }
+      for (int c = 0; c < n; ++c) for (int i = c + 1; i < n; ++i) rhs[i] -= A[i * n + c] * rhs[c];
+      for (int i = n - 1; i >= 0; --i) { double sum = rhs[i]; for (int j = i + 1; j < n; ++j) sum -= A[i * n + j] * rhs[j]; rhs[i] = sum * blkInv[s + i]; }
+      for (int r = 0; r < n; ++r) F[bOrd[s + r]] = rhs[r];
+    }
+  }
+  struct IdleTables   // step tables of the three idle settling phases (built once per model type; building them takes about 20 ms each)
+  {
+    PcmSteps<M> t[3];
+    IdleTables() { const double ramp[3] = {kSettlePeriod * 0.01, kSettlePeriod * 0.1, kSettlePeriod}; for (int r = 0; r < 3; ++r) t[r].Build(ramp[r]); }
+    static const IdleTables& Get() { static const IdleTables inst; return inst; }
+  };
+  PcmSteps<M> st;  // step tables of the PCM period of the hit (built from the nominal period unless SetPeriod() was called)
   void SetPeriod(double period) { st.Build(period); }
   double ClockPeriod() const { return st.T; }
   uint32_t flipMask = 0;   // diagnosis only: address bits inverted while held
@@ -216,6 +343,8 @@ template <class M> struct Voice
     if constexpr (NR > 0) { bool moved = false; for (int m = 0; m < NR; ++m) if (std::fabs(resG[m] - M::kResG0[m]) > 1e-6 * M::kResG0[m]) moved = true; if (moved) { SettleResistors(); } }
     EvalF(p, f0, nullptr); lastOut = OutputNow(); period = 0; stepIdx = 0; layout = 0; newtonIts = 0; stepsDone = 0; outDc = OutputNow(); env = 0.0; peak = 1e-12; acLow = outDc; acEnv = 0.0; acPeak = 0.0; quietPeriods = 0; finished = false;
     for (int i = 0; i < 4; ++i) periodsByLayout[i] = 0;
+    for (auto& c : jc) c.valid = false;   // a new hit starts with fresh Jacobians
+    if constexpr (ND > 0) for (int m = 0; m < ND; ++m) dioMemoOk[m] = false;
   }
   // Idle state for pot resistors away from their nominal values (the DC tables are for the nominal ones): the idle circuit (bits at their initial values, no trigger) runs
   // with a long PCM period (long steps, constant bits) until the slow nodes have settled; the step tables of the hit are restored afterwards.
@@ -245,8 +374,9 @@ template <class M> struct Voice
   void SettleIdle(int periods = kSettlePeriods)
   {
     const PcmSteps<M> saved = st; idleMode = true;
-    const double ramp[3] = {kSettlePeriod * 0.01, kSettlePeriod * 0.1, kSettlePeriod}; const int count[3] = {kRampPeriods, kRampPeriods, periods};   // short steps first (the Newton iteration starts from the previous state), then the long ones
-    for (int r = 0; r < 3; ++r) { st.Build(ramp[r]); RefreshAccent(); for (int i = 0; i < count[r] * M::kLayoutN[0]; ++i) Step(); }
+    const int count[3] = {kRampPeriods, kRampPeriods, periods};   // short steps first (the Newton iteration starts from the previous state), then the long ones
+    const IdleTables& it = IdleTables::Get();
+    for (int r = 0; r < 3; ++r) { st = it.t[r]; RefreshAccent(); for (int i = 0; i < count[r] * M::kLayoutN[0]; ++i) Step(); }
     idleMode = false; st = saved; RefreshAccent();
   }
   // restart of the PCM sequence while the analog state continues (the digital counters are reset, the capacitors keep their charge)
@@ -274,7 +404,13 @@ template <class M> struct Voice
       }
     }
     if constexpr (ND > 0)
-      for (int m = 0; m < ND; ++m) { double i, g; DioEval(dp[m], q[M::kPortD[m]], dioVj[m], i, g); f[2 * NB + m] = i; if (jf) dioG[m] = g; }
+      for (int m = 0; m < ND; ++m)
+      {
+        double i, g; const double v = q[M::kPortD[m]];
+        if (dioMemoThr > 0.0 && dioMemoOk[m] && std::fabs(v - dioMemoV[m]) <= dioMemoThr) { i = dioMemoI[m]; g = dioMemoG[m]; }   // same terminal voltage as the last evaluation: same current and conductance
+        else { DioEval(dp[m], v, dioVj[m], i, g); dioMemoV[m] = v; dioMemoI[m] = i; dioMemoG[m] = g; dioMemoOk[m] = true; }
+        f[2 * NB + m] = i; if (jf) dioG[m] = g;
+      }
     if constexpr (NT > 0)
       for (int t = 0; t < NT; ++t)
       {
@@ -284,7 +420,7 @@ template <class M> struct Voice
     if constexpr (NR > 0)
       for (int m = 0; m < NR; ++m) f[2 * NB + ND + NT + m] = resG[m] * q[M::kPortR[m]];
     if constexpr (NQ > 0)
-      for (int j = 0; j < NQ; ++j) { double dq, dc; QCharge(&M::kQPar[11 * j], q[M::kQPort[j]], dq, dc); f[Q0 + j] = dq; if (jf) qG[j] = dc; }
+      for (int j = 0; j < NQ; ++j) { double dq, dc; if (qTable) QTable<M>::Get().Eval(j, q[M::kQPort[j]], dq, dc); else QCharge(&M::kQPar[11 * j], q[M::kQPort[j]], dq, dc); f[Q0 + j] = dq; if (jf) qG[j] = dc; }
   }
   double OutputNow() const   // output of the present state with the present bits (before the first step: the DC output of the hit)
   {
@@ -312,8 +448,7 @@ template <class M> struct Voice
     for (int i = 0; i < R; ++i)
     {
       double a = Cone[i];
-      const double* row = Phi + i * R; for (int k = 0; k < R; ++k) a += row[k] * z[k];
-      const double* rf = GaF + i * NF; for (int k = 0; k < NF; ++k) a += rf[k] * f0[k];
+      a += Dot(Phi + i * R, z, R); a += Dot(GaF + i * NF, f0, NF);
       zk[i] = a;
     }
     if (stepIdx == 0)   // ramp: old bits ramp to the new bits
@@ -328,30 +463,38 @@ template <class M> struct Voice
     for (int i = 0; i < NP; ++i)
     {
       double a = pd1Eff[i];
-      const double* rx = &M::kPXz[i * R]; for (int k = 0; k < R; ++k) a += rx[k] * zk[k];
+      a += Dot(&M::kPXz[i * R], zk, R);
       pk[i] = a;
     }
     for (uint32_t m = bitsNow; m; m &= m - 1) { const int k = Ctz(m); const double* c = &M::kPDuc[k * NP]; for (int i = 0; i < NP; ++i) pk[i] += M::kVhigh * c[i]; }
     PF_LAP(1);
-    double f1[NF]; const long itsBefore = newtonIts; bool fCurrent = false;
+    double f1[NF]; const long itsBefore = newtonIts; bool fCurrent = false, reuse = false; JCache& jcj = jc[j];
     if (!noSolve)
     {
-    double J[NP][NP]; int piv[NP]; double jf[NB][4]; bool luOk = false; double lastMx = 0.0;
+    double J[NP][NP]; int piv[NP]; double jf[NB][4]; bool luOk = false; double lastMx = 0.0; bool denseLu = true; const bool useBlk = blockRel > 0.0 && !idleMode;
     double pStart[NP]; for (int i = 0; i < NP; ++i) pStart[i] = p[i];
+    if (useBlk && jReuse > 0 && jcj.valid && jcj.age < jReuse)   // Jacobian and block factors of this step type from an earlier period: the first iteration is a chord iteration
+    {
+      std::memcpy(J, jcj.J, sizeof J); std::memcpy(blkLU, jcj.LU, sizeof blkLU); std::memcpy(blkPiv, jcj.pv, sizeof blkPiv); std::memcpy(blkInv, jcj.inv, sizeof blkInv); std::memcpy(jf, jcj.jf, sizeof jf);
+      if constexpr (ND > 0) std::memcpy(dioG, jcj.dioG, sizeof dioG);
+      if constexpr (NT > 0) std::memcpy(tanhG, jcj.tanhG, sizeof tanhG);
+      if constexpr (NQ > 0) std::memcpy(qG, jcj.qG, sizeof qG);
+      luOk = true; denseLu = false; reuse = true; ++jcj.age; ++jReuseUsed;
+    }
     for (int attempt = 0; attempt < 2 && !fCurrent; ++attempt)   // second attempt after a failed Newton iteration: restart from the ports of the step start with damped corrections and more iterations
     {
-    if (attempt == 1) { for (int i = 0; i < NP; ++i) p[i] = pStart[i]; luOk = false; lastMx = 0.0; ++newtonFallbacks; }
+    if (attempt == 1) { for (int i = 0; i < NP; ++i) p[i] = pStart[i]; luOk = false; lastMx = 0.0; ++newtonFallbacks; reuse = false; jcj.valid = false; }
     for (int it = 0; it < (attempt ? 120 : 40); ++it)
     {
       double F[NP];
-      if (it == 0 || !luOk || lastMx > kChordMaxCorr)   // full Newton iteration (also while the correction is large: the Jacobian of the first iteration does not hold for a junction that moved far): currents, block Jacobians, factorization
+      if ((it == 0 && !reuse) || !luOk || lastMx > kChordMaxCorr)   // full Newton iteration (also while the correction is large: the Jacobian of the first iteration does not hold for a junction that moved far): currents, block Jacobians, factorization
       {
         EvalF(p, f1, jf); ++newtonIts;
         for (int attempt = 0; attempt < 2; ++attempt)   // 1st: diagonal pivots (J = I - Zp Jf is diagonally dominant in practice); 2nd: partial pivoting if a pivot was small
         {
           for (int i = 0; i < NP; ++i)
           {
-            double zf = 0.0; const double* zr = Zp + i * NF; for (int k = 0; k < NF; ++k) zf += zr[k] * f1[k];
+            const double* zr = Zp + i * NF; const double zf = Dot(zr, f1, NF);
             F[i] = -(p[i] - pk[i] - zf);
             for (int c = 0; c < NP; ++c) J[i][c] = (i == c ? 1.0 : 0.0);
             for (int k = 0; k < NB; ++k)
@@ -364,17 +507,37 @@ template <class M> struct Voice
             if constexpr (NR > 0) for (int m = 0; m < NR; ++m) J[i][M::kPortR[m]] -= zr[2 * NB + ND + NT + m] * resG[m];
             if constexpr (NQ > 0) for (int j = 0; j < NQ; ++j) J[i][M::kQPort[j]] -= zr[Q0 + j] * qG[j];
           }
-          if (attempt == 0) { luOk = LuFactorNoPivot<NP>(J); if (luOk) { for (int i = 0; i < NP; ++i) piv[i] = i; break; } }
-          else luOk = LuFactor<NP>(J, piv);
+          if (attempt == 0)
+          {
+            if (useBlk)
+            {
+              if (!blkReady || blkT != st.T) BuildBlocks(); luOk = BlockFactor(J);
+              if (luOk)
+              {
+                denseLu = false;
+                if (jReuse > 0)   // keep the factors of this step type for the next periods
+                {
+                  std::memcpy(jcj.J, J, sizeof J); std::memcpy(jcj.LU, blkLU, sizeof blkLU); std::memcpy(jcj.pv, blkPiv, sizeof blkPiv); std::memcpy(jcj.inv, blkInv, sizeof blkInv); std::memcpy(jcj.jf, jf, sizeof jf);
+                  if constexpr (ND > 0) std::memcpy(jcj.dioG, dioG, sizeof dioG);
+                  if constexpr (NT > 0) std::memcpy(jcj.tanhG, tanhG, sizeof tanhG);
+                  if constexpr (NQ > 0) std::memcpy(jcj.qG, qG, sizeof qG);
+                  jcj.valid = true; jcj.age = 0;
+                }
+                break;
+              }
+            }
+            denseLu = true; luOk = LuFactorNoPivot<NP>(J); if (luOk) { for (int i = 0; i < NP; ++i) piv[i] = i; break; }
+          }
+          else { denseLu = true; luOk = LuFactor<NP>(J, piv); }
         }
         if (!luOk) break;
       }
       else                    // chord iteration: Jacobian (and its factors) of the first iteration of the step; the correction is already small there
       {
         EvalF(p, f1, nullptr); ++newtonIts;
-        for (int i = 0; i < NP; ++i) { double zf = 0.0; const double* zr = Zp + i * NF; for (int k = 0; k < NF; ++k) zf += zr[k] * f1[k]; F[i] = -(p[i] - pk[i] - zf); }
+        for (int i = 0; i < NP; ++i) { const double zf = Dot(Zp + i * NF, f1, NF); F[i] = -(p[i] - pk[i] - zf); }
       }
-      LuSolve<NP>(J, piv, F);
+      if (denseLu) LuSolve<NP>(J, piv, F); else BlockSolve(J, F);
       double mx = 0.0; for (int i = 0; i < NP; ++i) mx = std::fmax(mx, std::fabs(F[i]));
       lastMx = mx;
       const double sc = (mx > 0.5 ? 0.5 / mx : 1.0) * (attempt ? 0.3 : 1.0);
@@ -402,7 +565,7 @@ template <class M> struct Voice
           }
         }
       for (int i = 0; i < NP; ++i) p[i] += F[i];
-      if (mx < newtonTol && !limited)   // converged: carry the currents to the corrected ports with the Jacobian of this step (error of second order in the correction)
+      if (mx < (reuse ? newtonTol * jReuseTol : newtonTol) && !limited)   // converged: carry the currents to the corrected ports with the Jacobian of this step (error of second order in the correction)
       {
         for (int k = 0; k < NB; ++k)
         {
@@ -420,7 +583,7 @@ template <class M> struct Voice
     }
     PF_LAP(2);
     if (!fCurrent) EvalF(p, f1, nullptr);
-    { long c = newtonIts - itsBefore; itsByStep[stepIdx] += c; ++nByStep[stepIdx]; ++itHist[c < 11 ? c : 11]; }
+    { long c = newtonIts - itsBefore; if (reuse && (c > 2 || !fCurrent)) jcj.valid = false; itsByStep[stepIdx] += c; ++nByStep[stepIdx]; ++itHist[c < 11 ? c : 11]; }
     tapCount = 0;
     if constexpr (M::kTapN > 0)   // uniformly spaced output taps inside this step (state at the step start, currents at both ends, no state update)
     {
@@ -435,7 +598,7 @@ template <class M> struct Voice
         tap[tapCount++] = y;
       }
     }
-    for (int i = 0; i < R; ++i) { double a = zk[i]; const double* rb = GbF + i * NF; for (int k = 0; k < NF; ++k) a += rb[k] * f1[k]; z[i] = a; }
+    for (int i = 0; i < R; ++i) z[i] = zk[i] + Dot(GbF + i * NF, f1, NF);
     double out = accOut;
     for (int k = 0; k < R; ++k) out += M::kXo[k] * z[k];
     for (uint32_t m = bitsNow; m; m &= m - 1) out += M::kVhigh * M::kDou[Ctz(m)];
