@@ -5,6 +5,7 @@
 #include "909BakeHost.h"
 #include "tr909/HitRunner.h"
 #include "tr909/HitLanesApi.h"
+#include "tr909/PcmHatAvx2.h"
 #include "tr909/models/lt_a25.h"
 #include "tr909/models/lt_a50.h"
 #include "tr909/models/lt_a75.h"
@@ -225,9 +226,22 @@ private:
   struct PcmSlot : SlotBase
   {
     pcmfast::PcmVoiceHost<M> host; int hostFs = 0; long want_ = 0; double curPeriod = 0.0;
+    // Hats: the AVX2 unit (PcmHatAvx2.cpp) when the CPU supports it, else the baseline host above.
+    Tr909HatAvx2* av = nullptr; bool avTried = false;
+    ~PcmSlot() override { delete av; }
+    bool UseAvx(Tr909Voice v)
+    {
+      if constexpr (pcmfast::ResCount<M>::value > 0)
+      {
+        if (!avTried) { avTried = true; if (Tr909LanesAvailable()) av = Tr909HatAvx2Create(v == Tr909Voice::Ho); }
+        return av != nullptr;
+      }
+      else return false;
+    }
     void Prepare(Tr909Voice v, uint64_t params, int fs, int accentCode)
     {
       double p[8]; Tr909UnpackPots(v, params, p);
+      if (UseAvx(v)) { av->Prepare(fs, p[1], p[0], Tr909AccentVolts(accentCode)); return; }
       // Crash / Ride: p[1] is the Tune pot (the PCM clock of the voice). Hats: p[1] is the Decay pot, a circuit resistor of the model (VR21 for the Closed Hat, VR23 for the Open Hat), the PCM clock is fixed.
       const bool hat = pcmfast::ResCount<M>::value > 0;
       const double period = hat ? M::kPeriod : M::kPeriod / Tr909PcmClockRatio(p[1], v == Tr909Voice::Ri);
@@ -243,23 +257,26 @@ private:
     const Tr909LanePot* LanePotFor(Tr909Voice, uint64_t, Tr909LanePot&) override { return nullptr; }
     bool Render(Tr909Voice v, uint64_t params, bool, uint64_t, double seconds, int fs, std::vector<float>& out, int accentCode) override
     {
-      Prepare(v, params, fs, accentCode); host.Trigger(); out.clear();
+      Prepare(v, params, fs, accentCode); Trigger(); out.clear();
       const long maxN = static_cast<long>(seconds * fs); float buf[512];
-      while (host.Active() && static_cast<long>(out.size()) < maxN)
+      while (IsActive() && static_cast<long>(out.size()) < maxN)
       {
         const int n = static_cast<int>(std::min<long>(512, maxN - static_cast<long>(out.size())));
-        host.Render(buf, n); out.insert(out.end(), buf, buf + n);
+        RenderBlock(buf, n); out.insert(out.end(), buf, buf + n);
       }
       return !out.empty();
     }
     void Warm(Tr909Voice, uint64_t, bool) override {}
     void Prebuild(Tr909Voice v, int fs) override { Prepare(v, 0, fs, 127); }
-    bool Begin(Tr909Voice v, uint64_t params, bool, uint64_t, double seconds, int fs, int accentCode) override { Prepare(v, params, fs, accentCode); host.Trigger(); want_ = static_cast<long>(seconds * fs); return true; }
+    bool Begin(Tr909Voice v, uint64_t params, bool, uint64_t, double seconds, int fs, int accentCode) override { Prepare(v, params, fs, accentCode); Trigger(); want_ = static_cast<long>(seconds * fs); return true; }
     int Pull(float* out, int n) override
     {
-      if (!host.Active() || want_ <= 0) return 0;
-      const int w = static_cast<int>(std::min<long>(n, want_)); host.Render(out, w); want_ -= w; return w;
+      if (!IsActive() || want_ <= 0) return 0;
+      const int w = static_cast<int>(std::min<long>(n, want_)); RenderBlock(out, w); want_ -= w; return w;
     }
+    void Trigger() { if (av) av->Trigger(); else host.Trigger(); }
+    bool IsActive() const { return av ? av->Active() : host.Active(); }
+    void RenderBlock(float* out, int n) { if (av) av->Render(out, n); else host.Render(out, n); }
   };
 
   SlotBase* SlotFor(Tr909Voice v, int anchorCode)
