@@ -25,7 +25,7 @@ public:
   {
     if (state == Playing || state == Fading)   // retrigger: digital restart, analog state continues
     {
-      voice.Retrigger(); state = Playing; tBase = tLast; return;
+      voice.acc = accent; voice.RefreshAccent(); voice.Retrigger(); state = Playing; tBase = tLast; return;   // the accent of the new hit is applied, the analog state continues
     }
     voice.acc = accent; voice.Reset(); yRef = voice.OutputNow(); state = Playing; tBase = nOut / fs; tLast = tBase;
     dec.Restart(tBase); dec.Push(tBase - 5e-5, yRef); dec.Push(tBase - 2.5e-5, yRef); dec.Push(tBase, yRef); tLast = tBase;

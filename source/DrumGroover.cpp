@@ -4272,6 +4272,10 @@ void DrumGroover::TriggerGmNoteVoices(int note, double velocity01, bool accent)
 void DrumGroover::Setup909Pools(double sampleRate)
 {
   dgg::Tr909LiveSynth::Instance().Enable([]() -> std::unique_ptr<dgg::Tr909LiveSource> { return std::unique_ptr<dgg::Tr909LiveSource>(new dgg::Tr909FullModelRunner()); });   // the live first hit of a cache miss (idempotent)
+  dgg::Tr909LiveSynth::Instance().Prebuild(static_cast<int>(std::lround(sampleRate)));   // tables of the PCM voices of the live source: the first live hit builds nothing on the audio thread
+  // Experimental: live sources of the PCM voices (hi-hats, cymbals) instead of the cache; only with the environment variable DGG_PCM_LIVE=1 (default: off, the cache path plays). Built in the background (idempotent).
+  if (const char* live = std::getenv("DGG_PCM_LIVE")) if (live[0] == '1')
+    dgg::Tr909LiveBank::Instance().BuildAsync([]() -> std::unique_ptr<dgg::Tr909LiveSource> { return std::unique_ptr<dgg::Tr909LiveSource>(new dgg::Tr909FullModelRunner()); }, static_cast<int>(std::lround(sampleRate)));
   for (int i = 0; i < dgg::kNumInstruments; ++i)
   {
     dgg::Tr909Voice v;

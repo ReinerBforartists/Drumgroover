@@ -117,6 +117,10 @@ public:
                                        : req.voice == Tr909Voice::Mt ? Tr909LaneRenderMT(a, seeds, n, req.seconds, fs, out, &BakeAborted, pot)
                                                                      : Tr909LaneRenderHT(a, seeds, n, req.seconds, fs, out, &BakeAborted, pot);
   }
+  void Prebuild(int sampleRateHz) override   // the slots of the PCM voices (hi-hats, crash, ride) with their tables, so that the first live hit builds nothing on the audio thread; call from a non-audio thread
+  {
+    for (const Tr909Voice v : { Tr909Voice::Hh, Tr909Voice::Ho, Tr909Voice::Cr, Tr909Voice::Ri }) if (SlotBase* s = SlotFor(v, 0)) s->Prebuild(v, sampleRateHz);
+  }
   bool Warm(Tr909Voice v, int accentCode, Tr909NoisePath np, uint64_t params = 0) override
   {
     Tr909AccentRun runs[2]; const int n = Tr909AccentRuns(v, accentCode, runs);
@@ -158,6 +162,7 @@ private:
     virtual void Warm(Tr909Voice v, uint64_t params, bool fast20) = 0;
     virtual bool Begin(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, int accentCode) = 0;
     virtual int Pull(float* out, int n) = 0;
+    virtual void Prebuild(Tr909Voice, int) {}   // builds what the first hit would build (tables of the model at the sample rate), without starting a hit
   };
 
   // One slot owns its PotSet (assembled on the thread of the runner, published to the engines as plain pointers; replaced only when the pot state changes, never modified while an engine renders).
@@ -248,6 +253,7 @@ private:
       return !out.empty();
     }
     void Warm(Tr909Voice, uint64_t, bool) override {}
+    void Prebuild(Tr909Voice v, int fs) override { Prepare(v, 0, fs, 127); }
     bool Begin(Tr909Voice v, uint64_t params, bool, uint64_t, double seconds, int fs, int accentCode) override { Prepare(v, params, fs, accentCode); host.Trigger(); want_ = static_cast<long>(seconds * fs); return true; }
     int Pull(float* out, int n) override
     {

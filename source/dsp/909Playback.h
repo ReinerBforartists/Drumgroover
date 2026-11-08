@@ -117,9 +117,23 @@ public:
   ~Tr909CachedVoice() override { EndHit(); }
   void Trigger(double velocity01) override
   {
+    std::vector<float> carry; if (mBankSrc && mPos < mLiveBuf.size()) carry.assign(mLiveBuf.begin() + static_cast<std::ptrdiff_t>(mPos), mLiveBuf.end());   // samples this voice had computed but not played: a retrigger of the same voice keeps them
     EndHit();
     Tr909SetKey k; k.voice = mVoice; k.params = Params(); k.noise = mNoise; k.sampleRateHz = static_cast<int>(std::lround(mSampleRate));
     k.accentCode = Tr909CodeForVelocity(mVoice, velocity01);
+    if (Tr909IsPcmVoice(mVoice))   // hi-hats, crash, ride: computed live by a source of the bank, no cache (falls back to the cache path while the bank is not ready or all its sources are busy)
+    {
+      mRate = std::clamp(pitchRatio * basePitch, 0.25, 4.0); mPos = 0; mFrac = 0.0;
+      const void* prev = nullptr;
+      if (Tr909LiveSource* s = Tr909LiveBank::Instance().Acquire(mVoice, this, &prev))
+      {
+        mLiveBuf.clear(); mLiveDone = false;
+        if (prev) static_cast<Tr909CachedVoice*>(const_cast<void*>(prev))->HandOverTo(*this);   // the hit that ran on the source ends; what it had computed and not played continues here
+        else mLiveBuf.assign(carry.begin(), carry.end());
+        if (s->Start(k.voice, k.accentCode, k.noise, 1, k.sampleRateHz, Tr909HitSeconds(mVoice), k.params)) { mBankSrc = s; mLiveOn = true; mLiveBuf.reserve(static_cast<size_t>(mSampleRate * (Tr909HitSeconds(mVoice) + 0.05))); return; }
+        Tr909LiveBank::Instance().Release(mVoice, s, this); mLiveBuf.clear();
+      }
+    }
     // Only the factory pot state (params 0: every circuit pot at its nominal position) lives in the cache. A pot state set with a knob never does: its first hit is computed live, the following hits play the
     // temporary sample of that pot state (in memory, one per voice) or are computed live again (another velocity than the temporary sample, or the sample is not ready yet).
     const bool cacheState = k.params == 0 && !Tr909KnobEditing().load(std::memory_order_relaxed);
@@ -150,9 +164,10 @@ public:
       const size_t need = mPos + static_cast<size_t>(nFrames * std::max(1.0, mRate)) + 8;
       while (!mLiveDone && mLiveBuf.size() < need)
       {
-        float tmp[256]; const int g = Tr909LiveSynth::Instance().Pull(this, tmp, 256);
+        const int chunk = mBankSrc ? 64 : 256;   // a bank source is pulled in small chunks: the first block of a hit computes no more than it needs
+        float tmp[256]; const int g = mBankSrc ? mBankSrc->Pull(tmp, chunk) : Tr909LiveSynth::Instance().Pull(this, tmp, chunk);
         mLiveBuf.insert(mLiveBuf.end(), tmp, tmp + g);
-        if (g < 256) mLiveDone = true;
+        if (g < chunk) mLiveDone = true;
       }
       b = mLiveBuf.data(); n = mLiveBuf.size(); complete = mLiveDone;
     }
@@ -217,7 +232,14 @@ public:
   double basePitch = 1.0;    // fixed transposition of the instrument (the floor toms are the low tom pitched down, 909Kit.h); the Pitch knob acts on top of it
 private:
   Tr909Voice mVoice; Tr909NoisePath mNoise = Tr909NoisePath::Reference5us;
-  void EndHit() { mBuf.reset(); if (mLiveOn) { Tr909LiveSynth::Instance().Release(this); mLiveOn = false; } }
+  void EndHit() { mBuf.reset(); if (mBankSrc) { Tr909LiveBank::Instance().Release(mVoice, mBankSrc, this); mBankSrc = nullptr; mLiveOn = false; } else if (mLiveOn) { Tr909LiveSynth::Instance().Release(this); mLiveOn = false; } }
+  // Another voice takes over the bank source this hit runs on: it continues with the samples this hit had computed and not played yet; this hit ends.
+  void HandOverTo(Tr909CachedVoice& next)
+  {
+    if (mPos < mLiveBuf.size()) next.mLiveBuf.assign(mLiveBuf.begin() + static_cast<std::ptrdiff_t>(mPos), mLiveBuf.end());
+    mBankSrc = nullptr; mLiveOn = false; mLiveBuf.clear(); mPos = 0; mFrac = 0.0;
+  }
+  Tr909LiveSource* mBankSrc = nullptr;   // the source of the live bank this hit runs on (PCM voices)
   std::shared_ptr<const std::vector<float>> mBuf; std::vector<float> mLiveBuf; bool mLiveOn = false, mLiveDone = false; size_t mPos = 0; unsigned mMisses = 0;
   double mFrac = 0.0, mRate = 1.0;
 };

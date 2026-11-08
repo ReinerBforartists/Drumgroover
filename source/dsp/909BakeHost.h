@@ -45,6 +45,8 @@ public:
   // Writes the next samples of the running hit; fewer than n only at its end.
   virtual int Pull(float* out, int n) = 0;
   virtual bool Active() const = 0;
+  // Builds the tables a first hit of the PCM voices would build (default: nothing); never on the audio thread.
+  virtual void Prebuild(int sampleRateHz) { (void)sampleRateHz; }
 };
 
 enum class Tr909BakeResult { Ok, AccentNotValidated, RunFailed };
