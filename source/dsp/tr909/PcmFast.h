@@ -19,9 +19,9 @@
 
 namespace dgg { namespace pcmfast {
 
-constexpr double kSettlePeriod = 0.1; constexpr int kSettlePeriods = 300;   // idle settling: PCM period in seconds and number of periods
+constexpr double kSettlePeriod = 0.1; constexpr int kSettlePeriods = 300, kStagePeriods = 60, kRampPeriods = 100; constexpr double kStageLn = 0.4;   // idle settling: PCM period in seconds and number of periods
 constexpr double kChordMaxCorr = 0.2;   // volts: above this correction the next iteration is a full Newton iteration
-constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kTailRel = 0.0, kEnvDecay = 0.975, kAcAlpha = 0.0031, kAcEndLevel = 2e-4; constexpr int kAcEndPeriods = 400;   // volts on the port voltages; the correction is applied before the test, so the error left is of the order of the square
+constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kTailRel = 0.0, kEnvDecay = 0.975, kAcAlpha = 0.0031, kAcEndLevel = 2e-4, kAcEndLevelHat = 2e-7; constexpr int kAcEndPeriods = 400;   // volts on the port voltages; the correction is applied before the test, so the error left is of the order of the square
 
 // Gummel-Poon static currents of one BJT in node orientation: ic = s*cc (leaving the collector node into the device), ib = s*cb, and the 2x2 Jacobian wrt (vbe, vbc)
 struct BjtOut { double ic, ib, d[2][2]; };
@@ -150,7 +150,7 @@ template <class M> struct Voice
   int period = 0, stepIdx = 0, layout = 0; uint32_t bitsNow = 0, bitsPrev = 0;   // stepIdx counts within the layout of the current period
   double acLow = 0.0, acEnv = 0.0, acPeak = 0.0; long quietPeriods = 0; bool finished = false;   // audio end: 20 Hz high-passed output envelope below acEndLevel for acEndPeriods periods after its peak
   double lastOut = 0.0, lastH = 0.0, outDc = 0.0, env = 0.0, peak = 1e-12;   // last step length, DC output, level envelope and its maximum (layout choice)
-  long periodsByLayout[4] = {0, 0, 0, 0}; double tailRel = kTailRel, newtonTol = kNewtonTol; int noSolve = 0;   // noSolve: timing probe only (no nonlinear solve); tailRel: switch to the cheaper layout below this fraction of the loudest envelope
+  long periodsByLayout[4] = {0, 0, 0, 0}; double tailRel = kTailRel, newtonTol = kNewtonTol, acEndLevel = kAcEndLevel; int noSolve = 0;   // noSolve: timing probe only (no nonlinear solve); tailRel: switch to the cheaper layout below this fraction of the loudest envelope
   double prof[6] = {0, 0, 0, 0, 0, 0};
   PcmSteps<M> st;   // step tables of the PCM period of the hit (built from the nominal period unless SetPeriod() was called)
   void SetPeriod(double period) { st.Build(period); }
@@ -160,7 +160,7 @@ template <class M> struct Voice
   int freezeAH = -1;   // period whose address bits are held (default: the last one)
   int freezeA = -1;   // diagnosis only: from this period on the address bits (6..11) are at their final value
   int freezeP = -1;   // diagnosis only: from the period after freezeP on, the data bits (0..5) stay at their value in period freezeP
-  long newtonIts = 0, stepsDone = 0; long itsByStep[8] = {0,0,0,0,0,0,0,0}, nByStep[8] = {0,0,0,0,0,0,0,0}, itHist[12] = {0,0,0,0,0,0,0,0,0,0,0,0};
+  long newtonIts = 0, newtonFallbacks = 0, stepsDone = 0; long itsByStep[8] = {0,0,0,0,0,0,0,0}, nByStep[8] = {0,0,0,0,0,0,0,0}, itHist[12] = {0,0,0,0,0,0,0,0,0,0,0,0};
 
   void RefreshAccent()
   {
@@ -169,16 +169,17 @@ template <class M> struct Voice
     for (int i = 0; i < NP; ++i) pd1Eff[i] = M::kPD1[i] + acc * M::kPDuc[IACC * NP + i];
     accOut = M::kDo1 + acc * M::kDou[IACC];
   }
+  void LoadDc()   // initial state of the hit: DC solution at the accent, interpolated linearly in the accent grid
+  {
+    int g = 0; while (g < M::kAccGrid - 2 && acc >= M::kAccV[g + 1]) ++g;
+    double t = (acc - M::kAccV[g]) / (M::kAccV[g + 1] - M::kAccV[g]); t = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
+    for (int i = 0; i < R; ++i) z[i] = (1.0 - t) * M::kDcZ[g * R + i] + t * M::kDcZ[(g + 1) * R + i];
+    for (int i = 0; i < NP; ++i) p[i] = (1.0 - t) * M::kDcP[g * NP + i] + t * M::kDcP[(g + 1) * NP + i];
+    for (int k = 0; k < NB; ++k) vbcFix[k] = (1.0 - t) * M::kDcVbc[g * NB + k] + t * M::kDcVbc[(g + 1) * NB + k];
+  }
   void Reset()
   {
-    RefreshAccent();
-    {   // initial state of the hit: DC solution at the accent, interpolated linearly in the accent grid
-      int g = 0; while (g < M::kAccGrid - 2 && acc >= M::kAccV[g + 1]) ++g;
-      double t = (acc - M::kAccV[g]) / (M::kAccV[g + 1] - M::kAccV[g]); t = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
-      for (int i = 0; i < R; ++i) z[i] = (1.0 - t) * M::kDcZ[g * R + i] + t * M::kDcZ[(g + 1) * R + i];
-      for (int i = 0; i < NP; ++i) p[i] = (1.0 - t) * M::kDcP[g * NP + i] + t * M::kDcP[(g + 1) * NP + i];
-      for (int k = 0; k < NB; ++k) vbcFix[k] = (1.0 - t) * M::kDcVbc[g * NB + k] + t * M::kDcVbc[(g + 1) * NB + k];
-    }
+    RefreshAccent(); LoadDc();
     for (int k = 0; k < NB; ++k)
     {
       const double* q = &M::kBjt[9 * k]; for (int i = 0; i < 9; ++i) bp[k][i] = q[i];
@@ -194,16 +195,40 @@ template <class M> struct Voice
       }
     for (int i = 0; i < NU; ++i) u0[i] = M::kU0[i];
     bitsPrev = 0; for (int i = 0; i < NBITS; ++i) if (M::kU0[i] > 0.5 * M::kVhigh) bitsPrev |= (1u << i);
-    if constexpr (NR > 0) { bool moved = false; for (int m = 0; m < NR; ++m) if (std::fabs(resG[m] - M::kResG0[m]) > 1e-6 * M::kResG0[m]) moved = true; if (moved) { for (int k = 0; k < NF; ++k) f0[k] = 0.0; SettleIdle(); } }
+    if constexpr (NR > 0) { bool moved = false; for (int m = 0; m < NR; ++m) if (std::fabs(resG[m] - M::kResG0[m]) > 1e-6 * M::kResG0[m]) moved = true; if (moved) { SettleResistors(); } }
     EvalF(p, f0, nullptr); lastOut = OutputNow(); period = 0; stepIdx = 0; layout = 0; newtonIts = 0; stepsDone = 0; outDc = OutputNow(); env = 0.0; peak = 1e-12; acLow = outDc; acEnv = 0.0; acPeak = 0.0; quietPeriods = 0; finished = false;
     for (int i = 0; i < 4; ++i) periodsByLayout[i] = 0;
   }
   // Idle state for pot resistors away from their nominal values (the DC tables are for the nominal ones): the idle circuit (bits at their initial values, no trigger) runs
   // with a long PCM period (long steps, constant bits) until the slow nodes have settled; the step tables of the hit are restored afterwards.
-  void SettleIdle()
+  // The pot resistors move from their nominal values to the target in geometric stages (a jump of the conductance can make the Newton iteration of the idle steps diverge); the last stage settles completely.
+  void SettleResistors()
   {
-    const PcmSteps<M> saved = st; st.Build(kSettlePeriod); RefreshAccent(); idleMode = true;
-    for (int i = 0; i < kSettlePeriods * M::kLayoutN[0]; ++i) Step();
+    if constexpr (NR > 0)
+    {
+      double tgt[NR]; double lnMax = 0.0, zNom = 1.0;
+      for (int m = 0; m < NR; ++m) { tgt[m] = resG[m]; lnMax = std::max(lnMax, std::fabs(std::log(tgt[m] / M::kResG0[m]))); }
+      for (int i = 0; i < R; ++i) zNom = std::max(zNom, std::fabs(z[i]));
+      static const double stageScale[4] = {1.0, 1.7, 2.9, 5.0};
+      for (int attempt = 0; attempt < 4; ++attempt)   // the Newton iteration of the idle steps can diverge at isolated resistor values: a different path of stages is tried then
+      {
+        if (attempt > 0) LoadDc();
+        const int stages = std::max(1, static_cast<int>(std::ceil(lnMax / (kStageLn / stageScale[attempt])))); bool healthy = true;
+        for (int s = 1; s <= stages; ++s)
+        {
+          for (int m = 0; m < NR; ++m) resG[m] = M::kResG0[m] * std::pow(tgt[m] / M::kResG0[m], static_cast<double>(s) / stages);
+          EvalF(p, f0, nullptr); SettleIdle(s == stages ? kSettlePeriods : kStagePeriods);
+        }
+        for (int i = 0; i < R; ++i) if (!(std::fabs(z[i]) < 10.0 * zNom)) healthy = false;
+        if (healthy) break;
+      }
+    }
+  }
+  void SettleIdle(int periods = kSettlePeriods)
+  {
+    const PcmSteps<M> saved = st; idleMode = true;
+    const double ramp[3] = {kSettlePeriod * 0.01, kSettlePeriod * 0.1, kSettlePeriod}; const int count[3] = {kRampPeriods, kRampPeriods, periods};   // short steps first (the Newton iteration starts from the previous state), then the long ones
+    for (int r = 0; r < 3; ++r) { st.Build(ramp[r]); RefreshAccent(); for (int i = 0; i < count[r] * M::kLayoutN[0]; ++i) Step(); }
     idleMode = false; st = saved; RefreshAccent();
   }
   // restart of the PCM sequence while the analog state continues (the digital counters are reset, the capacitors keep their charge)
@@ -292,7 +317,11 @@ template <class M> struct Voice
     if (!noSolve)
     {
     double J[NP][NP]; int piv[NP]; double jf[NB][4]; bool luOk = false; double lastMx = 0.0;
-    for (int it = 0; it < 40; ++it)
+    double pStart[NP]; for (int i = 0; i < NP; ++i) pStart[i] = p[i];
+    for (int attempt = 0; attempt < 2 && !fCurrent; ++attempt)   // second attempt after a failed Newton iteration: restart from the ports of the step start with damped corrections and more iterations
+    {
+    if (attempt == 1) { for (int i = 0; i < NP; ++i) p[i] = pStart[i]; luOk = false; lastMx = 0.0; ++newtonFallbacks; }
+    for (int it = 0; it < (attempt ? 120 : 40); ++it)
     {
       double F[NP];
       if (it == 0 || !luOk || lastMx > kChordMaxCorr)   // full Newton iteration (also while the correction is large: the Jacobian of the first iteration does not hold for a junction that moved far): currents, block Jacobians, factorization
@@ -327,7 +356,7 @@ template <class M> struct Voice
       LuSolve<NP>(J, piv, F);
       double mx = 0.0; for (int i = 0; i < NP; ++i) mx = std::fmax(mx, std::fabs(F[i]));
       lastMx = mx;
-      const double sc = mx > 0.5 ? 0.5 / mx : 1.0;
+      const double sc = (mx > 0.5 ? 0.5 / mx : 1.0) * (attempt ? 0.3 : 1.0);
       for (int i = 0; i < NP; ++i) F[i] *= sc;
       bool limited = false;   // junction voltage limiting (SPICE pnjlim): a forward step of a junction beyond its critical voltage grows only logarithmically, so a junction does not run onto the exponential branch
       for (int k = 0; k < NB; ++k)
@@ -366,6 +395,7 @@ template <class M> struct Voice
       }
     }
     }
+    }
     PF_LAP(2);
     if (!fCurrent) EvalF(p, f1, nullptr);
     { long c = newtonIts - itsBefore; itsByStep[stepIdx] += c; ++nByStep[stepIdx]; ++itHist[c < 11 ? c : 11]; }
@@ -397,7 +427,7 @@ template <class M> struct Voice
       stepIdx = 0; ++period;
       const double dev = std::fabs(out - outDc); env = dev > env * kEnvDecay ? dev : env * kEnvDecay; if (env > peak) peak = env;
       acLow += kAcAlpha * (out - acLow); const double ac = std::fabs(out - acLow); acEnv = ac > acEnv * kEnvDecay ? ac : acEnv * kEnvDecay; if (acEnv > acPeak) acPeak = acEnv;
-      if (acPeak > 0.0 && acEnv < kAcEndLevel && period > M::kPeriods / 2) { if (++quietPeriods >= kAcEndPeriods) finished = true; } else quietPeriods = 0;
+      if (acPeak > 0.0 && acEnv < acEndLevel && period > M::kPeriods / 2) { if (++quietPeriods >= kAcEndPeriods) finished = true; } else quietPeriods = 0;
     }
     return out;
   }

@@ -233,7 +233,7 @@ private:
         const double g21 = v == Tr909Voice::Hh ? 1.0 / (100e3 * x) : 1.0 / (100e3 * xn), g23 = v == Tr909Voice::Ho ? 1.0 / (1e6 * std::pow(x, 2.74)) : 1.0 / (1e6 * std::pow(xn, 2.74));
         host.voice.SetResG(0, g21); host.voice.SetResG(1, g23);
       }
-      host.SetAccent(Tr909AccentVolts(accentCode)); host.SetLevel(p[0]);
+      host.SetHatMode(hat); host.SetAccent(Tr909AccentVolts(accentCode)); host.SetLevel(p[0]);
     }
     const Tr909LanePot* LanePotFor(Tr909Voice, uint64_t, Tr909LanePot&) override { return nullptr; }
     bool Render(Tr909Voice v, uint64_t params, bool, uint64_t, double seconds, int fs, std::vector<float>& out, int accentCode) override

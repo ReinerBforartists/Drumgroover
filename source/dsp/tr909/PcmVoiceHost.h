@@ -17,6 +17,8 @@ public:
   // PCM clock period of the hits (seconds; the nominal M::kPeriod scaled by the Tune pot): not while a hit plays.
   void SetPeriod(double period) { voice.SetPeriod(period); RecomputeCum(); }
   void SetAccent(double a) { accent = a; }                     // volts at the accent input, applied at the next Trigger
+  // Hi-hat voices: the circuit is simulated down to a much lower level before the voice ends, and no synthetic relaxation of the output offset follows (kRelaxTau was measured on Crash and Ride only).
+  void SetHatMode(bool hat) { voice.acEndLevel = hat ? kAcEndLevelHat : kAcEndLevel; relaxTau = hat ? 0.0 : kRelaxTau; }
   void SetLevel(double lv) { level = lv < 0.001 ? 0.001 : (lv > 1.0 ? 1.0 : lv); }
   bool Active() const { return state != Idle; }
   void Trigger()
@@ -60,13 +62,13 @@ private:
     }
     else   // after the hit: the remaining output offset relaxes with the slow time constant of the circuit (0.22 s, measured for CRASH and RIDE); then idle nodes until the filter has flushed
     {
-      tLast += kFadeStep; tFade += kFadeStep; const double off = (yEnd - yRef) * std::exp(-tFade / kRelaxTau);
+      tLast += kFadeStep; tFade += kFadeStep; const double off = relaxTau > 0.0 ? (yEnd - yRef) * std::exp(-tFade / relaxTau) : 0.0;
       dec.Push(tLast, yRef + off);
       if (std::fabs(off) < kOffsetFloor && ++flushNodes > 200) state = Idle;
     }
   }
   static constexpr double kFadeStep = 5e-4, kRelaxTau = 0.22, kOffsetFloor = 2e-6;
-  HostDecimator dec; double fs = 48000.0, cum[8] = {0}, accent = 4.064, level = 0.5, yRef = 0.0, yEnd = 0.0, tBase = 0.0, tLast = 0.0; long nOut = 0; int flushNodes = 0; double tFade = 0.0; State state = Idle;
+  HostDecimator dec; double relaxTau = kRelaxTau, fs = 48000.0, cum[8] = {0}, accent = 4.064, level = 0.5, yRef = 0.0, yEnd = 0.0, tBase = 0.0, tLast = 0.0; long nOut = 0; int flushNodes = 0; double tFade = 0.0; State state = Idle;
 };
 
 }}  // namespace dgg::pcmfast
