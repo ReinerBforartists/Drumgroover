@@ -800,7 +800,7 @@ void SetTr909CustomParam(dgg::Tr909CachedVoice& v, const std::string& p, double 
   if (p == "pitchRatio") v.pitchRatio = val;
 }
 // Editing state of the 909 circuit pots: while a knob is being moved, a hit that finds no baked set triggers the one preview sample of its voice (Enqueue909Preview); the release bakes the cache sets (HandleCommitVoiceParam).
-std::atomic<bool> gTr909Dragging{false};
+std::atomic<bool>& gTr909Dragging = dgg::Tr909KnobEditing();   // shared with Tr909CachedVoice::Trigger: while true, hits play the temporary sample, not a cache set
 std::atomic<int64_t> gTr909EditMs{0};
 int64_t NowMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 void Mark909Edit() { gTr909EditMs.store(NowMs(), std::memory_order_relaxed); gTr909Dragging.store(true, std::memory_order_relaxed); }
@@ -3032,6 +3032,7 @@ void DrumGroover::HandleCommitVoiceParam(const nlohmann::json& payload)
     {
       if (pool.Voices().empty()) return;
       const dgg::Tr909CachedVoice& v0 = pool.Voices()[0];
+      if (v0.Params() != 0) return;   // a pot state set with a knob is not baked into the cache: its temporary sample (memory) stays and serves the following hits
       Release909Preview(v0.voice());
       for (const dgg::Tr909SetKey& k : dgg::Tr909KeysForParams(v0.voice(), v0.Params(), static_cast<int>(std::lround(GetSampleRate()))))
         Enqueue909Set(k, mCacheVariantCount.load(std::memory_order_relaxed), /*loadIfComplete=*/true);
@@ -3552,7 +3553,7 @@ void Enqueue909Preview(const dgg::Tr909SetKey& key)
       std::lock_guard<std::mutex> lock(gPreview909Mutex);
       if (gPreview909Has[v] && gPreview909Params[v] == key.params)   // not replaced by a newer pot state meanwhile
       {
-        if (!gPreview909Released[v]) SaveVariantToDisk(VariantFilePath(Preview909BaseName(key.voice), 1), tap);
+        // the temporary sample of a knob turn lives in memory only: nothing of a knob drag is written to the cache folder
         dgg::Tr909PreviewSample::Instance().Set(key.voice, key.params, std::move(tap));
       }
     }
@@ -3968,7 +3969,7 @@ void DrumGroover::DrainCacheMisses()
   while (dgg::Tr909MissQueue::Instance().Pop(miss909))
   {
     DGG_Log("CacheMiss909: " + dgg::Tr909SetBaseName(miss909));
-    if (Tr909DragActive()) Enqueue909Preview(miss909);   // a knob is being moved: the one preview sample of the voice, replaced by the next pot state
+    if (Tr909DragActive() || miss909.params != 0) Enqueue909Preview(miss909);   // a knob is being moved or the pot state is not the factory state: the one temporary sample of the voice (memory only), replaced by the next pot state
     else Enqueue909Set(miss909, mCacheVariantCount.load(std::memory_order_relaxed), /*loadIfComplete=*/true);
   }
   if (mParamDragging.load(std::memory_order_relaxed))

@@ -103,6 +103,9 @@ private:
   std::mutex mMutex; Slot mSlot[static_cast<int>(Tr909Voice::kCount)];
 };
 
+// True while a circuit knob of a 909 voice is being moved (set by the plugin on every knob edit, cleared on the release): hits then play the temporary sample of the current pot state, never a cache set.
+inline std::atomic<bool>& Tr909KnobEditing() { static std::atomic<bool> f{false}; return f; }
+
 class Tr909CachedVoice : public DrumVoice
 {
 public:
@@ -117,13 +120,16 @@ public:
     EndHit();
     Tr909SetKey k; k.voice = mVoice; k.params = Params(); k.noise = mNoise; k.sampleRateHz = static_cast<int>(std::lround(mSampleRate));
     k.accentCode = Tr909CodeForVelocity(mVoice, velocity01);
-    mBuf = Tr909VariantPool::Instance().GetRandom(k); mPos = 0; mFrac = 0.0;
+    // Only the factory pot state (params 0: every circuit pot at its nominal position) lives in the cache. A pot state set with a knob never does: its first hit is computed live, the following hits play the
+    // temporary sample of that pot state (in memory, one per voice) or are computed live again (another velocity than the temporary sample, or the sample is not ready yet).
+    const bool cacheState = k.params == 0 && !Tr909KnobEditing().load(std::memory_order_relaxed);
+    mBuf = cacheState ? Tr909VariantPool::Instance().GetRandom(k) : nullptr; mPos = 0; mFrac = 0.0;
     mRate = std::clamp(pitchRatio * basePitch, 0.25, 4.0);
     if (!mBuf)
     {
-      // No baked set: the miss is reported so that the set gets baked. The hit plays the preview sample of its pot state when there is one, else it is computed live and played while it is computed (909LiveHost.h).
-      ++mMisses; Tr909MissQueue::Instance().Push(k);
+      // No baked set: cache state: the miss is reported so that the set gets baked; edited state: so that the temporary sample gets baked (once, when none of this pot state exists).
       mBuf = Tr909PreviewSample::Instance().Get(mVoice, k.params);   // (the PCM voices have no noise: a preview sample is the hit)
+      if (cacheState || !mBuf) { ++mMisses; Tr909MissQueue::Instance().Push(k); }
     }
     if (!mBuf)
     {

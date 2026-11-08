@@ -35,10 +35,18 @@
 #include "tr909/models/hc_a75.h"
 #include "tr909/models/hc_a100.h"
 #include "tr909/models/hc_a127.h"
+#if __has_include("tr909/models_rom_test/crash_pcm.h")
+// LOCAL TEST ONLY: hi-hat, crash and ride models with the original ROM data (folder is gitignored, never shipped; delete the folder to go back to the replacement samples)
+#include "tr909/models_rom_test/crash_pcm.h"
+#include "tr909/models_rom_test/ride_pcm.h"
+#include "tr909/models_rom_test/hh_pcm.h"
+#include "tr909/models_rom_test/hho_pcm.h"
+#else
 #include "tr909/models/crash_pcm.h"
 #include "tr909/models/ride_pcm.h"
 #include "tr909/models/hh_pcm.h"
 #include "tr909/models/hho_pcm.h"
+#endif
 #include "tr909/PcmVoiceHost.h"
 #include "909PcmTune.h"
 #include "tr909/models/lt_a25_pot.h"
@@ -217,7 +225,7 @@ private:
       double p[8]; Tr909UnpackPots(v, params, p);
       // Crash / Ride: p[1] is the Tune pot (the PCM clock of the voice). Hats: p[1] is the Decay pot, a circuit resistor of the model (VR21 for the Closed Hat, VR23 for the Open Hat), the PCM clock is fixed.
       const bool hat = pcmfast::ResCount<M>::value > 0;
-      const double period = hat ? M::kPeriod : M::kPeriod / Tr909PcmClockRatio(p[1]);
+      const double period = hat ? M::kPeriod : M::kPeriod / Tr909PcmClockRatio(p[1], v == Tr909Voice::Ri);
       if (hostFs != fs || period != curPeriod) { host.Init(static_cast<double>(fs)); hostFs = fs; host.SetPeriod(period); curPeriod = period; }
       if constexpr (pcmfast::ResCount<M>::value > 0)
       {
