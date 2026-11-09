@@ -27,6 +27,7 @@ struct HitTuning
   double ytol = 2e-3;        // tolerance of the error estimate per step (curvature of the device currents)
   double yfloor = 0.4;       // lower clamp of the envelope dependent tolerance factor
   double ytailT = 0.0, ytailMul = 1.0;     // looser tolerance from ytailT seconds after the trigger
+  double ytail3T = 1e9, ytail3Mul = 1.0;   // further factor on the tolerance from ytail3T seconds after the trigger
   double ytail2T = 0.0, ytail2Mul = 1.0;   // milder stage before ytailT
   double dpTol = 0.3;        // limit of the port voltage change per step
   double zohW = 0.2;         // share of zero-order hold in the current interpolation
@@ -48,6 +49,9 @@ struct HitTuning
   double linYtol = 1e-3, linTailMul = 2.0, replayThr = 0.3, replayLater = 12.0; bool replayRefine = false, replayFloat = false;
   double linT2T = 0.0, linT2Mul = 1.0;   // milder tolerance stage of the noise-free run between linT2T and linNoiseT
   int jMax = 10;             // largest step 2^jMax x 0.156 us
+  bool squareProps = false;   // model build: propagators of doubled steps by squaring (FullFast2::squareProps)
+  int replayKnot = 5;        // spacing of the noise knots of the linear response in us (5: the noise source itself; 10 / 20: the coarse source of HitNoise::AtCoarse)
+  double replayEq = 0.0;     // equaliser of the coarse source
   bool detReuse = false;     // linear-response mode: the noise-free run of the last hit is reused when model, pots, tuning and length are the same (the run does not depend on the noise)   // tolerance of the noise-free run before linNoiseT, factor on it after linNoiseT
   double preRoll = 0.0;      // seconds of noise before the trigger (a multiple of the noise knot spacing): the noise-driven states then belong to the noise sequence of the hit
 };
@@ -63,7 +67,7 @@ inline HitTuning HitTuningFor(Tr909Voice v, bool fast20)
     case Tr909Voice::Mt: t.ytol = 3e-3; t.yfloor = 0.7; t.ytailT = 0.1; t.ytailMul = 1.6; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Ht: t.ytol = fast20 ? 3e-3 : 1.5e-3; t.yfloor = 0.4; t.ytailT = 0.1; t.ytailMul = 4.0; t.ytail2T = 0.02; t.ytail2Mul = 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Sd: t.ytol = fast20 ? 3e-2 : 9e-4; t.yfloor = 0.7; t.ytailT = fast20 ? 0.2 : 0.3; t.ytailMul = fast20 ? 6.0 : 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
-    case Tr909Voice::Bd: t.ytol = fast20 ? 1e-2 : 8e-3; t.yfloor = fast20 ? 0.7 : 1.0; if (!fast20) { t.noiseOffT = 0.03; t.linNoiseT = 0.03; t.errMode = 2; t.errNodeW = 0.3; t.errT = 0.05; t.ytailT = 0.03; t.ytailMul = 0.25; t.ytail2T = 0.005; t.ytail2Mul = 2.0; t.capThr = 1e-4; t.jGrow = 3; t.fastLinAlg = true; } break;   // BD-K03/K02/K17/K16 (tools 909_BD_OPTIMIERUNGEN.md): 10.6 -> 1.99 M steps in 18 cases, R115 0 violations
+    case Tr909Voice::Bd: t.ytol = fast20 ? 1e-2 : 8e-3; t.yfloor = fast20 ? 0.7 : 1.0; if (!fast20) { t.noiseOffT = 0.03; t.linNoiseT = 0.03; t.errMode = 2; t.errNodeW = 0.3; t.errT = 0.05; t.ytailT = 0.03; t.ytailMul = 0.25; t.ytail2T = 0.005; t.ytail2Mul = 2.0; t.capThr = 1e-4; t.jGrow = 3; t.fastLinAlg = true; t.squareProps = true; t.replayKnot = 10; t.replayEq = 0.2; } break;   // BD-K03/K02/K17/K16 (tools 909_BD_OPTIMIERUNGEN.md): 10.6 -> 1.99 M steps in 18 cases, R115 0 violations
     case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 2e-3; t.yfloor = 0.7; t.zohW = 0.1; t.preRoll = 0.005; t.capThr = 1e-300; t.cmpEvents = true; t.knotPairT = 0.05; t.knotMaxJ = 7; break;   // capThr: a charge device evaluated at a bit-identical port voltage repeats its last result (output bitwise equal, HC 15 % less time)
     default: break;
   }
@@ -87,7 +91,16 @@ public:
   // Constant source at the idle level (no noise) with knots every `stepSeconds`: separates the cost of the knots from the cost of the noise.
   void StartSilent(double stepSeconds) { Start(0, stepSeconds, 0.0); amp_ = 0.0; }
   double step() const { return step_; }
-  void Reserve(size_t n) { smp_.reserve(n); }   // capacity for the knots of a hit: At() then allocates nothing
+  void Reserve(size_t n) { smp_.reserve(n); }
+  // Coarse value at a multiple of f knots (t = i step, i a multiple of f): the source averaged over f knots (trapezoid of the linear interpolation) and compensated by the equaliser (1 + 2 eq, -eq, -eq) over the neighbouring coarse values;
+  // the response of a linear circuit to the coarse source at the spacing f step approximates its response to the source itself in the band below 0.5 / (f step)
+  double AtCoarse(double t, int f, double eq)
+  {
+    const long i = std::lround(t / step_); const int hf = f / 2; Fill(i + f + hf + 2);
+    auto M = [&](long c) { double s = 0.5 * (smp_[c < hf ? 0 : c - hf] + smp_[c + hf]); for (int m = -hf + 1; m <= hf - 1; ++m) s += smp_[c + m < 0 ? 0 : c + m]; return s / f; };
+    const double m0 = M(i), mm = i - f >= 0 ? M(i - f) : m0, mp = M(i + f);
+    return 7.5 + (1.0 + 2.0 * eq) * m0 - eq * (mm + mp);
+  }   // capacity for the knots of a hit: At() then allocates nothing
   void Scale(double s) { amp_ *= s; }   // test harness: scaled noise amplitude (linearity of the response to the noise)
   double At(double t)
   {
@@ -216,6 +229,7 @@ public:
       {
         double tol = tu_.ytol; const double tt = (n_ - preN_) * h0;
         if (tu_.ytailMul != 1.0 && tt >= tu_.ytailT) tol *= tu_.ytailMul; else if (tu_.ytail2Mul != 1.0 && tt >= tu_.ytail2T) tol *= tu_.ytail2Mul;
+        if (tt >= tu_.ytail3T) tol *= tu_.ytail3Mul;
         tol *= FMinF(1.0, FMaxF(tu_.yfloor, gEnv_ / kYenvRef));
 #ifdef FULLFAST2_PROF
         { int arg = 0; m.NodeErrArg(pj_[jj], df, arg); if (std::sqrt(0.8 * tol / e) < 1.0 && (n_ - preN_) * h0 < 0.03) ++errArgHist[arg]; }
@@ -277,11 +291,11 @@ public:
       Advance(); if (t_ <= tRep + 0.001) replay_.Record(t_, m.p);
       ts.push_back(t_); ys.push_back(y_);
     }
-    replay_.thr = tu.replayThr; replay_.laterMul = tu.replayLater; replay_.refine = tu.replayRefine; replay_.single = tu.replayFloat; replay_.Prime(m, pj_[5], tRep);   // Jacobi epochs of the response for this trajectory
+    replay_.thr = tu.replayThr; replay_.laterMul = tu.replayLater; replay_.refine = tu.replayRefine; replay_.single = tu.replayFloat; replay_.coarse = tu.replayKnot >= 10 ? tu.replayKnot / 5 : 1; replay_.eq = tu.replayEq; replay_.Prime(m, pj_[tu.replayKnot >= 20 ? 7 : (tu.replayKnot >= 10 ? 6 : 5)], tRep);   // Jacobi epochs of the response for this trajectory
     if (tu.detReuse) { det_.valid = true; det_.potVer = potVer_; det_.seconds = seconds; det_.sig = TuningSig(tu); det_.ts = ts; det_.ys = ys; }
     return true;
   }
-  static double TuningSig(const HitTuning& t) { return t.ytol * 1.0 + t.yfloor * 3.0 + t.ytailT * 5.0 + t.ytailMul * 7.0 + t.ytail2T * 11.0 + t.ytail2Mul * 13.0 + t.dpTol * 17.0 + t.zohW * 19.0 + t.jGrow * 23.0 + t.capThr * 29.0 + t.chordFirst * 31.0 + t.linNoiseT * 37.0 + t.linYtol * 41.0 + t.linTailMul * 43.0 + t.linT2T * 53.0 + t.linT2Mul * 59.0 + t.jMax * 61.0 + t.fastLinAlg * 47.0; }
+  static double TuningSig(const HitTuning& t) { return t.ytol * 1.0 + t.yfloor * 3.0 + t.ytailT * 5.0 + t.ytailMul * 7.0 + t.ytail2T * 11.0 + t.ytail2Mul * 13.0 + t.dpTol * 17.0 + t.zohW * 19.0 + t.jGrow * 23.0 + t.capThr * 29.0 + t.chordFirst * 31.0 + t.linNoiseT * 37.0 + t.linYtol * 41.0 + t.linTailMul * 43.0 + t.linT2T * 53.0 + t.linT2Mul * 59.0 + t.replayKnot * 67.0 + t.replayEq * 71.0 + t.jMax * 61.0 + t.fastLinAlg * 47.0; }
   struct DetCache { bool valid = false; unsigned potVer = 0; double seconds = 0.0, sig = 0.0; std::vector<double> ts, ys; } det_;
   // The response to the noise of `noise` around the noise-free trajectory of the last RunLinDet().
   bool RunLinResponse(const HitTuning& tu, HitNoise* noise, std::vector<double>& tk, std::vector<double>& dyk)
@@ -344,7 +358,7 @@ private:
     if (built_) { auto props = std::move(m_->props); auto half = std::move(m_->halfIdx); m_.reset(new Model()); if (usePot_) m_->pm = pot_; m_->Init(); m_->props = std::move(props); m_->halfIdx = std::move(half); }
     else { m_->Init(); built_ = true; }
     Model& m = *m_;
-    m.dampOn = true; m.dampRatio = 0.01; m.noFallback = true; m.zohW = tu.zohW; m.chordFirst = tu.chordFirst; m.capThr = tu.capThr; m.fastLinAlg = tu.fastLinAlg; m.fastDot = true; m.fastSolve = true;
+    m.squareProps = tu.squareProps; m.dampOn = true; m.dampRatio = 0.01; m.noFallback = true; m.zohW = tu.zohW; m.chordFirst = tu.chordFirst; m.capThr = tu.capThr; m.fastLinAlg = tu.fastLinAlg; m.fastDot = true; m.fastSolve = true;
 #ifdef DGG_HC_ENV_KNOBS   // test harness only: solver settings of the engine phase from the environment
     if (const char* e = std::getenv("PREDW")) m.predW = std::atof(e);
     if (const char* e = std::getenv("CHORDFIRST")) m.chordFirst = std::atof(e);

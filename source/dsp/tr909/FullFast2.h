@@ -238,6 +238,7 @@ template <class M> struct FullFast2
   }
   void UIdle(double* u) const { for (int j = 0; j < NU; ++j) u[j] = M::kU0[j]; }   // inputs at the idle point (nominal accent entry)
   void SetHalf(int pi, int ph) { if ((int)halfIdx.size() <= pi) halfIdx.resize(pi + 1, -1); halfIdx[pi] = ph; }
+  bool squareProps = false; std::vector<double> Esq_; double EsqH_ = 0.0;
   int Prepare(double h)
   {
     for (size_t i = 0; i < props.size(); ++i) if (std::fabs(props[i].h - h) < 1e-15) return (int)i;
@@ -246,7 +247,11 @@ template <class M> struct FullFast2
     for (int i = 0; i < R; ++i) { for (int j = 0; j < R; ++j) N[i * n + j] = pm.A[i * R + j] * h; for (int j = 0; j < NG; ++j) N[i * n + R + j] = pm.Bg[i * NG + j] * h; }
     for (int j = 0; j < NG; ++j) N[(R + j) * n + R + NG + j] = h;
     if (qd) for (int j = 0; j < NG; ++j) N[(R + NG + j) * n + R + 2 * NG + j] = h;
-    const std::vector<double> E = Expm(N, n);
+    // squareProps: the propagator of the doubled step is the square of the previous one (exp(2M) = exp(M)^2 for the augmented matrix): one matrix product instead of a matrix exponential
+    std::vector<double> E;
+    if (squareProps && Esq_.size() == (size_t)n * n && std::fabs(2.0 * EsqH_ - h) < 1e-12 * h) { E.assign((size_t)n * n, 0.0); MatMulN(Esq_.data(), Esq_.data(), E.data(), n, n, n); }
+    else E = Expm(N, n);
+    if (squareProps) { Esq_ = E; EsqH_ = h; }
     P.Phi.assign(R * R, 0.0); P.Ga.assign(R * NU, 0.0); P.Gb.assign(R * NU, 0.0); P.ConeC.assign(R, 0.0); P.GaF.assign(R * NF, 0.0); P.GbF.assign(R * NF, 0.0); P.Zp.assign(NP * NF, 0.0); P.PXz.assign(NP * R, 0.0);
     for (int i = 0; i < R; ++i) for (int j = 0; j < R; ++j) P.Phi[i * R + j] = E[i * n + j];
     std::vector<double> GaA(R * NG), GbA(R * NG);

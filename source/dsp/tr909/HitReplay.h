@@ -27,7 +27,7 @@ public:
   size_t EpochBytes() const { size_t b = 0; for (const Epoch& e : eps_) b += sizeof(Epoch) + (e.LU.capacity() + e.JFA.capacity() + e.capG.capacity()) * 4 + e.ent.capacity() * sizeof(EntF); return b; }
   void Clear(const double* ports0) { tE.clear(); pE.clear(); for (int a = 0; a < NP; ++a) p0[a] = ports0[a]; }
   void Record(double t, const double* p) { tE.push_back(t); pE.insert(pE.end(), p, p + NP); }
-  long refreshes = 0, knots = 0; double thr = 0.3, laterMul = 12.0; bool refine = false, single = false;   // single: the fixed matrices and the state in float (the response is a small deviation; float rounding is far below its accuracy)   // one step of iterative refinement with the full G (no effect on the result at the tested settings)   // G is re-evaluated when a port of the noise-free trajectory moved by thr x its thermal voltage (thr x 0.17 V without one)
+  long refreshes = 0, knots = 0; double thr = 0.3, laterMul = 12.0; int coarse = 1; double eq = 0.0; bool refine = false, single = false;   // single: the fixed matrices and the state in float (the response is a small deviation; float rounding is far below its accuracy)   // one step of iterative refinement with the full G (no effect on the result at the tested settings)   // G is re-evaluated when a port of the noise-free trajectory moved by thr x its thermal voltage (thr x 0.17 V without one)
 
   // Streaming form (no allocation after Prime): Prime() once per model, Start() per hit, Next() per knot; the knot k covers (k h, (k + 1) h]. Run() is the batch form.
   // The Jacobian epochs (refresh points, active sets, factorisations) depend on the noise-free trajectory only: they are built here once (a dry run over the knots up to tEnd) and shared by all hits.
@@ -40,7 +40,7 @@ public:
   {
     nz_ = &nz; tOff_ = tOff; N_ = std::min(static_cast<long>(tEnd / P_->h), epochKnots_); k_ = 0; ep_ = 0; cur_ = nullptr;
     for (int i = 0; i < R; ++i) dz_[i] = 0.0; for (int a = 0; a < NP; ++a) dp_[a] = 0.0; for (int j = 0; j < NF; ++j) dfPrev_[j] = 0.0;
-    nPrev_ = nz.At(tOff) - 7.5; for (int i = 0; i < R; ++i) dzF_[i] = 0.0f; for (int a = 0; a < NP; ++a) dpF_[a] = 0.0f; for (int j = 0; j < NF; ++j) dfPrevF_[j] = 0.0f;
+    nPrev_ = (coarse > 1 ? nz.AtCoarse(tOff, coarse, eq) : nz.At(tOff)) - 7.5; for (int i = 0; i < R; ++i) dzF_[i] = 0.0f; for (int a = 0; a < NP; ++a) dpF_[a] = 0.0f; for (int j = 0; j < NF; ++j) dfPrevF_[j] = 0.0f;
   }
   bool Next(double& tOut, double& dyOut)
   {
@@ -48,7 +48,7 @@ public:
     if (single) return NextF(tOut, dyOut);
     Model& m = *m_; const typename Model::Prop& P = *P_; const double h = P.h; const long k = k_;
     double dzk[R], df0c[NF], dfkc[NF], rhs[NP], dpk[NP], res[NP], dfG[NF], df1[NF], vin[R], vpd[NP], zt[NP];
-    const double d0 = nPrev_, d1 = nz_->At(tOff_ + (k + 1) * h) - 7.5, dd = (d1 - d0) / h; nPrev_ = d1;
+    const double d0 = nPrev_, d1 = (coarse > 1 ? nz_->AtCoarse(tOff_ + (k + 1) * h, coarse, eq) : nz_->At(tOff_ + (k + 1) * h)) - 7.5, dd = (d1 - d0) / h; nPrev_ = d1;
     if (ep_ < eps_.size() && eps_[ep_].start == k) { cur_ = &eps_[ep_]; ++ep_; ++refreshes; }
     const Epoch& E = *cur_;
     for (int i = 0; i < R; ++i) vin[i] = P.Ga[i * NU + 1] * d0 + P.Gb[i * NU + 1] * d1 + (P.Ga[i * NU + 2] + P.Gb[i * NU + 2]) * dd;
@@ -122,7 +122,7 @@ private:
   {
     Model& m = *m_; const typename Model::Prop& P = *P_; const double h = P.h; const long k = k_;
     float dzk[R], df0c[NF], dfkc[NF], rhs[NP], dpk[NP], df1[NF], vin[R], vpd[NP];
-    const double d0 = nPrev_, d1 = nz_->At(tOff_ + (k + 1) * h) - 7.5, dd = (d1 - d0) / h; nPrev_ = d1;
+    const double d0 = nPrev_, d1 = (coarse > 1 ? nz_->AtCoarse(tOff_ + (k + 1) * h, coarse, eq) : nz_->At(tOff_ + (k + 1) * h)) - 7.5, dd = (d1 - d0) / h; nPrev_ = d1;
     if (ep_ < eps_.size() && eps_[ep_].start == k) { cur_ = &eps_[ep_]; ++ep_; ++refreshes; }
     const Epoch& E = *cur_;
     const float f0 = static_cast<float>(d0), f1 = static_cast<float>(d1), fd = static_cast<float>(dd);
