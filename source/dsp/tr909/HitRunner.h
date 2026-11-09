@@ -53,7 +53,7 @@ inline HitTuning HitTuningFor(Tr909Voice v, bool fast20)
     case Tr909Voice::Mt: t.ytol = 3e-3; t.yfloor = 0.7; t.ytailT = 0.1; t.ytailMul = 1.6; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Ht: t.ytol = fast20 ? 3e-3 : 1.5e-3; t.yfloor = 0.4; t.ytailT = 0.1; t.ytailMul = 4.0; t.ytail2T = 0.02; t.ytail2Mul = 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Sd: t.ytol = fast20 ? 3e-2 : 9e-4; t.yfloor = 0.7; t.ytailT = fast20 ? 0.2 : 0.3; t.ytailMul = fast20 ? 6.0 : 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
-    case Tr909Voice::Bd: t.ytol = fast20 ? 1e-2 : 2e-3; t.yfloor = 0.7; break;
+    case Tr909Voice::Bd: t.ytol = fast20 ? 1e-2 : 8e-3; t.yfloor = fast20 ? 0.7 : 1.0; if (!fast20) { t.ytailT = 0.03; t.ytailMul = 100.0; t.capThr = 1e-4; t.jGrow = 3; } break;   // BD-K03/K02/K17/K16 (tools 909_BD_OPTIMIERUNGEN.md): 10.6 -> 1.99 M steps in 18 cases, R115 0 violations
     case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 2e-3; t.yfloor = 0.7; t.zohW = 0.1; t.preRoll = 0.005; t.capThr = 1e-300; t.cmpEvents = true; t.knotPairT = 0.05; t.knotMaxJ = 7; break;   // capThr: a charge device evaluated at a bit-identical port voltage repeats its last result (output bitwise equal, HC 15 % less time)
     default: break;
   }
@@ -256,6 +256,7 @@ private:
     if (const char* e = std::getenv("CHORDFIRST")) m.chordFirst = std::atof(e);
     if (const char* e = std::getenv("ASTOL")) m.asTol = std::atof(e);
     if (std::getenv("EVCACHE")) m.evCache = true;
+    if (std::getenv("KEEPH")) m.keepAcrossH = true;   // BD-K25: the factorisation is kept across step size changes
     if (const char* e = std::getenv("CAPTHR")) m.capThr = std::atof(e);
     if (const char* e = std::getenv("QLC")) { m.QlcEnable(std::atoi(e) != 0); if (const char* g = std::getenv("QLCERR")) m.qlcErr = std::atof(g); }
 #endif

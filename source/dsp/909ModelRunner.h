@@ -104,19 +104,20 @@ public:
     const bool fast20 = req.noise == Tr909NoisePath::Fast20us;
     return slot->Render(req.voice, req.params, fast20, req.noiseSeed, req.seconds, req.sampleRateHz, out, req.anchorCode);
   }
-  // Lane engine for the cache bake (HitLanesApi.h): LT, MT and HT so far (measured and gated per voice, tools handoff R392 / R393 / R394), 5 us reference noise only.
-  int GroupSize(Tr909Voice v) const override { return (v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht) && Tr909LanesAvailable() ? 4 : 1; }
+  // Lane engine for the cache bake (HitLanesApi.h): LT, MT, HT and BD so far (measured and gated per voice, tools handoff R392 / R393 / R394), 5 us reference noise only.
+  int GroupSize(Tr909Voice v) const override { return (v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht || v == Tr909Voice::Bd) && Tr909LanesAvailable() ? 4 : 1; }
   bool RunGroup(const Tr909RunRequest& req, const uint64_t* seeds, int n, std::vector<float>* out) override
   {
     int a = -1;
     for (int i = 0; i < kTr909AnchorCount; ++i) if (kTr909Anchors[i] == req.anchorCode) a = i;
-    if (a < 0 || (req.voice != Tr909Voice::Lt && req.voice != Tr909Voice::Mt && req.voice != Tr909Voice::Ht) || req.noise != Tr909NoisePath::Reference5us || n < 1 || n > GroupSize(req.voice)) return false;
+    if (a < 0 || (req.voice != Tr909Voice::Lt && req.voice != Tr909Voice::Mt && req.voice != Tr909Voice::Ht && req.voice != Tr909Voice::Bd) || req.noise != Tr909NoisePath::Reference5us || n < 1 || n > GroupSize(req.voice)) return false;
     SlotBase* slot = SlotFor(req.voice, req.anchorCode); if (!slot) return false;
     Tr909LanePot lp; const Tr909LanePot* pot = slot->LanePotFor(req.voice, req.params, lp);   // the set stays in the slot of this thread until the next call with other pots
     const double fs = static_cast<double>(req.sampleRateHz);
     return req.voice == Tr909Voice::Lt ? Tr909LaneRenderLT(a, seeds, n, req.seconds, fs, out, &BakeAborted, pot)
                                        : req.voice == Tr909Voice::Mt ? Tr909LaneRenderMT(a, seeds, n, req.seconds, fs, out, &BakeAborted, pot)
-                                                                     : Tr909LaneRenderHT(a, seeds, n, req.seconds, fs, out, &BakeAborted, pot);
+                                                                     : req.voice == Tr909Voice::Ht ? Tr909LaneRenderHT(a, seeds, n, req.seconds, fs, out, &BakeAborted, pot)
+                                                                                                                          : Tr909LaneRenderBD(a, seeds, n, req.seconds, fs, out, &BakeAborted, pot);
   }
   void Prebuild(int sampleRateHz) override   // the slots of the PCM voices (hi-hats, crash, ride) with their tables, so that the first live hit builds nothing on the audio thread; call from a non-audio thread
   {

@@ -444,6 +444,11 @@ template <class M> struct Eng
 
 } // namespace lanes
 
+#ifdef DGG_LANE_REC   // test harness only: records (t, y of the four lanes) of every lockstep step
+struct LaneRec { std::vector<double> t, y[4]; };
+inline LaneRec* g_laneRec = nullptr;
+#endif
+
 // Renders up to four hits of one model at once; the output of lane l is the host-rate output of HitRunner::Render for the seed l (statistically, see above).
 template <class Mdl>
 class HitLaneRunner
@@ -478,6 +483,9 @@ public:
       if (!m.Step(pj_[jj], x0, x1, dx)) return false;
       k += 1LL << jj; const double t = k * kH0; const V yv = m.OutputV(x1, dx);
       double yl[4]; for (int l = 0; l < 4; ++l) { yl[l] = lanes::get(yv, l); if (!(std::fabs(yl[l]) < 1e6)) return false; gEnv[l] = std::fmax(std::fabs(yl[l]), gEnv[l] * std::exp(-h / kYenvTau)); }
+#ifdef DGG_LANE_REC
+      if (g_laneRec) { g_laneRec->t.push_back(t); for (int l = 0; l < 4; ++l) g_laneRec->y[l].push_back(yl[l]); }
+#endif
       for (int l = 0; l < n; ++l) { dec[l].Push(t, yl[l] - idle); double smp; while (dec[l].Pop(smp)) out[l].push_back(static_cast<float>(smp)); }
       const bool hard = (m.retries != retries0) || (m.fails != fails0) || m.lastIts > jdown;
       double hMax[4]; for (int l = 0; l < 4; ++l) hMax[l] = kH0 * double(1 << jmax);
