@@ -457,7 +457,7 @@ public:
   using E = lanes::Eng<Mdl>; using V = lanes::V;
   static bool Supports(const HitTuning& tu)
   {
-    return Mdl::kNT == 2 && Mdl::kNumCmp == 0 && Mdl::kNumOta == 0 && tu.preRoll == 0.0 && tu.knotPairT < 0.0 && !tu.cmpEvents && tu.fixedJ < 0 && tu.knotSpan == 1 && tu.ytol > 0.0;
+    return Mdl::kNT == 2 && Mdl::kNumCmp == 0 && Mdl::kNumOta == 0 && tu.preRoll == 0.0 && tu.knotPairT < 0.0 && !tu.cmpEvents && tu.fixedJ < 0 && tu.knotSpan == 1 && tu.ytol > 0.0 && tu.linNoiseT < 0.0;
   }
   // seeds[0..n-1], n in 1..4: out[l] receives the samples of hit l at fsHost. False: not supported, aborted, or a solver failure (the caller renders the hits one by one).
   bool RenderGroup(const HitTuning& tu, const uint64_t* seeds, int n, double seconds, double fsHost, std::vector<float>* out, bool (*aborted)() = nullptr)
@@ -468,15 +468,15 @@ public:
     for (int l = 0; l < n; ++l) out[l].clear();
     const size_t want = static_cast<size_t>(seconds * fsHost);
     long long k = 0; int j = 0; double gHprev = 0.0; V gFprev[E::NF]; for (int q = 0; q < E::NF; ++q) gFprev[q] = V(0.0); double gEnv[4] = {0, 0, 0, 0};
-    const long long nEnd = static_cast<long long>(seconds / kH0), knotN = std::max(1LL, std::llround(nz[0].step() / kH0)); const long long bp[4] = {64, 12864, 12928, 1LL << 40};
+    const long long nEnd = static_cast<long long>(seconds / kH0), knotN = std::max(1LL, std::llround(nz[0].step() / kH0)); const long long bp[4] = {64, 12864, 12928, 1LL << 40}; const long long noiseOffN = tu.noiseOffT >= 0.0 ? (std::llround(tu.noiseOffT / kH0) / knotN) * knotN : (1LL << 40);
     static constexpr double kYenvRef = 0.1, kYenvTau = 2e-3, kXs = 4.0; const int jmax = 10, jdown = 12; unsigned cnt = 0;
     const double idle = m.sc.yIdle;
     while (k < nEnd)
     {
       if ((++cnt & 127u) == 0 && aborted && aborted()) return false;
-      long long nextBp = 1LL << 40; for (long long b : bp) if (b > k) { nextBp = b; break; } nextBp = std::min(nextBp, (k / knotN + 1) * knotN);
+      long long nextBp = 1LL << 40; for (long long b : bp) if (b > k) { nextBp = b; break; } if (k < noiseOffN) nextBp = std::min(nextBp, (k / knotN + 1) * knotN);
       int jj = j; while (jj > 0 && k + (1LL << jj) > nextBp) --jj; const double h = kH0 * double(1LL << jj);
-      V x0[2], x1[2], dx[2]; { double a[4], b[4]; for (int l = 0; l < 4; ++l) { a[l] = nz[l].At(kStartTime + k * kH0); b[l] = nz[l].At(kStartTime + (k + (1LL << jj)) * kH0); } x0[0] = lanes::make(a); x1[0] = lanes::make(b); }
+      V x0[2], x1[2], dx[2]; { double a[4], b[4]; for (int l = 0; l < 4; ++l) { a[l] = nz[l].At(kStartTime + std::min(k, noiseOffN) * kH0); b[l] = nz[l].At(kStartTime + std::min(k + (1LL << jj), noiseOffN) * kH0); } x0[0] = lanes::make(a); x1[0] = lanes::make(b); }
       x0[1] = V(HitTrigger(k * kH0)); x1[1] = V(HitTrigger((k + (1LL << jj)) * kH0));
       V gF[E::NF]; for (int q = 0; q < E::NF; ++q) gF[q] = m.f0[q]; V pOld[E::NP]; for (int a = 0; a < E::NP; ++a) pOld[a] = m.p[a];
       const long retries0 = m.retries, fails0 = m.fails;

@@ -28,12 +28,15 @@ inline int g_ff2DotMin = 32;   // shorter dot products stay on the 128-bit path 
 #include "FullFast.h"   // DiodeEvalG, BjtEvalG
 
 namespace dgg { namespace pcmfast {
+// std::fmax / std::fmin with the same results for finite arguments (a NaN argument is ignored) without the library call
+inline double FMaxF(double a, double b) { return a > b ? a : (b != b ? a : b); }
+inline double FMinF(double a, double b) { return a < b ? a : (b != b ? a : b); }
 
 struct InvPar { double an, ap, pp, vtn, vtp, lam, cs; };
 inline double InvPosf(double x) { return 0.5 * (x + std::sqrt(x * x + 0.01)); }
 inline double InvCur(const double* f, double vgs, double vds, bool n)
 {
-  const double ov = InvPosf(vgs - (n ? f[3] : f[4])), vs = std::fmax(f[6] * ov, 0.05);
+  const double ov = InvPosf(vgs - (n ? f[3] : f[4])), vs = FMaxF(f[6] * ov, 0.05);
   return (n ? f[0] : f[1]) * std::pow(ov, f[2]) * std::tanh(vds / vs) * (1.0 + f[5] * std::fabs(vds));
 }
 inline void InvDer(const double* f, double vgs, double vds, bool n, double& dgs, double& dds)   // Net909::invDer
@@ -50,7 +53,7 @@ template <class M> struct FullFast2
 {
   static constexpr int R = M::kR, NG = M::kNg, NS = M::kNS, NF = M::kNF, NP = M::kNP, ND = M::kNumDev, NU = M::kU, NT = M::kNT;
   static constexpr double kCmpK = 3e-3 / 0.2;
-  struct Prop { double h = 0.0; std::vector<double> GqF, GcF, Phi, GaF, GbF, Ga, Gb, ConeC, Zp, ZpT, PXz, Zmax, wOut, XG; };
+  struct Prop { double h = 0.0; std::vector<double> GaFc; std::vector<int> gaCols; std::vector<double> GqF, GcF, Phi, GaF, GbF, Ga, Gb, ConeC, Zp, ZpT, PXz, Zmax, wOut, XG; };
   std::vector<Prop> props; std::vector<int> halfIdx;
   double z[R], f0[NF], p[NP], bp[M::kNumBjt > 0 ? M::kNumBjt : 1][16], PD[NP * NU], PC[NP], portVt[NP], portVcrit[NP], portCap[NP], portScale[NP];
   double acc = M::kAcc, accLast = M::kAcc, yIdle = 0.0, newtonTol = 3e-5; int maxDepth = 6; double capH = 1.0, ps0[NP]; long sumAct = 0, nLU = 0; unsigned long long prof[16] = {0}; long why[6] = {0, 0, 0, 0, 0, 0}, asFallbacks = 0; long steps = 0, its = 0, facs = 0, fails = 0, retries = 0, softAccepts = 0;
@@ -74,17 +77,17 @@ template <class M> struct FullFast2
     for (int d : qlDev)
     {
       if (qlSkip > 1 && ql[d] && qlAge[d] >= qleHold && (qlSteps % qlSkip) != 0) { ++qlAge[d]; continue; }   // long-stable linear device: the exact evaluation only every qlSkip-th step
-      const int pp = M::kDevPort[d], cc = M::kDevCur[d]; double i, g; if (finCache && e1ok[d] && e1v[d] == p[pp]) { i = e1i[d]; g = e1g[d]; ++finHits; } else { Eval1(d, p[pp], i, g); e1v[d] = p[pp]; e1i[d] = i; e1g[d] = g; e1ok[d] = 1; } ++finCalls; const double w = P.Zmax[cc], gfl = 1e-3 * asTol / std::fmax(w, 1e-30);
+      const int pp = M::kDevPort[d], cc = M::kDevCur[d]; double i, g; if (finCache && e1ok[d] && e1v[d] == p[pp]) { i = e1i[d]; g = e1g[d]; ++finHits; } else { Eval1(d, p[pp], i, g); e1v[d] = p[pp]; e1i[d] = i; e1g[d] = g; e1ok[d] = 1; } ++finCalls; const double w = P.Zmax[cc], gfl = 1e-3 * asTol / FMaxF(w, 1e-30);
       if (ql[d])
       {
         ++qlDevSteps; ++qlAge[d]; if (w * std::fabs(qlG[d]) > asTol) ++qlActSteps; const double lin = qlI[d] + qlG[d] * (p[pp] - qlV[d]);
-        const bool bad = w * std::fabs(i - lin) > qlErr; if (bad) { if (qlBackoff) qlHoldD[d] = std::min(qlHoldD[d] * 2, 100000); good = false; ++qlReject; ++qlRejDev[d]; qlRejMax[d] = std::fmax(qlRejMax[d], w * std::fabs(i - lin)); }
+        const bool bad = w * std::fabs(i - lin) > qlErr; if (bad) { if (qlBackoff) qlHoldD[d] = std::min(qlHoldD[d] * 2, 100000); good = false; ++qlReject; ++qlRejDev[d]; qlRejMax[d] = FMaxF(qlRejMax[d], w * std::fabs(i - lin)); }
         f1[cc] = i; qlV[d] = p[pp]; qlI[d] = i;   // the offset of the model follows the exact current at the end of every step
-        if (bad || std::fabs(g - qlG[d]) > qlTol * std::fmax(std::fabs(qlG[d]), gfl)) { ql[d] = 0; qlStab[d] = 0; qlAge[d] = 0; qlV[d] = p[pp]; qlG[d] = g; ++qlDrops; }
+        if (bad || std::fabs(g - qlG[d]) > qlTol * FMaxF(std::fabs(qlG[d]), gfl)) { ql[d] = 0; qlStab[d] = 0; qlAge[d] = 0; qlV[d] = p[pp]; qlG[d] = g; ++qlDrops; }
       }
       else
       {
-        if (std::fabs(g - qlG[d]) > qlTol * std::fmax(std::fabs(qlG[d]), gfl)) { qlG[d] = g; qlStab[d] = 0; }
+        if (std::fabs(g - qlG[d]) > qlTol * FMaxF(std::fabs(qlG[d]), gfl)) { qlG[d] = g; qlStab[d] = 0; }
         else if (++qlStab[d] >= qlHoldD[d]) { ql[d] = 1; qlV[d] = p[pp]; qlI[d] = i; qlG[d] = g; }
       }
       if (qleOn) { const double wg = w * std::fabs(qlG[d]); const bool want = ql[d] && (elim[d] || (qlAge[d] >= qleHold && wg > qleHi * asTol)); if (want != (elim[d] != 0)) { elim[d] = want ? 1 : 0; ++qVer; ++qleToggle[d]; } }
@@ -171,12 +174,12 @@ template <class M> struct FullFast2
       const int ty = M::kDevType[d], npt = nPortsOf(ty), ncu = nCursOf(ty), cc = M::kDevCur[d];
       for (int e = 0; e < npt * ncu; ++e)
       {
-        const double g = jd[d][e], w = P.Zmax[cc + e / npt]; gwMax[win][d] = std::fmax(gwMax[win][d], w * std::fabs(g)); ++gEntSteps[win][ty];
+        const double g = jd[d][e], w = P.Zmax[cc + e / npt]; gwMax[win][d] = FMaxF(gwMax[win][d], w * std::fabs(g)); ++gEntSteps[win][ty];
         if (!gRefOk) { for (int t = 0; t < 4; ++t) gRefT[t][d][e] = g; continue; }
         for (int t = 0; t < 4; ++t)
         {
           const double dg = std::fabs(g - gRefT[t][d][e]); if (w * dg < 1e-3 * asTol) continue;
-          if (dg > tolRel[t] * std::fmax(std::fabs(gRefT[t][d][e]), 1e-3 * asTol / std::fmax(w, 1e-30))) { ++gEv[win][ty][t]; ++gDevEv[win][t][d]; gRefT[t][d][e] = g; }
+          if (dg > tolRel[t] * FMaxF(std::fabs(gRefT[t][d][e]), 1e-3 * asTol / FMaxF(w, 1e-30))) { ++gEv[win][ty][t]; ++gDevEv[win][t][d]; gRefT[t][d][e] = g; }
         }
       }
     }
@@ -201,7 +204,7 @@ template <class M> struct FullFast2
   void SetPot(const PotPtrs& s) { pm = s; UpdatePD(); props.clear(); luOk = false; }
   void Init()
   {
-    for (int k = 0; k < M::kNumDio; ++k) { const double* q = &M::kDio[5 * k]; const double nvt = q[1] * kVt; dioXbv[k] = q[3] > 1e20 ? 1e30 : q[3] - nvt * std::log(std::fmax(q[4] / q[0], 1.0)); }
+    for (int k = 0; k < M::kNumDio; ++k) { const double* q = &M::kDio[5 * k]; const double nvt = q[1] * kVt; dioXbv[k] = q[3] > 1e20 ? 1e30 : q[3] - nvt * std::log(FMaxF(q[4] / q[0], 1.0)); }
     for (int k = 0; k < M::kNumBjt; ++k)
     {
       const double* q = &M::kBjt[9 * k]; for (int i = 0; i < 9; ++i) bp[k][i] = q[i];
@@ -218,6 +221,7 @@ template <class M> struct FullFast2
       else if (M::kDevType[d] == 1) { const double Is = M::kDio[5 * idx], nvt = M::kDio[5 * idx + 1] * kVt; portVt[pp] = nvt; portVcrit[pp] = nvt * std::log(nvt / (1.41421356 * Is)); }
     }
     for (int a = 0; a < NP; ++a) { bool pure = true; for (int s_ = 0; s_ < NS; ++s_) if (M::kPp[a * NS + s_] != 0.0) { pure = false; break; } portPure[a] = pure; }
+    for (int s = 0; s < NS; ++s) nodeW[s] = 1.0;
     props.clear(); steps = its = facs = fails = retries = softAccepts = 0; Reset(acc);
   }
   void ResetJob() { steps = its = facs = fails = retries = softAccepts = 0; Reset(acc); }
@@ -262,6 +266,8 @@ template <class M> struct FullFast2
     if (zoh || zohW > 0.0) { const double w = zoh ? 1.0 : (P.h >= zohHMin ? zohW : 0.0); for (size_t i = 0; i < P.GbF.size(); ++i) { P.GbF[i] += w * P.GaF[i]; P.GaF[i] *= 1.0 - w; } }   // zohW: share of the start-value weight moved to the end value (0 = first-order hold, 1 = zero-order hold)   // zero-order hold: the device currents are taken constant (= end value) over the step (backward-Euler-like treatment of the nonlinear part)
     if (qc) { P.GcF.assign(R * NF, 0.0); for (int d = 0; d < ND; ++d) if (M::kDevType[d] == 6) { const int col = M::kDevCur[d]; for (int i = 0; i < R; ++i) { double sq = 0.0; for (int s = 0; s < NS; ++s) sq += (E[i * n + R + NG + NU + s] - 0.5 * h * E[i * n + R + NU + s]) * M::kTc[s * NF + col]; P.GcF[i * NF + col] = sq; } } }
     for (int d = 0; d < ND; ++d) if (M::kDevType[d] == 6) { const int col = M::kDevCur[d]; for (int i = 0; i < R; ++i) { P.GbF[i * NF + col] += P.GaF[i * NF + col]; P.GaF[i * NF + col] = 0.0; if (qd) P.GqF[i * NF + col] = 0.0; } }   // charge currents are mean currents over the step (constant): the charge that flows is exactly Qn(p1) - Qn(p0)
+    for (int k = 0; k < NF; ++k) { bool nz = false; for (int i = 0; i < R && !nz; ++i) if (P.GaF[i * NF + k] != 0.0) nz = true; if (nz) P.gaCols.push_back(k); }   // the start-value columns that are not zero (the charge currents have none)
+    { const int nc = (int)P.gaCols.size(); P.GaFc.assign((size_t)R * (nc > 0 ? nc : 1), 0.0); for (int i = 0; i < R; ++i) for (int j = 0; j < nc; ++j) P.GaFc[(size_t)i * nc + j] = P.GaF[i * NF + P.gaCols[j]]; }
     std::vector<double> XG(NS * NF, 0.0);
     for (int s = 0; s < NS; ++s) for (int k = 0; k < NF; ++k)
     {
@@ -277,7 +283,7 @@ template <class M> struct FullFast2
     }
     P.ZpT.assign(NF * NP, 0.0); for (int a = 0; a < NP; ++a) for (int k = 0; k < NF; ++k) P.ZpT[k * NP + a] = P.Zp[a * NF + k];
     P.wOut.assign(NF, 0.0); for (int k = 0; k < NF; ++k) { double v = pm.Dof[k]; for (int i = 0; i < R; ++i) v += pm.Xo[i] * P.GbF[i * NF + k]; P.wOut[k] = v; }   // output sensitivity to the end-of-step device currents
-    P.Zmax.assign(NF, 0.0); for (int k = 0; k < NF; ++k) for (int a = 0; a < NP; ++a) P.Zmax[k] = std::fmax(P.Zmax[k], std::fabs(P.Zp[a * NF + k]));
+    P.Zmax.assign(NF, 0.0); for (int k = 0; k < NF; ++k) for (int a = 0; a < NP; ++a) P.Zmax[k] = FMaxF(P.Zmax[k], std::fabs(P.Zp[a * NF + k]));
     props.push_back(std::move(P)); return (int)props.size() - 1;
   }
   // junction charge of a charge device (row of kCap) minus its constant part C0 v: charge q and capacitance c as functions of the junction voltage v
@@ -292,7 +298,7 @@ template <class M> struct FullFast2
       if (v < fc * vj) { const double t = 1.0 - v / vj; if (OnePow()) { const double pw = std::pow(t, -m); qj = vj * cj0 / (1.0 - m) * (1.0 - t * pw); if (wantC) cj = cj0 * pw; } else { qj = vj * cj0 / (1.0 - m) * (1.0 - std::pow(t, 1.0 - m)); if (wantC) cj = cj0 / std::pow(t, m); } }
       else { const double f1 = vj * (1.0 - std::pow(1.0 - fc, 1.0 - m)) / (1.0 - m), f2 = std::pow(1.0 - fc, 1.0 + m), f3 = 1.0 - fc * (1.0 + m); qj = cj0 * (f1 + (1.0 / f2) * (f3 * (v - fc * vj) + m / (2.0 * vj) * (v * v - fc * fc * vj * vj))); cj = cj0 / f2 * (f3 + m * v / vj); }
     }
-    if (kind == 0) { const double a = v * r[8], e = a < -40.0 ? 0.0 : std::exp(std::fmin(a, 80.0)); const double cbe = r[7] * (e - 1.0) + kGmin * v, gbe = r[7] * e * r[8] + kGmin; q = qj + tt * cbe; c = cj + tt * gbe; }
+    if (kind == 0) { const double a = v * r[8], e = a < -40.0 ? 0.0 : std::exp(FMinF(a, 80.0)); const double cbe = r[7] * (e - 1.0) + kGmin * v, gbe = r[7] * e * r[8] + kGmin; q = qj + tt * cbe; c = cj + tt * gbe; }
     else if (kind == 2 && tt > 0.0) { double i, g; DiodeEvalG(&M::kDio[5 * (int)r[9]], v, i, g); q = qj + tt * i; c = cj + tt * g; }
     else { q = qj; c = cj; }
     q -= C0 * v; c -= C0;
@@ -376,9 +382,10 @@ template <class M> struct FullFast2
   }
   // a[j] -= f b[j] (j < n); same operation order per element as the scalar loop
   // CUT: weak-coupling cut (file written by CUTOUT): the columns of the devices of group cutFrom are zeroed in the Newton-matrix rows of the ports of group cutTo (chord error ~ the cross loop gain), the active ports of group cutFrom are ordered first so that the LU skips the zero block
+  long frzPortCnt[NP > 0 ? NP : 1] = {0};   // refactorisations caused by a frozen port that moved, per port (diagnostic)
   long refGrp[6][3] = {{0}}; bool cutOn = false; int cutFrom = 0, cutTo = 1; signed char portGrp[NP > 0 ? NP : 1];
   signed char curGrp[NF > 0 ? NF : 1];
-  double NodeErrGrp(int pi, const double* df, int grp) const { const Prop& P = props[pi]; double m = 0.0; for (int s = 0; s < NS; ++s) { double v = 0.0; const double* g = &P.XG[s * NF]; for (int k = 0; k < NF; ++k) if (curGrp[k] == grp) v += g[k] * df[k]; m = std::fmax(m, std::fabs(v)); } return m; }
+  double NodeErrGrp(int pi, const double* df, int grp) const { const Prop& P = props[pi]; double m = 0.0; for (int s = 0; s < NS; ++s) { double v = 0.0; const double* g = &P.XG[s * NF]; for (int k = 0; k < NF; ++k) if (curGrp[k] == grp) v += g[k] * df[k]; m = FMaxF(m, std::fabs(v)); } return m; }
   void PortGrpInit() { for (int k = 0; k < NF; ++k) curGrp[k] = -1; for (int a = 0; a < NP; ++a) portGrp[a] = -1; }
   void CutLoad(const char* fn) { PortGrpInit();  FILE* f = std::fopen(fn, "r"); if (!f) return; char line[256]; while (std::fgets(line, sizeof line, f)) { int a, b; if (std::sscanf(line, "drop %d %d", &a, &b) == 2) { cutFrom = a; cutTo = b; } else if (std::sscanf(line, "dev %d %d", &a, &b) == 2) { const int pp = M::kDevPort[a], np = nPortsOf(M::kDevType[a]); for (int k = 0; k < np; ++k) portGrp[pp + k] = (signed char)b; const int cc = M::kDevCur[a], nc = nCursOf(M::kDevType[a]); for (int k = 0; k < nc; ++k) curGrp[cc + k] = (signed char)b; } } std::fclose(f); cutOn = true; }
   bool fastDot = false;   // FASTDOT: dot products with four independent partial sums (different rounding, no serial dependency chain)
@@ -543,7 +550,15 @@ template <class M> struct FullFast2
   double OutErr(int pi, const double* df) const { const Prop& P = props[pi]; double v = 0.0; for (int k = 0; k < NF; ++k) v += P.wOut[k] * df[k]; return v; }
   // largest change of a node voltage (S node) that the current deviation df of the step with propagator pi causes
   double NodeErrArg(int pi, const double* df, int& arg) const { const Prop& P = props[pi]; double m = 0.0; arg = 0; for (int s = 0; s < NS; ++s) { double v = 0.0; const double* g = &P.XG[s * NF]; for (int k = 0; k < NF; ++k) v += g[k] * df[k]; if (std::fabs(v) > m) { m = std::fabs(v); arg = s; } } return m; }
-  double NodeErr(int pi, const double* df) const { const Prop& P = props[pi]; double m = 0.0; for (int s = 0; s < NS; ++s) { double v = 0.0; const double* g = &P.XG[s * NF]; for (int k = 0; k < NF; ++k) v += g[k] * df[k]; m = std::fmax(m, std::fabs(v)); } return m; }
+  double nodeW[NS > 0 ? NS : 1];   // weight of the node error of node s in the step size control (fastLinAlg only)
+  bool fastLinAlg = false;   // NodeErr and the QL elimination sums with blocked AVX products (other summation order than the scalar loops)
+  double NodeErr(int pi, const double* df) const
+  {
+    const Prop& P = props[pi];
+    if (fastLinAlg) { double v[NS]; MatVec(P.XG.data(), NF, NS, df, NF, v); double m = 0.0; for (int s = 0; s < NS; ++s) { const double a = std::fabs(v[s]) * nodeW[s]; if (a > m) m = a; } return m; }
+    double m = 0.0; for (int s = 0; s < NS; ++s) { double v = 0.0; const double* g = &P.XG[s * NF]; for (int k = 0; k < NF; ++k) v += g[k] * df[k]; m = FMaxF(m, std::fabs(v)); }
+    return m;
+  }
   double Output(const double* f, const double* x1, const double* dx) const
   {
     double y = pm.Do1 + pm.Dou[0] * acc; for (int t = 0; t < NT; ++t) y += pm.Dou[1 + 2 * t] * x1[t] + pm.Dou[2 + 2 * t] * dx[t];
@@ -576,7 +591,7 @@ template <class M> struct FullFast2
   {
     const Prop& P = props[pi]; const double h = P.h; double zk[R], pk[NP], dx[NT > 0 ? NT : 1]; lastPi = pi;
     capH = h; for (int i = 0; i < NP; ++i) ps0[i] = p[i]; ++q0Gen;
-    if (predW > 0.0 && hPrevStep > 0.0) { const double r = std::fmin(h / hPrevStep, 2.0) * predW; for (int i = 0; i < NP; ++i) p[i] += r * (ps0[i] - pStartPrev[i]); }
+    if (predW > 0.0 && hPrevStep > 0.0) { const double r = FMinF(h / hPrevStep, 2.0) * predW; for (int i = 0; i < NP; ++i) p[i] += r * (ps0[i] - pStartPrev[i]); }
     unsigned long long tp0 = 0, tp1 = 0; PROF_T(tp0);
     for (int t = 0; t < NT; ++t) dx[t] = (x1[t] - x0[t]) / h;
     double aIn[R];
@@ -614,7 +629,7 @@ template <class M> struct FullFast2
       const double* gf = &P.GaF[i * NF]; a = Dot(gf, f0, NF, a);
       zk[i] = a;
     }
-    if (fastDot && matVec) { MatVec(P.Phi.data(), R, R, z, R, zk, zk); MatVec(P.GaF.data(), NF, R, f0, NF, zk, zk); }
+    if (fastDot && matVec) { MatVec(P.Phi.data(), R, R, z, R, zk, zk); if (fastLinAlg) { const int nc = (int)P.gaCols.size(); double fc[NF]; for (int j = 0; j < nc; ++j) fc[j] = f0[P.gaCols[j]]; MatVec(P.GaFc.data(), nc, R, fc, nc, zk, zk); } else MatVec(P.GaF.data(), NF, R, f0, NF, zk, zk); }
     for (int a = 0; a < NP; ++a)
     {
       double v = PC[a] + PD[a * NU] * acc; for (int t = 0; t < NT; ++t) v += PD[a * NU + 1 + 2 * t] * x1[t] + PD[a * NU + 2 + 2 * t] * dx[t];
@@ -637,7 +652,8 @@ template <class M> struct FullFast2
       for (int i = 0; i < n; ++i) { const int d = qDev[i]; qc_[i] = qlI[d] - qlG[d] * qlV[d]; }
       for (int i = 0; i < n; ++i) { double v = pk[qPort[i]]; for (int j = 0; j < n; ++j) v += qe->Zqq[i * n + j] * qc_[j]; s_[i] = v; }
       for (int i = 0; i < n; ++i) { double v = 0.0; for (int j = 0; j < n; ++j) v += qe->Minv[i * n + j] * s_[j]; qt_[i] = v; qe_[i] = qc_[i] + qlG[qDev[i]] * v; }
-      for (int a = 0; a < NP; ++a) { if (isQ[a]) continue; double v = 0.0; const double* zq = &qe->ZpQ[a * n]; for (int i = 0; i < n; ++i) v += zq[i] * qe_[i]; pk[a] += v; }
+      if (fastLinAlg) { double zq_[NP]; MatVec(qe->ZpQ.data(), n, NP, qe_, n, zq_); for (int a = 0; a < NP; ++a) if (!isQ[a]) pk[a] += zq_[a]; }
+      else for (int a = 0; a < NP; ++a) { if (isQ[a]) continue; double v = 0.0; const double* zq = &qe->ZpQ[a * n]; for (int i = 0; i < n; ++i) v += zq[i] * qe_[i]; pk[a] += v; }
       for (int k = 0; k < NF; ++k) f1[k] = 0.0;
       zbase = qe->Ze.data(); ztb = qe->ZeT.data(); skipDev = elim.data();
     }
@@ -729,15 +745,15 @@ template <class M> struct FullFast2
       if (traceOn) std::printf("  it %d mx %.3e port %d (p %.4g) fresh %d h %.2e\n", it, mx, amx, p[amx], (int)fresh, h);
 #endif
       if (abortIt > 0 && it >= abortIt && mx >= newtonTol) { itDone = maxIt; break; }   // no convergence after abortIt iterations: treated as a Newton failure (retry with the half step)
-      double mxA = mx; if (chordAct && nFrz > 0) { mxA = 0.0; for (int i = 0; i < nAct; ++i) mxA = std::fmax(mxA, std::fabs(F[actL[i]])); }
+      double mxA = mx; if (chordAct && nFrz > 0) { mxA = 0.0; for (int i = 0; i < nAct; ++i) mxA = FMaxF(mxA, std::fabs(F[actL[i]])); }
       if (!fresh && mx >= newtonTol && fromPrev && it == 0 && mxA > chordFirst) { refac = true; ++why[2]; ++refGrp[2][portGrp[amx] + 1]; continue; }
       if (!fresh && mx >= newtonTol && it >= 1 && mx > 0.5 * prevMx) { refac = true; ++why[3]; ++refGrp[3][portGrp[amx] + 1]; continue; }
       if (mx < newtonTol) break;
-      double mxv = 0.0; for (int a = 0; a < NP; ++a) mxv = std::fmax(mxv, std::fabs(F[a]) * portScale[a]);
+      double mxv = 0.0; for (int a = 0; a < NP; ++a) mxv = FMaxF(mxv, std::fabs(F[a]) * portScale[a]);
       double sc = mxv > kCap ? kCap / mxv : 1.0;
       if (dampOn)
       {   // no progress over two iterations (a two-cycle of the saturating gates): halve the step; relax again when the correction shrinks
-        if (it >= 3 && std::fabs(mx - mx2) < dampRatio * mx && mx > dampMin) damp = std::fmax(damp * 0.5, 1.0 / 64.0); else if (it >= 2 && mx < 0.5 * prevMx && prevMx < 0.5 * mx2) damp = std::fmin(damp * 2.0, 1.0);
+        if (it >= 3 && std::fabs(mx - mx2) < dampRatio * mx && mx > dampMin) damp = FMaxF(damp * 0.5, 1.0 / 64.0); else if (it >= 2 && mx < 0.5 * prevMx && prevMx < 0.5 * mx2) damp = FMinF(damp * 2.0, 1.0);
         mx2 = prevMx;
       }
       for (int a = 0; a < NP; ++a)
@@ -757,7 +773,7 @@ template <class M> struct FullFast2
         const int a = frzL[f]; if (elimActive && isQ[a]) continue;
         if (std::fabs(p[a] - pRef[a]) > (portVt[a] > 0.0 ? frzThr * portVt[a] : 1.0))
         {
-          if (frzMode == 0 || FrozenSlopeExceeds(a, p, props[pi])) { refac = true; ++why[4]; ++refGrp[4][portGrp[a] + 1]; break; }
+          if (frzMode == 0 || FrozenSlopeExceeds(a, p, props[pi])) { refac = true; ++why[4]; ++refGrp[4][portGrp[a] + 1]; ++frzPortCnt[a]; break; }
           pRef[a] = p[a];
         }
       }   // a frozen port left the region in which its device had no noticeable slope
@@ -765,7 +781,7 @@ template <class M> struct FullFast2
     }
     if (itDone >= maxIt)
     {
-      double mm = 0; for (int a = 0; a < NP; ++a) mm = std::fmax(mm, std::fabs(F[a])); lastMx = mm; ok = false;
+      double mm = 0; for (int a = 0; a < NP; ++a) mm = FMaxF(mm, std::fabs(F[a])); lastMx = mm; ok = false;
 #ifdef FULLFAST2_FAILLOG
       if (fails < 40) { int am = 0; for (int a = 1; a < NP; ++a) if (std::fabs(F[a]) > std::fabs(F[am])) am = a; int dty = -1, dix = -1; for (int d = 0; d < ND; ++d) { const int pp = M::kDevPort[d]; if (am >= pp && am < pp + nPortsOf(M::kDevType[d])) { dty = M::kDevType[d]; dix = d; } }
         std::printf("Newton failure (step %ld): step h %.3e, last correction %.3e at port %d (device %d type %d, p %.5g)\n", steps, P.h, mm, am, dix, dty, p[am]); }
@@ -773,9 +789,9 @@ template <class M> struct FullFast2
       if (mm < kSoftTol)
       {
         double p2[NP], f2[NF], df[NF]; for (int a = 0; a < NP; ++a) p2[a] = p[a] + F[a]; for (int k = 0; k < NF; ++k) f2[k] = 0.0; EvalF(p2, f2, nullptr); for (int k = 0; k < NF; ++k) df[k] = f2[k] - f1[k];
-        double zerr = 0.0, yerr = 0.0; for (int i = 0; i < R; ++i) { double v = 0.0; for (int k = 0; k < NF; ++k) v += P.GbF[i * NF + k] * df[k]; zerr = std::fmax(zerr, std::fabs(v)); yerr += pm.Xo[i] * v; }
+        double zerr = 0.0, yerr = 0.0; for (int i = 0; i < R; ++i) { double v = 0.0; for (int k = 0; k < NF; ++k) v += P.GbF[i * NF + k] * df[k]; zerr = FMaxF(zerr, std::fabs(v)); yerr += pm.Xo[i] * v; }
         for (int k = 0; k < NF; ++k) yerr += pm.Dof[k] * df[k];
-        double rres = 0.0; for (int a = 0; a < NP; ++a) { if (elimActive && isQ[a]) continue; const double* zp = &zbase[a * NF]; double zf = 0.0; for (int k = 0; k < NF; ++k) zf += zp[k] * f2[k]; rres = std::fmax(rres, std::fabs(pk[a] + zf - p2[a])); }
+        double rres = 0.0; for (int a = 0; a < NP; ++a) { if (elimActive && isQ[a]) continue; const double* zp = &zbase[a * NF]; double zf = 0.0; for (int k = 0; k < NF; ++k) zf += zp[k] * f2[k]; rres = FMaxF(rres, std::fabs(pk[a] + zf - p2[a])); }
         if (std::fabs(yerr) < kSoftY && zerr < kSoftZ && rres < kSoftRes) { for (int a = 0; a < NP; ++a) p[a] = p2[a]; for (int k = 0; k < NF; ++k) f1[k] = f2[k]; ok = true; ++softAccepts; }
       }
     }
@@ -783,19 +799,21 @@ template <class M> struct FullFast2
     if (elimActive)
     {
       const int n = nQ; skipDev = nullptr;
-      for (int i = 0; i < n; ++i) { double v = qt_[i]; const double* tm = &qe->Tm[i * NF]; for (int k = 0; k < NF; ++k) v += tm[k] * f1[k]; p[qPort[i]] = v; f1[qCur[i]] = qc_[i] + qlG[qDev[i]] * v; }
+      for (int i = 0; i < n; ++i) { const double* tm = &qe->Tm[i * NF]; double v = qt_[i]; if (fastLinAlg) v = DotF(tm, f1, NF, v); else for (int k = 0; k < NF; ++k) v += tm[k] * f1[k]; p[qPort[i]] = v; f1[qCur[i]] = qc_[i] + qlG[qDev[i]] * v; }
     }
     PROF_ADD(prof[7], tq); PROF_T(tq);
     if (qlcOn && ok && !QlcFinish(f1, P)) ok = false;
     PROF_ADD(prof[8], tq); PROF_T(tq);
     if (qlOn && ok && !QlFinish(f1, P)) ok = false;
     PROF_ADD(prof[9], tq);
+    PROF_T(tq);
     if (fastDot && matVec) MatVec(P.GbF.data(), NF, R, f1, NF, z, zk);
     else for (int i = 0; i < R; ++i) { double a = zk[i]; const double* gb = &P.GbF[i * NF]; a = Dot(gb, f1, NF, a); z[i] = a; }
     if (quadW != 0.0 && hPrevStep > 0.0 && fPrevOk) { double kap[NF]; const double i1 = 1.0 / (h + hPrevStep), ih = 1.0 / h, ihp = 1.0 / hPrevStep; for (int k = 0; k < NF; ++k) kap[k] = quadW * (((f1[k] - f0[k]) * ih - (f0[k] - fStartPrev[k]) * ihp) * i1); for (int i = 0; i < R; ++i) { const double* gq = &P.GqF[i * NF]; double a = 0.0; for (int k = 0; k < NF; ++k) a += gq[k] * kap[k]; z[i] += a; } }
     if (quadCW != 0.0 && hPrevStep > 0.0 && fPrevOk) { const double isl = quadCW / (0.5 * (h + hPrevStep)); for (int d = 0; d < ND; ++d) if (M::kDevType[d] == 6) { const int col = M::kDevCur[d]; const double sl = (f1[col] - f0[col]) * isl; for (int i = 0; i < R; ++i) z[i] += P.GcF[i * NF + col] * sl; } }
+    PROF_ADD(prof[14], tq); PROF_T(tq);
     for (int k = 0; k < NF; ++k) { fStartPrev[k] = f0[k]; f0[k] = f1[k]; } fPrevOk = true;
-    accLast = acc; ++steps; for (int i = 0; i < NP; ++i) pStartPrev[i] = ps0[i]; hPrevStep = h; const double yo = Output(f1, x1, dx); if (!(std::fabs(yo) < 1e6)) ok = false; return yo;
+    accLast = acc; ++steps; for (int i = 0; i < NP; ++i) pStartPrev[i] = ps0[i]; hPrevStep = h; PROF_ADD(prof[15], tq); PROF_T(tq); const double yo = Output(f1, x1, dx); PROF_ADD(prof[15], tq); if (!(std::fabs(yo) < 1e6)) ok = false; return yo;
   }
 };
 

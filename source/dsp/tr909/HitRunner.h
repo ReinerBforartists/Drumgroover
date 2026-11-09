@@ -39,6 +39,16 @@ struct HitTuning
   double chordFirst = 5.0;   // a chord step whose first Newton correction (V) exceeds this refactors the Jacobian; 1e9: never (HC: 1.00 -> 0.36 factorisations per step in the engine phase, output changes by < -100 dB, tools handoff R304)
   bool cmpEvents = false;    // comparator input ports get the same event prediction as the op-amp input stages: a step never runs through the switching region unseen (HC: the flank times of the claps)
   double knotPairT = -1.0; int knotMaxJ = 6;   // knotPairT >= 0: from this time (s after the trigger) a step may span 2^(j-5) noise knots, j <= knotMaxJ, the noise handled as linear segments between the knots
+  bool fastLinAlg = false;      // node error of the step control with the blocked AVX product (other summation order)
+  int errMode = 0;           // error estimate of the step size control: 0 largest node voltage error, 1 output voltage error, 2 the larger of the output error and errNodeW x the node error
+  double errNodeW = 0.1;
+  double errT = 0.0;         // errMode 1 / 2 apply from this time (s after the trigger); before it the node error is used
+  double noiseOffT = -1.0;   // >= 0: from this time (s after the trigger, rounded down to a noise knot) the noise source keeps its value at that knot; its response at the output has died out, the steps are no longer tied to the noise knots
+  double linNoiseT = -1.0;   // >= 0: the response to the noise is computed as the linear response around the noise-free trajectory (HitReplay.h) for the first linNoiseT seconds, the hit itself runs without noise
+  double linYtol = 1e-3, linTailMul = 2.0, replayThr = 0.3, replayLater = 12.0; bool replayRefine = false;
+  double linT2T = 0.0, linT2Mul = 1.0;   // milder tolerance stage of the noise-free run between linT2T and linNoiseT
+  int jMax = 10;             // largest step 2^jMax x 0.156 us
+  bool detReuse = false;     // linear-response mode: the noise-free run of the last hit is reused when model, pots, tuning and length are the same (the run does not depend on the noise)   // tolerance of the noise-free run before linNoiseT, factor on it after linNoiseT
   double preRoll = 0.0;      // seconds of noise before the trigger (a multiple of the noise knot spacing): the noise-driven states then belong to the noise sequence of the hit
 };
 
@@ -53,10 +63,14 @@ inline HitTuning HitTuningFor(Tr909Voice v, bool fast20)
     case Tr909Voice::Mt: t.ytol = 3e-3; t.yfloor = 0.7; t.ytailT = 0.1; t.ytailMul = 1.6; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Ht: t.ytol = fast20 ? 3e-3 : 1.5e-3; t.yfloor = 0.4; t.ytailT = 0.1; t.ytailMul = 4.0; t.ytail2T = 0.02; t.ytail2Mul = 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
     case Tr909Voice::Sd: t.ytol = fast20 ? 3e-2 : 9e-4; t.yfloor = 0.7; t.ytailT = fast20 ? 0.2 : 0.3; t.ytailMul = fast20 ? 6.0 : 2.0; t.dpTol = 1.0; t.quasiLinearCaps = true; break;
-    case Tr909Voice::Bd: t.ytol = fast20 ? 1e-2 : 8e-3; t.yfloor = fast20 ? 0.7 : 1.0; if (!fast20) { t.ytailT = 0.03; t.ytailMul = 100.0; t.capThr = 1e-4; t.jGrow = 3; } break;   // BD-K03/K02/K17/K16 (tools 909_BD_OPTIMIERUNGEN.md): 10.6 -> 1.99 M steps in 18 cases, R115 0 violations
+    case Tr909Voice::Bd: t.ytol = fast20 ? 1e-2 : 8e-3; t.yfloor = fast20 ? 0.7 : 1.0; if (!fast20) { t.noiseOffT = 0.03; t.linNoiseT = 0.03; t.errMode = 2; t.errNodeW = 0.3; t.errT = 0.05; t.ytailT = 0.03; t.ytailMul = 0.25; t.ytail2T = 0.005; t.ytail2Mul = 2.0; t.capThr = 1e-4; t.jGrow = 3; t.fastLinAlg = true; } break;   // BD-K03/K02/K17/K16 (tools 909_BD_OPTIMIERUNGEN.md): 10.6 -> 1.99 M steps in 18 cases, R115 0 violations
     case Tr909Voice::Hc: t.ytol = fast20 ? 3e-2 : 2e-3; t.yfloor = 0.7; t.zohW = 0.1; t.preRoll = 0.005; t.capThr = 1e-300; t.cmpEvents = true; t.knotPairT = 0.05; t.knotMaxJ = 7; break;   // capThr: a charge device evaluated at a bit-identical port voltage repeats its last result (output bitwise equal, HC 15 % less time)
     default: break;
   }
+#ifdef DGG_HC_ENV_KNOBS   // test harness only
+  if (const char* e = std::getenv("LINNOISET")) t.linNoiseT = std::atof(e);
+  if (const char* e = std::getenv("NOISEOFFT")) t.noiseOffT = std::atof(e);
+#endif
   return t;
 }
 
@@ -95,6 +109,10 @@ private:
   std::vector<double> smp_; uint64_t rng_ = 0; double step_ = 5e-6, amp_ = 5.22, eq_ = 0.0;
 };
 
+}}  // namespace dgg::pcmfast
+#include "HitReplay.h"
+namespace dgg { namespace pcmfast {
+
 // Trigger of the voice: 5 V pulse, 10 us edges, 2 ms long, starting at t = 0.
 inline double HitTrigger(double t)
 {
@@ -120,6 +138,7 @@ public:
     if (const char* e = std::getenv("PREROLL")) tu_.preRoll = std::atof(e) * 1e-3;   // test harness only (ms)
 #endif
     knotN_ = (Mdl::kNT == 2 && noise) ? std::max(1LL, std::llround(noise->step() / kH0)) * std::max(1, tu.knotSpan) : 1LL;
+    noiseOffN_ = (Mdl::kNT == 2 && tu.noiseOffT >= 0.0) ? ((std::llround(tu.noiseOffT / kH0) / knotN_) * knotN_) : (1LL << 40);
     preN_ = Mdl::kNT == 2 ? static_cast<long long>(std::llround(tu_.preRoll / kH0)) : 0LL;
     nEnd_ = static_cast<long long>(seconds / kH0) + preN_;
     for (int k = 0; k < Mdl::kNF; ++k) gFprev_[k] = 0.0;
@@ -129,6 +148,7 @@ public:
     gHprev_ = 0.0; gEnv_ = 0.0; j_ = 0; t_ = 0.0; y_ = 0.0;   // the step control restarts at the trigger
   }
   bool Finished() const { return n_ >= nEnd_; }
+  long errArgHist[Mdl::kNS] = {0};   // diagnostic (FULLFAST2_PROF): node that limits the step in the noise phase
   long limCount[4] = {0, 0, 0, 0};   // what set the next step size: none (maximum) / tanh stage event / error estimate / port voltage change
   // Integration time reached so far (seconds since the trigger) and the output voltage there.
   double Time() const { return t_; }
@@ -138,13 +158,13 @@ public:
   void Advance()
   {
     Model& m = *m_;
-    const int jmax = 10, jup = 5, jdown = 12; (void)jup;
+    const int jmax = tu_.jMax, jup = 5, jdown = 12; (void)jup;
     const long long bp[4] = {preN_ + 64, preN_ + 12864, preN_ + 12928, 1LL << 40};   // pulse corners (10 us, 2.01 ms, 2.02 ms) in units of h0
     static constexpr double kYenvRef = 0.1, kYenvTau = 2e-3, kXs = 4.0;
     const double h0 = kH0; double gF[Mdl::kNF];
     long long nextBp = 1LL << 40; for (long long b : bp) if (b > n_) { nextBp = b; break; }
     if (n_ < preN_) nextBp = std::min(nextBp, preN_);   // the trigger starts here
-    if (Mdl::kNT == 2) nextBp = std::min(nextBp, (n_ / knotN_ + 1) * knotN_);
+    if (Mdl::kNT == 2 && n_ - preN_ < noiseOffN_) nextBp = std::min(nextBp, (n_ / knotN_ + 1) * knotN_);
     long long nextCorner = 1LL << 40; for (long long b : bp) if (b > n_) { nextCorner = b; break; }
     int jj = tu_.fixedJ >= 0 ? tu_.fixedJ : j_; while (jj > 0 && n_ + (1LL << jj) > nextBp) --jj;
     int nseg = 1;
@@ -154,8 +174,8 @@ public:
       if (jp >= 6) { jj = jp; nseg = 1 << (jp - 5); }
     }
     const double h = h0 * static_cast<double>(1LL << jj);
-    const double xa[2] = {Mdl::kNT == 2 ? noise_->At(kStartTime + (n_ - preN_) * h0) : 0.0, HitTrigger((n_ - preN_) * h0)};
-    const double xb[2] = {Mdl::kNT == 2 ? noise_->At(kStartTime + (n_ + (1LL << jj) - preN_) * h0) : 0.0, HitTrigger((n_ + (1LL << jj) - preN_) * h0)};
+    const double xa[2] = {Mdl::kNT == 2 ? noise_->At(kStartTime + std::min(n_ - preN_, noiseOffN_) * h0) : 0.0, HitTrigger((n_ - preN_) * h0)};
+    const double xb[2] = {Mdl::kNT == 2 ? noise_->At(kStartTime + std::min(n_ + (1LL << jj) - preN_, noiseOffN_) * h0) : 0.0, HitTrigger((n_ + (1LL << jj) - preN_) * h0)};
     const double* const x0 = Mdl::kNT == 2 ? xa : &xa[1]; const double* const x1 = Mdl::kNT == 2 ? xb : &xb[1];
     double xseg[9 * 2]; const double* x0s = x0; const double* x1s = x1;
     if (nseg > 1) { for (int m = 0; m <= nseg; ++m) { const long long nn = n_ + static_cast<long long>(m) * knotN_ - preN_; xseg[2 * m] = noise_->At(kStartTime + nn * h0); xseg[2 * m + 1] = HitTrigger(nn * h0); } x0s = xseg; x1s = xseg + 2 * nseg; }
@@ -164,34 +184,37 @@ public:
     for (int k = 0; k < Mdl::kNF; ++k) gF[k] = m.f0[k];
     const double y = m.Step(pj_[jj], x0s, x1s, 0, nseg); n_ += 1LL << jj;
     t_ = (n_ - preN_) * h0; y_ = y;
-    gEnv_ = std::fmax(std::fabs(y), gEnv_ * std::exp(-h / kYenvTau));
+    gEnv_ = FMaxF(std::fabs(y), gEnv_ * std::exp(-h / kYenvTau));
     const long used = m.its - it0; const bool hard = (m.retries != ret0) || (m.fails != fail0) || used > jdown;
     // step control: (1) event prediction for the op-amp input stages, (2) curvature of the device currents, (3) change of the port voltages
     double hMax = h0 * static_cast<double>(1LL << jmax), dpMax = 0.0; int lim = 0;
-    for (int a = 0; a < Mdl::kNP; ++a) dpMax = std::fmax(dpMax, std::fabs(m.p[a] - pOld[a]) * m.portScale[a]);
+    for (int a = 0; a < Mdl::kNP; ++a) dpMax = FMaxF(dpMax, std::fabs(m.p[a] - pOld[a]) * m.portScale[a]);
     for (int d = 0; d < Mdl::kNumDev; ++d) if (Mdl::kDevType[d] == 2)
     {
       const int pp = Mdl::kDevPort[d], idx = Mdl::kDevIdx[d]; const double k = Mdl::kTanh[3 * idx] / Mdl::kTanh[3 * idx + 1];
       const double xn = k * m.p[pp], xo = k * pOld[pp], rate = (xn - xo) / h, ax = std::fabs(xn), toward = (xn > 0 ? -rate : rate);
-      double c = 1e300; if (ax < kXs) c = kXs / std::fmax(std::fabs(rate), 1e-30); else if (toward > 0) c = 0.5 * (ax - kXs) / toward;
+      double c = 1e300; if (ax < kXs) c = kXs / FMaxF(std::fabs(rate), 1e-30); else if (toward > 0) c = 0.5 * (ax - kXs) / toward;
       if (c < hMax && !tu_.noTanhEvents) { hMax = c; lim = 1; }
     }
     if (tu_.cmpEvents) for (int d = 0; d < Mdl::kNumDev; ++d) if (Mdl::kDevType[d] == 4)
     {   // comparator: the tanh argument is the second port voltage itself
       const int pp = Mdl::kDevPort[d] + 1; const double xn = m.p[pp], xo = pOld[pp], rate = (xn - xo) / h, ax = std::fabs(xn), toward = (xn > 0 ? -rate : rate);
-      double c = 1e300; if (ax < kXs) c = kXs / std::fmax(std::fabs(rate), 1e-30); else if (toward > 0) c = 0.5 * (ax - kXs) / toward;
+      double c = 1e300; if (ax < kXs) c = kXs / FMaxF(std::fabs(rate), 1e-30); else if (toward > 0) c = 0.5 * (ax - kXs) / toward;
       if (c < hMax) { hMax = c; lim = 1; }
     }
     if (tu_.ytol > 0.0 && gHprev_ > 0.0)
     {
       double df[Mdl::kNF];
       for (int k = 0; k < Mdl::kNF; ++k) df[k] = m.f0[k] - (gF[k] + (gF[k] - gFprev_[k]) * (h / gHprev_));
-      const double e = m.NodeErr(pj_[jj], df);
+      const double e = (tu_.errMode == 0 || (n_ - preN_) * h0 < tu_.errT) ? m.NodeErr(pj_[jj], df) : (tu_.errMode == 1 ? std::fabs(m.OutErr(pj_[jj], df)) : FMaxF(std::fabs(m.OutErr(pj_[jj], df)), tu_.errNodeW * m.NodeErr(pj_[jj], df)));
       if (e > 0.0)
       {
         double tol = tu_.ytol; const double tt = (n_ - preN_) * h0;
         if (tu_.ytailMul != 1.0 && tt >= tu_.ytailT) tol *= tu_.ytailMul; else if (tu_.ytail2Mul != 1.0 && tt >= tu_.ytail2T) tol *= tu_.ytail2Mul;
-        tol *= std::fmin(1.0, std::fmax(tu_.yfloor, gEnv_ / kYenvRef));
+        tol *= FMinF(1.0, FMaxF(tu_.yfloor, gEnv_ / kYenvRef));
+#ifdef FULLFAST2_PROF
+        { int arg = 0; m.NodeErrArg(pj_[jj], df, arg); if (std::sqrt(0.8 * tol / e) < 1.0 && (n_ - preN_) * h0 < 0.03) ++errArgHist[arg]; }
+#endif
         const double c = h * std::sqrt(0.8 * tol / e); if (c < hMax) { hMax = c; lim = 2; }
       }
     }
@@ -221,12 +244,78 @@ public:
   // Builds the model and its propagators without running a hit (the first Begin() does this otherwise; takes about a second per model).
   void Warm(const HitTuning& tu) { Prepare(tu); }
   // Pot dependent model (PotSet.h): replaces A, Bg, XzS, DgS and the output row for all following hits; the arrays must outlive the runner / the next SetPot(). Not while a hit is running.
-  void SetPot(const typename Model::PotPtrs& p) { pot_ = p; usePot_ = true; potStale_ = true; }
-  void ClearPot() { usePot_ = false; potStale_ = true; }
+  void SetPot(const typename Model::PotPtrs& p) { pot_ = p; usePot_ = true; potStale_ = true; ++potVer_; }
+  void ClearPot() { usePot_ = false; potStale_ = true; ++potVer_; }
 
   // Host-rate rendering: output voltage minus idle level at fsHost, `seconds` long.
+  // Noise phase as linear response (tu.linNoiseT >= 0): the hit runs without noise (tolerances linYtol / linTailMul), its port voltages are recorded for the first linNoiseT + 10 ms, and the response of the circuit to the noise
+  // of `noise` over that time (HitReplay.h) is added at the host rate.
+  // Raw series of the linear-response mode: ts / ys = step ends and output voltage of the noise-free run (whole hit), tk / dyk = the noise response at the 5 us knots of the first linNoiseT + 10 ms.
+  bool RunLin(const HitTuning& tu, HitNoise* noise, double seconds, std::vector<double>& ts, std::vector<double>& ys, std::vector<double>& tk, std::vector<double>& dyk)
+  {
+    if (!RunLinDet(tu, seconds, ts, ys)) return false;
+    return RunLinResponse(tu, noise, tk, dyk);
+  }
+  // The noise-free run (shared by all noise sequences of a group of hits).
+  bool RunLinDet(const HitTuning& tu, double seconds, std::vector<double>& ts, std::vector<double>& ys)
+  {
+    if (tu.detReuse && det_.valid && det_.potVer == potVer_ && det_.seconds == seconds && det_.sig == TuningSig(tu)) { ts = det_.ts; ys = det_.ys; replay_.tE = det_.tE; replay_.pE = det_.pE; std::copy(det_.p0, det_.p0 + Mdl::kNP, replay_.p0); return true; }
+    det_.valid = false;
+    HitNoise silent; silent.StartSilent(0.05);
+    HitTuning td = tu; td.noiseOffT = -1.0; td.ytol = tu.linYtol; td.ytail2T = tu.linT2T; td.ytail2Mul = tu.linT2Mul; td.ytailT = tu.linNoiseT; td.ytailMul = tu.linTailMul;
+    const double tRep = tu.linNoiseT + 0.01; ts.clear(); ys.clear();
+    Begin(td, &silent, seconds); Model& m = *m_; replay_.Clear(m.p);
+    unsigned cnt = 0;
+    while (!Finished())
+    {
+      if ((++cnt & 127u) == 0 && ::dgg::BakeAborted()) return false;
+      Advance(); if (t_ <= tRep + 0.001) replay_.Record(t_, m.p);
+      ts.push_back(t_); ys.push_back(y_);
+    }
+    if (tu.detReuse) { det_.valid = true; det_.potVer = potVer_; det_.seconds = seconds; det_.sig = TuningSig(tu); det_.ts = ts; det_.ys = ys; det_.tE = replay_.tE; det_.pE = replay_.pE; std::copy(replay_.p0, replay_.p0 + Mdl::kNP, det_.p0); }
+    return true;
+  }
+  static double TuningSig(const HitTuning& t) { return t.ytol * 1.0 + t.yfloor * 3.0 + t.ytailT * 5.0 + t.ytailMul * 7.0 + t.ytail2T * 11.0 + t.ytail2Mul * 13.0 + t.dpTol * 17.0 + t.zohW * 19.0 + t.jGrow * 23.0 + t.capThr * 29.0 + t.chordFirst * 31.0 + t.linNoiseT * 37.0 + t.linYtol * 41.0 + t.linTailMul * 43.0 + t.linT2T * 53.0 + t.linT2Mul * 59.0 + t.jMax * 61.0 + t.fastLinAlg * 47.0; }
+  struct DetCache { bool valid = false; unsigned potVer = 0; double seconds = 0.0, sig = 0.0; std::vector<double> ts, ys, tE, pE; double p0[Mdl::kNP]; } det_;
+  // The response to the noise of `noise` around the noise-free trajectory of the last RunLinDet().
+  bool RunLinResponse(const HitTuning& tu, HitNoise* noise, std::vector<double>& tk, std::vector<double>& dyk)
+  {
+    tk.clear(); dyk.clear(); replay_.thr = tu.replayThr; replay_.laterMul = tu.replayLater; replay_.refine = tu.replayRefine;
+    replay_.Run(*m_, pj_[5], *noise, kStartTime, tu.linNoiseT + 0.01, [&](double t, double dy) { tk.push_back(t); dyk.push_back(dy); });
+    return true;
+  }
+  // n hits (noise sequences) of one parameter set: one noise-free run, one linear response per noise; out[l] at the host rate.
+  bool RenderLinGroup(const HitTuning& tu, HitNoise* noises, int n, double seconds, double fsHost, std::vector<float>* out)
+  {
+    std::vector<double> ts, ys, tk, dyk; if (!RunLinDet(tu, seconds, ts, ys)) return false;
+    const size_t want = static_cast<size_t>(seconds * fsHost); const double idleV = idle(); std::vector<float> base; double s;
+    { HostDecimator dec; dec.Init(fsHost); for (size_t i = 0; i < ts.size(); ++i) { dec.Push(ts[i], ys[i] - idleV); while (dec.Pop(s)) base.push_back(static_cast<float>(s)); } while (dec.Pop(s)) base.push_back(static_cast<float>(s)); if (base.size() > want) base.resize(want); }
+    for (int l = 0; l < n; ++l)
+    {
+      if (::dgg::BakeAborted()) return false;
+      RunLinResponse(tu, &noises[l], tk, dyk); out[l] = base;
+      HostDecimator decR; decR.Init(fsHost); size_t i = 0; for (size_t k = 0; k < tk.size(); ++k) { decR.Push(tk[k], dyk[k]); while (decR.Pop(s)) { if (i < out[l].size()) out[l][i] += static_cast<float>(s); ++i; } }
+      while (decR.Pop(s)) { if (i < out[l].size()) out[l][i] += static_cast<float>(s); ++i; }
+    }
+    return true;
+  }
+  // Host-rate output of the linear-response mode (noise-free run plus the response, both decimated).
+  bool RenderLin(const HitTuning& tu, HitNoise* noise, double seconds, double fsHost, std::vector<float>& out)
+  {
+    std::vector<double> ts, ys, tk, dyk; if (!RunLin(tu, noise, seconds, ts, ys, tk, dyk)) return false;
+    const size_t want = static_cast<size_t>(seconds * fsHost); const double idleV = idle(); out.clear();
+    HostDecimator dec, decR; dec.Init(fsHost); decR.Init(fsHost); std::vector<float> rsp; double s;
+    for (size_t i = 0; i < ts.size(); ++i) { dec.Push(ts[i], ys[i] - idleV); while (dec.Pop(s)) out.push_back(static_cast<float>(s)); }
+    while (dec.Pop(s)) out.push_back(static_cast<float>(s)); if (out.size() > want) out.resize(want);
+    for (size_t i = 0; i < tk.size(); ++i) { decR.Push(tk[i], dyk[i]); while (decR.Pop(s)) rsp.push_back(static_cast<float>(s)); }
+    while (decR.Pop(s)) rsp.push_back(static_cast<float>(s));
+    for (size_t i = 0; i < rsp.size() && i < out.size(); ++i) out[i] += rsp[i];
+    return true;
+  }
+  NoiseReplay<Mdl> replay_;
   bool Render(const HitTuning& tu, HitNoise* noise, double seconds, double fsHost, std::vector<float>& out)
   {
+    if (tu.linNoiseT >= 0.0 && Mdl::kNT == 2 && noise) return RenderLin(tu, noise, seconds, fsHost, out);
     HostDecimator dec; dec.Init(fsHost); out.clear(); const size_t want = static_cast<size_t>(seconds * fsHost);
     auto drain = [&] { double s; while (dec.Pop(s)) out.push_back(static_cast<float>(s)); };
     const bool ok = RunSteps(tu, noise, seconds, [&](double t, double y) { dec.Push(t, y - idle()); drain(); });
@@ -250,12 +339,21 @@ private:
     if (built_) { auto props = std::move(m_->props); auto half = std::move(m_->halfIdx); m_.reset(new Model()); if (usePot_) m_->pm = pot_; m_->Init(); m_->props = std::move(props); m_->halfIdx = std::move(half); }
     else { m_->Init(); built_ = true; }
     Model& m = *m_;
-    m.dampOn = true; m.dampRatio = 0.01; m.noFallback = true; m.zohW = tu.zohW; m.chordFirst = tu.chordFirst; m.capThr = tu.capThr; m.fastDot = true; m.fastSolve = true;
+    m.dampOn = true; m.dampRatio = 0.01; m.noFallback = true; m.zohW = tu.zohW; m.chordFirst = tu.chordFirst; m.capThr = tu.capThr; m.fastLinAlg = tu.fastLinAlg; m.fastDot = true; m.fastSolve = true;
 #ifdef DGG_HC_ENV_KNOBS   // test harness only: solver settings of the engine phase from the environment
     if (const char* e = std::getenv("PREDW")) m.predW = std::atof(e);
     if (const char* e = std::getenv("CHORDFIRST")) m.chordFirst = std::atof(e);
     if (const char* e = std::getenv("ASTOL")) m.asTol = std::atof(e);
     if (std::getenv("EVCACHE")) m.evCache = true;
+    if (const char* e = std::getenv("ERRWNODE")) { int nd = 0; double w = 1.0; if (std::sscanf(e, "%d:%lf", &nd, &w) == 2 && nd >= 0 && nd < Mdl::kNS) m.nodeW[nd] = w; }
+    if (const char* e = std::getenv("QLSKIP")) m.qlSkip = std::atoi(e);
+    if (const char* e = std::getenv("QLEHOLD")) m.qleHold = std::atoi(e);
+    if (const char* e = std::getenv("QLHOLD")) { m.qlHold = std::atoi(e); }
+    if (const char* e = std::getenv("QLTOL")) m.qlTol = std::atof(e);
+    if (const char* e = std::getenv("FRZCHK")) m.frzMode = std::atoi(e);
+    if (const char* e = std::getenv("FRZMUL")) m.frzMul = std::atof(e);
+    if (const char* e = std::getenv("FRZTHR")) m.frzThr = std::atof(e);
+    if (const char* e = std::getenv("JACTOL")) m.jacTol = std::atof(e);
     if (std::getenv("KEEPH")) m.keepAcrossH = true;   // BD-K25: the factorisation is kept across step size changes
     if (const char* e = std::getenv("CAPTHR")) m.capThr = std::atof(e);
     if (const char* e = std::getenv("QLC")) { m.QlcEnable(std::atoi(e) != 0); if (const char* g = std::getenv("QLCERR")) m.qlcErr = std::atof(g); }
@@ -271,10 +369,11 @@ private:
       for (int j = 1; j <= 10; ++j) m.SetHalf(pj_[j], pj_[j - 1]);
       m.SetHalf(pj_[0], m.Prepare(h0 * 0.5));
     }
+    { const double h0 = 1e-5 / 64.0; while ((int)pj_.size() <= tu.jMax) { const int j = (int)pj_.size(); pj_.push_back(m.Prepare(h0 * static_cast<double>(1 << j))); m.SetHalf(pj_[j], pj_[j - 1]); } }
   }
 
   std::unique_ptr<Model> m_; std::vector<int> pj_; bool built_ = false; typename Model::PotPtrs pot_{}; bool usePot_ = false, potStale_ = false;
-  HitTuning tu_; HitNoise* noise_ = nullptr; long long knotN_ = 1, nEnd_ = 0, n_ = 0, preN_ = 0; int j_ = 0;
+  unsigned potVer_ = 0; HitTuning tu_; HitNoise* noise_ = nullptr; long long knotN_ = 1, noiseOffN_ = 1LL << 40, nEnd_ = 0, n_ = 0, preN_ = 0; int j_ = 0;
   double gFprev_[Mdl::kNF] = {0}, gHprev_ = 0.0, gEnv_ = 0.0, t_ = 0.0, y_ = 0.0;
 };
 

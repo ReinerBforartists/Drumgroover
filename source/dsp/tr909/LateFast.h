@@ -12,7 +12,12 @@ namespace dgg { namespace pcmfast {
 // dense helpers (row-major, small)
 inline void MatMulN(const double* a, const double* b, double* c, int n, int m, int k)   // c(n x k) = a(n x m) b(m x k)
 {
-  for (int i = 0; i < n; ++i) for (int j = 0; j < k; ++j) { double s = 0.0; for (int l = 0; l < m; ++l) s += a[i * m + l] * b[l * k + j]; c[i * k + j] = s; }
+  // row-wise accumulation: every element sums its products in the same order (l ascending) as the dot-product form, so the result is bitwise the same; zero entries of a are skipped
+  for (int i = 0; i < n; ++i)
+  {
+    double* ci = c + (size_t)i * k; for (int j = 0; j < k; ++j) ci[j] = 0.0;
+    for (int l = 0; l < m; ++l) { const double av = a[(size_t)i * m + l]; if (av == 0.0) continue; const double* bl = b + (size_t)l * k; for (int j = 0; j < k; ++j) ci[j] += av * bl[j]; }
+  }
 }
 inline bool SolveN(std::vector<double> A, std::vector<double>& B, int n, int nrhs)   // A x = B, B overwritten with x (partial pivoting)
 {

@@ -112,6 +112,7 @@ public:
     for (int i = 0; i < kTr909AnchorCount; ++i) if (kTr909Anchors[i] == req.anchorCode) a = i;
     if (a < 0 || (req.voice != Tr909Voice::Lt && req.voice != Tr909Voice::Mt && req.voice != Tr909Voice::Ht && req.voice != Tr909Voice::Bd) || req.noise != Tr909NoisePath::Reference5us || n < 1 || n > GroupSize(req.voice)) return false;
     SlotBase* slot = SlotFor(req.voice, req.anchorCode); if (!slot) return false;
+    if (req.voice == Tr909Voice::Bd && pcmfast::HitTuningFor(Tr909Voice::Bd, false).linNoiseT >= 0.0) return slot->RenderGroup(req.voice, req.params, seeds, n, req.seconds, req.sampleRateHz, out);   // one noise-free run for the group
     Tr909LanePot lp; const Tr909LanePot* pot = slot->LanePotFor(req.voice, req.params, lp);   // the set stays in the slot of this thread until the next call with other pots
     const double fs = static_cast<double>(req.sampleRateHz);
     return req.voice == Tr909Voice::Lt ? Tr909LaneRenderLT(a, seeds, n, req.seconds, fs, out, &BakeAborted, pot)
@@ -164,6 +165,7 @@ private:
     virtual void Warm(Tr909Voice v, uint64_t params, bool fast20) = 0;
     virtual bool Begin(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, int accentCode) = 0;
     virtual int Pull(float* out, int n) = 0;
+    virtual bool RenderGroup(Tr909Voice, uint64_t, const uint64_t*, int, double, int, std::vector<float>*) { return false; }   // n noise sequences of one parameter set in one go (linear-response voices)
     virtual void Prebuild(Tr909Voice, int) {}   // builds what the first hit would build (tables of the model at the sample rate), without starting a hit
   };
 
@@ -198,6 +200,12 @@ private:
       ApplyPots(v, params);
       pcmfast::HitNoise noise; noise.Start(seed, fast20 ? 20 * 1e-6 : 5e-6, fast20 ? 0.13 : 0.0);   // 20 * 1e-6: the exact step the validation used
       return runner.Render(pcmfast::HitTuningFor(v, fast20), &noise, seconds, static_cast<double>(fs), out);
+    }
+    bool RenderGroup(Tr909Voice v, uint64_t params, const uint64_t* seeds, int n, double seconds, int fs, std::vector<float>* out) override
+    {
+      const pcmfast::HitTuning tu = pcmfast::HitTuningFor(v, false); if (tu.linNoiseT < 0.0 || n < 1 || n > 4) return false;
+      ApplyPots(v, params); pcmfast::HitNoise nz[4]; for (int l = 0; l < n; ++l) nz[l].Start(seeds[l], 5e-6, 0.0);
+      return runner.RenderLinGroup(tu, nz, n, seconds, static_cast<double>(fs), out);
     }
     void Warm(Tr909Voice v, uint64_t params, bool fast20) override { ApplyPots(v, params); runner.Warm(pcmfast::HitTuningFor(v, fast20)); }
     bool Begin(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, int) override
