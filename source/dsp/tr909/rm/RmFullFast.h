@@ -7,6 +7,12 @@
 #ifndef RMF_FULLFAST_DIOWARM
 #define RMF_FULLFAST_DIOWARM 0
 #endif
+#ifndef RMF_ASET
+#define RMF_ASET 1   // RM-K08/K12: active-set Newton (ports whose column of the matrix moves by < ASTOL stay unit columns), 2.6 -> 2.1 ms per hit
+#endif
+#ifndef RMF_ASTOL
+#define RMF_ASTOL 1e-2
+#endif
 #ifndef RMF_KPRED
 #define RMF_KPRED 1.0
 #endif
@@ -171,6 +177,9 @@ template <class M> struct FullFast
   static constexpr double kSoftTol = 1e-3, kSoftY = 1e-6, kSoftZ = 1e-4, kSoftRes = 1e-4; long softAccepts = 0; double softMaxY = 0, softMaxZ = 0, softMaxRes = 0;   // after 50 iterations a last correction below this is accepted
   double kChordFirst = RMF_KCHORD_FIRST;   // largest first correction (V) with which the kept factorisation is still trusted
   double lastY = 0, lastZ = 0, lastR = 0; int dbgId = -1, traceCount = 0, lastPort = 0; double lastMx = 0, lastP = 0; long facs = 0, fails = 0, retries = 0; std::vector<int> halfIdx; double portVt[NP > 0 ? NP : 1], portVcrit[NP > 0 ? NP : 1];   // junction ports: thermal voltage and critical voltage for the limiting (0 for the other ports)
+#if RMF_ASET
+  double LUA[NP][NP], JIA[NP][NP], invDA[NP]; int pivA[NP], actL[NP], inL[NP], nA = NP, nI = 0; long asSumA = 0, asN = 0;   // active-set Newton: ports whose device slopes move the matrix column by < RMF_ASTOL are treated as unit columns
+#endif
   double LU[NP][NP], invD[NP]; int piv[NP]; bool luOk = false; int luProp = -1;   // factorisation of the Newton matrix kept between steps (chord iteration)
   mutable double dioVj[M::kNumDio > 0 ? M::kNumDio : 1] = {0}; double dioXbv[M::kNumDio > 0 ? M::kNumDio : 1] = {0};   // series-resistance diodes: breakdown offset evaluated once, junction voltage of the previous call as start of the inner iteration
   unsigned long long prof[8] = {0}, tlast_ = 0;
@@ -487,6 +496,28 @@ template <class M> struct FullFast
         for (int a2 = 0; a2 < NP; ++a2) { Fc[a2] = F[a2]; for (int b2 = 0; b2 < NP; ++b2) Jc[a2][b2] = LU[a2][b2]; }
 #endif
         RMF_FP_T(3)
+#ifdef RMF_LUSTAT   // test harness only: occupancy of the Newton matrix before the LU, and the columns whose deviation from the unit matrix is small (quasi linear ports)
+        { static long nf = 0, nz1 = 0, nz9 = 0, ql2 = 0, ql3 = 0, ql4 = 0; ++nf; for (int i = 0; i < NP; ++i) { double mx = 0; for (int j = 0; j < NP; ++j) mx = std::fmax(mx, std::fabs(LU[i][j])); for (int j = 0; j < NP; ++j) { if (LU[i][j] != 0.0) ++nz1; if (std::fabs(LU[i][j]) > 1e-9 * mx) ++nz9; } }
+          for (int b = 0; b < NP; ++b) { double dv = 0; for (int a = 0; a < NP; ++a) dv = std::fmax(dv, std::fabs(LU[a][b] - (a == b ? 1.0 : 0.0))); if (dv < 1e-2) ++ql2; if (dv < 1e-3) ++ql3; if (dv < 1e-4) ++ql4; }
+          if ((nf & 1023) == 0) std::printf("LUSTAT factorisations %ld: nonzero %.1f %%, above 1e-9 %.1f %%; ports of %d with column deviation < 1e-2: %.1f, < 1e-3: %.1f, < 1e-4: %.1f\n", nf, 100.0 * nz1 / (double(nf) * NP * NP), 100.0 * nz9 / (double(nf) * NP * NP), NP, double(ql2) / nf, double(ql3) / nf, double(ql4) / nf); }
+#endif
+#if RMF_ASET
+        {   // active set: the columns of the ports whose devices barely move the matrix (|J - 1| < RMF_ASTOL in every row) are unit columns; only the active block is factorised
+          nA = 0; nI = 0;
+          { double dv[NP]; for (int b = 0; b < NP; ++b) dv[b] = 0.0; for (int a = 0; a < NP; ++a) { LU[a][a] -= 1.0; for (int b = 0; b < NP; ++b) { const double v = LU[a][b] < 0.0 ? -LU[a][b] : LU[a][b]; dv[b] = dv[b] > v ? dv[b] : v; } LU[a][a] += 1.0; } for (int b = 0; b < NP; ++b) { if (dv[b] >= RMF_ASTOL) actL[nA++] = b; else inL[nI++] = b; } }
+          asSumA += nA; ++asN;
+          for (int ia = 0; ia < nA; ++ia) for (int ja = 0; ja < nA; ++ja) LUA[ia][ja] = LU[actL[ia]][actL[ja]];
+          for (int ii = 0; ii < nI; ++ii) for (int ja = 0; ja < nA; ++ja) JIA[ii][ja] = LU[inL[ii]][actL[ja]];
+          for (int c = 0; c < nA; ++c)
+          {
+            int pr = c; double mx = std::fabs(LUA[c][c]); for (int i2 = c + 1; i2 < nA; ++i2) if (std::fabs(LUA[i2][c]) > mx) { mx = std::fabs(LUA[i2][c]); pr = i2; }
+            pivA[c] = pr;
+            if (pr != c) for (int j2 = 0; j2 < nA; ++j2) std::swap(LUA[c][j2], LUA[pr][j2]);
+            const double inv = 1.0 / LUA[c][c]; invDA[c] = inv;
+            for (int i2 = c + 1; i2 < nA; ++i2) { const double fct = LUA[i2][c] * inv; LUA[i2][c] = fct; if (fct == 0.0) continue; for (int j2 = c + 1; j2 < nA; ++j2) LUA[i2][j2] -= fct * LUA[c][j2]; }
+          }
+        }
+#else
         // LU with partial pivoting, in place (multipliers kept below the diagonal)
         for (int c = 0; c < NP; ++c)
         {
@@ -496,6 +527,7 @@ template <class M> struct FullFast
           const double inv = 1.0 / LU[c][c]; invD[c] = inv;
           for (int i = c + 1; i < NP; ++i) { const double fct = LU[i][c] * inv; LU[i][c] = fct; if (fct == 0.0) continue; for (int j = c + 1; j < NP; ++j) LU[i][j] -= fct * LU[c][j]; }
         }
+#endif
         luOk = true; luProp = pi; refac = false; fresh = true; firstChord = true; ++facs; RMF_FP_T(4)
       }
       else
@@ -505,9 +537,20 @@ template <class M> struct FullFast
 #ifdef RMF_FULLFAST_PROFILE
       double fmax0 = 0.0; for (int a = 0; a < NP; ++a) fmax0 = std::fmax(fmax0, std::fabs(F[a]));
 #endif
+#if RMF_ASET
+      {
+        double Fa[NP]; for (int ia = 0; ia < nA; ++ia) Fa[ia] = F[actL[ia]];
+        for (int c = 0; c < nA; ++c) if (pivA[c] != c) std::swap(Fa[c], Fa[pivA[c]]);
+        for (int c = 0; c < nA; ++c) for (int i2 = c + 1; i2 < nA; ++i2) Fa[i2] -= LUA[i2][c] * Fa[c];
+        for (int c = nA - 1; c >= 0; --c) { const double xc = Fa[c] * invDA[c]; Fa[c] = xc; for (int i2 = 0; i2 < c; ++i2) Fa[i2] -= LUA[i2][c] * xc; }
+        for (int ii = 0; ii < nI; ++ii) { double v = F[inL[ii]]; for (int ja = 0; ja < nA; ++ja) v -= JIA[ii][ja] * Fa[ja]; F[inL[ii]] = v; }
+        for (int ia = 0; ia < nA; ++ia) F[actL[ia]] = Fa[ia];
+      }
+#else
       for (int c = 0; c < NP; ++c) if (piv[c] != c) std::swap(F[c], F[piv[c]]);   // all interchanges first (the multipliers are stored with their rows permuted), then L, then U
       for (int c = 0; c < NP; ++c) for (int i = c + 1; i < NP; ++i) F[i] -= LU[i][c] * F[c];
       for (int c = NP - 1; c >= 0; --c) { const double xc = F[c] * invD[c]; F[c] = xc; for (int i = 0; i < c; ++i) F[i] -= LU[i][c] * xc; }   // column-oriented back substitution: the updates of one column are independent of each other
+#endif
 #ifdef FULLFAST_DEBUG
       if (refac == false && fresh && steps < 2) { double r = 0; for (int a2 = 0; a2 < NP; ++a2) { double v = -Fc[a2]; for (int b2 = 0; b2 < NP; ++b2) v += Jc[a2][b2] * F[b2]; r = std::fmax(r, std::fabs(v)); } std::printf("  linear solve residual %.3e (max |F| %.3e)\n", r,[&]{ double m2 = 0; for (int a2 = 0; a2 < NP; ++a2) m2 = std::fmax(m2, std::fabs(Fc[a2])); return m2; }()); }
 #endif

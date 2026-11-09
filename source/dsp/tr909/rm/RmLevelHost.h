@@ -411,7 +411,7 @@ private:
   }
   static constexpr int kLimDefault[6] = {1920, 7680, 38400, 76800, 153600, 1 << 30};   // 5 / 20 / 100 / 200 / 400 ms: from there on the step is doubled (units of the base step)
 public:
-  static inline int kLim[8] = {144, 288, 576, 1152, 2880, 9600, 1 << 30, 1 << 30};   // tuning access
+  static inline int kLim[8] = {144, 288, 576, 1152, 2304, 4800, 38400, 153600};   // tuning access; RM-K16: 2880 / 9600 / never / never before, 2.8 -> 2.6 ms per hit, dynamic regression seq_all 0 FAIL
 private:
   static constexpr double kEndLevel = RMF_KEND_LEVEL, kEndSeconds = 0.005, kRelaxSeconds = RMF_KRELAX_SEC;
   Chan ch[S::kN]; std::vector<Step> sched; int schedBase = 0, pj[kRelaxJ + 1] = {0};
