@@ -4,6 +4,7 @@
 #pragma once
 #include "909BakeHost.h"
 #include "tr909/HitRunner.h"
+#include "tr909/HitLive.h"
 #include "tr909/HitLanesApi.h"
 #include "tr909/PcmHatAvx2.h"
 #include "tr909/models/lt_a25.h"
@@ -84,6 +85,7 @@
 #include "909PotParams.h"
 #include <atomic>
 #include <memory>
+#include <mutex>
 
 namespace dgg {
 
@@ -123,6 +125,7 @@ public:
   void Prebuild(int sampleRateHz) override   // the slots of the PCM voices (hi-hats, crash, ride) with their tables, so that the first live hit builds nothing on the audio thread; call from a non-audio thread
   {
     for (const Tr909Voice v : { Tr909Voice::Hh, Tr909Voice::Ho, Tr909Voice::Cr, Tr909Voice::Ri }) if (SlotBase* s = SlotFor(v, 0)) s->Prebuild(v, sampleRateHz);
+    for (int i = 0; i < kTr909AnchorCount; ++i) if (SlotBase* s = SlotFor(Tr909Voice::Bd, kTr909Anchors[i])) s->Prebuild(Tr909Voice::Bd, sampleRateHz);   // BD: the sample rate of the prepared live hits (Warm() builds them)
   }
   bool Warm(Tr909Voice v, int accentCode, Tr909NoisePath np, uint64_t params = 0) override
   {
@@ -195,6 +198,21 @@ private:
       else if (runnerId_ != sel->id) { runner.SetPot(potSet.Ptrs()); runnerId_ = sel->id; }
     }
     uint64_t runnerId_ = 0;
+    // Live form in the linear-response mode (HitLive.h): prepared by Warm() on a non-audio thread for the sample rate set by Prebuild(); a hit uses it only when the parameter set (pots), sample rate and length match, else the
+    // stepwise solver below runs the hit. The prepared object is replaced as a whole; the audio thread holds its own reference during a hit, retired objects are released on the preparing thread.
+    using Live = pcmfast::LiveLin<Mdl, Pot>;
+    std::shared_ptr<Live> live_, hit_; std::vector<std::shared_ptr<Live>> retired_; int liveFs_ = 0; long hitWant_ = 0, hitProduced_ = 0; std::mutex liveMutex_;
+    void Prebuild(Tr909Voice, int fs) override { liveFs_ = fs; }
+    void BuildLive(Tr909Voice v, uint64_t params)
+    {
+      const pcmfast::HitTuning tu = pcmfast::HitTuningFor(v, false); if (tu.linNoiseT < 0.0 || liveFs_ <= 0) return;
+      std::lock_guard<std::mutex> lk(liveMutex_);   // one preparation at a time
+      std::shared_ptr<Live> cur = std::atomic_load(&live_); if (cur && cur->Ready() && cur->Key() == params && cur->SampleRate() == liveFs_) return;
+      double pots[8]; if (params != 0) Tr909UnpackPots(v, params, pots);
+      std::shared_ptr<Live> nl = std::make_shared<Live>(); if (!nl->Prepare(tu, params != 0 ? pots : nullptr, params, liveFs_, 0.35)) return;
+      std::atomic_store(&live_, nl); if (cur) retired_.push_back(cur);
+      for (size_t i = 0; i < retired_.size();) { if (retired_[i].use_count() == 1) retired_.erase(retired_.begin() + static_cast<long>(i)); else ++i; }   // not referenced by a running hit
+    }
     bool Render(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, std::vector<float>& out, int) override
     {
       ApplyPots(v, params);
@@ -207,9 +225,11 @@ private:
       ApplyPots(v, params); pcmfast::HitNoise nz[4]; for (int l = 0; l < n; ++l) nz[l].Start(seeds[l], 5e-6, 0.0);
       return runner.RenderLinGroup(tu, nz, n, seconds, static_cast<double>(fs), out);
     }
-    void Warm(Tr909Voice v, uint64_t params, bool fast20) override { ApplyPots(v, params); runner.Warm(pcmfast::HitTuningFor(v, fast20)); }
+    void Warm(Tr909Voice v, uint64_t params, bool fast20) override { ApplyPots(v, params); runner.Warm(pcmfast::HitTuningFor(v, fast20)); if (!fast20) BuildLive(v, params); }
     bool Begin(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, int) override
     {
+      hit_.reset();
+      if (!fast20 && fs == liveFs_) { std::shared_ptr<Live> lv = std::atomic_load(&live_); if (lv && lv->Ready() && lv->Key() == params && lv->SampleRate() == fs && seconds <= lv->Seconds() + 1e-9) { hit_ = lv; hit_->Begin(seed); hitWant_ = static_cast<long>(seconds * fs); hitProduced_ = 0; return true; } }
       ApplyPots(v, params);
       noise_.Start(seed, fast20 ? 20 * 1e-6 : 5e-6, fast20 ? 0.13 : 0.0);
       dec_.Init(static_cast<double>(fs)); produced_ = 0; want_ = static_cast<long>(seconds * fs);
@@ -218,6 +238,7 @@ private:
     // Same steps, same decimator, same order as Render(): the samples are identical to the rendered hit.
     int Pull(float* out, int n) override
     {
+      if (hit_) { const int want = static_cast<int>(std::min<long>(n, hitWant_ - hitProduced_)); const int got = want > 0 ? hit_->Pull(out, want) : 0; hitProduced_ += got; return got; }
       int w = 0; double smp;
       while (w < n && produced_ < want_)
       {

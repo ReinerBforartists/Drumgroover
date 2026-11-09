@@ -45,7 +45,7 @@ struct HitTuning
   double errT = 0.0;         // errMode 1 / 2 apply from this time (s after the trigger); before it the node error is used
   double noiseOffT = -1.0;   // >= 0: from this time (s after the trigger, rounded down to a noise knot) the noise source keeps its value at that knot; its response at the output has died out, the steps are no longer tied to the noise knots
   double linNoiseT = -1.0;   // >= 0: the response to the noise is computed as the linear response around the noise-free trajectory (HitReplay.h) for the first linNoiseT seconds, the hit itself runs without noise
-  double linYtol = 1e-3, linTailMul = 2.0, replayThr = 0.3, replayLater = 12.0; bool replayRefine = false;
+  double linYtol = 1e-3, linTailMul = 2.0, replayThr = 0.3, replayLater = 12.0; bool replayRefine = false, replayFloat = false;
   double linT2T = 0.0, linT2Mul = 1.0;   // milder tolerance stage of the noise-free run between linT2T and linNoiseT
   int jMax = 10;             // largest step 2^jMax x 0.156 us
   bool detReuse = false;     // linear-response mode: the noise-free run of the last hit is reused when model, pots, tuning and length are the same (the run does not depend on the noise)   // tolerance of the noise-free run before linNoiseT, factor on it after linNoiseT
@@ -87,6 +87,7 @@ public:
   // Constant source at the idle level (no noise) with knots every `stepSeconds`: separates the cost of the knots from the cost of the noise.
   void StartSilent(double stepSeconds) { Start(0, stepSeconds, 0.0); amp_ = 0.0; }
   double step() const { return step_; }
+  void Reserve(size_t n) { smp_.reserve(n); }   // capacity for the knots of a hit: At() then allocates nothing
   void Scale(double s) { amp_ *= s; }   // test harness: scaled noise amplitude (linearity of the response to the noise)
   double At(double t)
   {
@@ -120,10 +121,14 @@ inline double HitTrigger(double t)
   if (t < 2e-5 + 2e-3) return 5.0 * (1.0 - (t - 1e-5 - 2e-3) / 1e-5); return 0.0;
 }
 
+template <class Mdl, class Pot> class LiveLin;
+
 template <class Mdl>
 class HitRunner
 {
 public:
+  template <class M2, class P2> friend class LiveLin;
+  static constexpr double StartTime() { return 0.05; }
   using Model = FullFast2<Mdl>;
   static_assert(Mdl::kNT == 1 || Mdl::kNT == 2, "inputs: trigger, optionally the noise source first");
 
@@ -259,7 +264,7 @@ public:
   // The noise-free run (shared by all noise sequences of a group of hits).
   bool RunLinDet(const HitTuning& tu, double seconds, std::vector<double>& ts, std::vector<double>& ys)
   {
-    if (tu.detReuse && det_.valid && det_.potVer == potVer_ && det_.seconds == seconds && det_.sig == TuningSig(tu)) { ts = det_.ts; ys = det_.ys; replay_.tE = det_.tE; replay_.pE = det_.pE; std::copy(det_.p0, det_.p0 + Mdl::kNP, replay_.p0); return true; }
+    if (tu.detReuse && det_.valid && det_.potVer == potVer_ && det_.seconds == seconds && det_.sig == TuningSig(tu)) { ts = det_.ts; ys = det_.ys; return true; }   // replay_ still holds the trajectory and the epochs of this run (only RunLinDet changes them)
     det_.valid = false;
     HitNoise silent; silent.StartSilent(0.05);
     HitTuning td = tu; td.noiseOffT = -1.0; td.ytol = tu.linYtol; td.ytail2T = tu.linT2T; td.ytail2Mul = tu.linT2Mul; td.ytailT = tu.linNoiseT; td.ytailMul = tu.linTailMul;
@@ -272,16 +277,16 @@ public:
       Advance(); if (t_ <= tRep + 0.001) replay_.Record(t_, m.p);
       ts.push_back(t_); ys.push_back(y_);
     }
-    if (tu.detReuse) { det_.valid = true; det_.potVer = potVer_; det_.seconds = seconds; det_.sig = TuningSig(tu); det_.ts = ts; det_.ys = ys; det_.tE = replay_.tE; det_.pE = replay_.pE; std::copy(replay_.p0, replay_.p0 + Mdl::kNP, det_.p0); }
+    replay_.thr = tu.replayThr; replay_.laterMul = tu.replayLater; replay_.refine = tu.replayRefine; replay_.single = tu.replayFloat; replay_.Prime(m, pj_[5], tRep);   // Jacobi epochs of the response for this trajectory
+    if (tu.detReuse) { det_.valid = true; det_.potVer = potVer_; det_.seconds = seconds; det_.sig = TuningSig(tu); det_.ts = ts; det_.ys = ys; }
     return true;
   }
   static double TuningSig(const HitTuning& t) { return t.ytol * 1.0 + t.yfloor * 3.0 + t.ytailT * 5.0 + t.ytailMul * 7.0 + t.ytail2T * 11.0 + t.ytail2Mul * 13.0 + t.dpTol * 17.0 + t.zohW * 19.0 + t.jGrow * 23.0 + t.capThr * 29.0 + t.chordFirst * 31.0 + t.linNoiseT * 37.0 + t.linYtol * 41.0 + t.linTailMul * 43.0 + t.linT2T * 53.0 + t.linT2Mul * 59.0 + t.jMax * 61.0 + t.fastLinAlg * 47.0; }
-  struct DetCache { bool valid = false; unsigned potVer = 0; double seconds = 0.0, sig = 0.0; std::vector<double> ts, ys, tE, pE; double p0[Mdl::kNP]; } det_;
+  struct DetCache { bool valid = false; unsigned potVer = 0; double seconds = 0.0, sig = 0.0; std::vector<double> ts, ys; } det_;
   // The response to the noise of `noise` around the noise-free trajectory of the last RunLinDet().
   bool RunLinResponse(const HitTuning& tu, HitNoise* noise, std::vector<double>& tk, std::vector<double>& dyk)
   {
-    tk.clear(); dyk.clear(); replay_.thr = tu.replayThr; replay_.laterMul = tu.replayLater; replay_.refine = tu.replayRefine;
-    replay_.Run(*m_, pj_[5], *noise, kStartTime, tu.linNoiseT + 0.01, [&](double t, double dy) { tk.push_back(t); dyk.push_back(dy); });
+    tk.clear(); dyk.clear(); replay_.Start(*noise, kStartTime, tu.linNoiseT + 0.01); double t, dy; while (replay_.Next(t, dy)) { tk.push_back(t); dyk.push_back(dy); }
     return true;
   }
   // n hits (noise sequences) of one parameter set: one noise-free run, one linear response per noise; out[l] at the host rate.
