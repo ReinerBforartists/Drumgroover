@@ -18,7 +18,7 @@ public:
   void SetPeriod(double period) { voice.SetPeriod(period); RecomputeCum(); }
   void SetAccent(double a) { accent = a; }                     // volts at the accent input, applied at the next Trigger
   // Hi-hat voices: the circuit is simulated down to a much lower level before the voice ends, and no synthetic relaxation of the output offset follows (kRelaxTau was measured on Crash and Ride only).
-  void SetHatMode(bool hat) { voice.acEndLevel = hat ? kAcEndLevelHat : kAcEndLevel; voice.newtonTol = hat ? kNewtonTolHat : kNewtonTol; voice.blockRel = hat ? kBlockRelHat : 0.0; voice.jReuse = hat ? kJReuseHat : 0; voice.qTable = hat; voice.dioMemoThr = hat ? kDioMemoHat : 0.0; relaxTau = hat ? 0.0 : kRelaxTau; }
+  void SetHatMode(bool hat) { voice.acEndLevel = hat ? kAcEndLevelHat : kAcEndLevel; voice.newtonTol = hat ? kNewtonTolHat : kNewtonTolCym; voice.tailRel = hat ? kTailRel : kTailRelCym; voice.blockRel = hat ? kBlockRelHat : 0.0; voice.jReuse = hat ? kJReuseHat : 0; voice.qTable = hat; voice.dioMemoThr = hat ? kDioMemoHat : 0.0; relaxTau = hat ? 0.0 : kRelaxTau; }
   void SetLevel(double lv) { level = lv < 0.001 ? 0.001 : (lv > 1.0 ? 1.0 : lv); }
   bool Active() const { return state != Idle; }
   void Trigger()

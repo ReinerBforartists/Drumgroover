@@ -25,7 +25,7 @@ namespace dgg { namespace pcmfast {
 
 constexpr double kSettlePeriod = 0.1; constexpr int kSettlePeriods = 300, kStagePeriods = 60, kRampPeriods = 100; constexpr double kStageLn = 0.4;   // idle settling: PCM period in seconds and number of periods
 constexpr double kChordMaxCorr = 0.2;   // volts: above this correction the next iteration is a full Newton iteration
-constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kNewtonTolHat = 3e-2, kBlockRelHat = 1e-4, kJReuseHat = 100, kDioMemoHat = 1e-9, kTailRel = 0.0, kEnvDecay = 0.975, kAcAlpha = 0.0031, kAcEndLevel = 2e-4, kAcEndLevelHat = 2e-7; constexpr int kAcEndPeriods = 400;   // volts on the port voltages; the correction is applied before the test, so the error left is of the order of the square
+constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kNewtonTolCym = 3e-3, kNewtonTolHat = 3e-2, kBlockRelHat = 1e-4, kJReuseHat = 100, kDioMemoHat = 1e-9, kTailRel = 0.0, kTailRelCym = 1e-2, kEnvDecay = 0.975, kAcAlpha = 0.0031, kAcEndLevel = 1e-3, kAcEndLevelHat = 2e-7; constexpr int kAcEndPeriods = 400;   // volts on the port voltages; the correction is applied before the test, so the error left is of the order of the square
 
 // Gummel-Poon static currents of one BJT in node orientation: ic = s*cc (leaving the collector node into the device), ib = s*cb, and the 2x2 Jacobian wrt (vbe, vbc)
 struct BjtOut { double ic, ib, d[2][2]; };
@@ -34,12 +34,13 @@ struct BjtOut { double ic, ib, d[2][2]; };
 inline BjtOut BjtEvalFast(const double* P, double vbe, double vbc)
 {
   const double s = P[0], IS = P[1], ISE = P[8], invNFVt = P[9], invNEVt = P[10], invVAF = P[11], invIKF = P[12], invBF = P[13], invBR = P[14];
-  const double eE = std::exp(std::fmin(vbe * invNFVt, 80.0));
+  const double aE = vbe * invNFVt, aL = vbe * invNEVt;   // exp(a) < 2.4e-16 for a < -36: the junction is in deep cutoff, the exponential is dropped (change below the rounding of IS)
+  const double eE = aE < -36.0 ? 0.0 : std::exp(std::fmin(aE, 80.0));
   const double cbe = IS * (eE - 1.0) + kGmin * vbe, gbe = IS * eE * invNFVt + kGmin;
   double cbc = kGmin * vbc, gbc = kGmin;
   if (vbc > 0.1) { const double eC = std::exp(std::fmin(vbc * (1.0 / kVt), 80.0)); cbc = IS * (eC - 1.0) + kGmin * vbc; gbc = IS * eC * (1.0 / kVt) + kGmin; }
   double cben = 0.0, gben = 0.0;
-  if (ISE != 0.0) { const double eL = std::exp(std::fmin(vbe * invNEVt, 80.0)); cben = ISE * (eL - 1.0); gben = ISE * eL * invNEVt; }
+  if (ISE != 0.0) { const double eL = aL < -36.0 ? 0.0 : std::exp(std::fmin(aL, 80.0)); cben = ISE * (eL - 1.0); gben = ISE * eL * invNEVt; }
   const double iq1 = 1.0 - vbc * invVAF;                         // 1/q1 (Early effect)
   const double q2 = cbe * invIKF, dq2 = gbe * invIKF;
   const double g = 1.0 - q2 + 2.0 * q2 * q2, dg = (-1.0 + 4.0 * q2) * dq2;    // 1/(1 + q2 - q2^2), series in the small q2
