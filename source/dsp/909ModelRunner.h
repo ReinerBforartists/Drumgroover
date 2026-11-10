@@ -140,6 +140,7 @@ public:
     for (int i = 0; i < n; ++i)
     {
       SlotBase* s = SlotFor(v, runs[i].anchorCode); if (!s) { liveN_ = 0; return false; }
+      s->SetCoarse(n == 2 && (runs[i].weight < 0.5 || (runs[i].weight == 0.5 && i == 1)));
       if (!s->Begin(v, params, np == Tr909NoisePath::Fast20us, noiseSeed, seconds, sampleRateHz, runs[i].anchorCode)) { liveN_ = 0; return false; }
       live_[i] = s; liveW_[i] = runs[i].weight;
     }
@@ -168,6 +169,7 @@ private:
     virtual void Warm(Tr909Voice v, uint64_t params, bool fast20) = 0;
     virtual bool Begin(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, int accentCode) = 0;
     virtual int Pull(float* out, int n) = 0;
+    virtual void SetCoarse(bool) {}   // the next Begin() may use the coarse live form (the run with the smaller weight of a blend; BD-D28)
     virtual bool RenderGroup(Tr909Voice, uint64_t, const uint64_t*, int, double, int, std::vector<float>*) { return false; }   // n noise sequences of one parameter set in one go (linear-response voices)
     virtual void Prebuild(Tr909Voice, int) {}   // builds what the first hit would build (tables of the model at the sample rate), without starting a hit
   };
@@ -201,16 +203,23 @@ private:
     // Live form in the linear-response mode (HitLive.h): prepared by Warm() on a non-audio thread for the sample rate set by Prebuild(); a hit uses it only when the parameter set (pots), sample rate and length match, else the
     // stepwise solver below runs the hit. The prepared object is replaced as a whole; the audio thread holds its own reference during a hit, retired objects are released on the preparing thread.
     using Live = pcmfast::LiveLin<Mdl, Pot>;
-    std::shared_ptr<Live> live_, hit_; std::vector<std::shared_ptr<Live>> retired_; int liveFs_ = 0; long hitWant_ = 0, hitProduced_ = 0; std::mutex liveMutex_;
+    std::shared_ptr<Live> live_, liveC_, hit_; std::vector<std::shared_ptr<Live>> retired_; int liveFs_ = 0; long hitWant_ = 0, hitProduced_ = 0; std::mutex liveMutex_; bool coarse_ = false;
     void Prebuild(Tr909Voice, int fs) override { liveFs_ = fs; }
+    void SetCoarse(bool c) override { coarse_ = c; }
+    // Two prepared forms per parameter set: the fine one (noise knots of the response every 10 us) and the coarse one (20 us, about half the cost per hit, response differs by -35 ... -57 dB re signal) for the run of a blend whose weight is below one half.
     void BuildLive(Tr909Voice v, uint64_t params)
     {
       const pcmfast::HitTuning tu = pcmfast::HitTuningFor(v, false); if (tu.linNoiseT < 0.0 || liveFs_ <= 0) return;
       std::lock_guard<std::mutex> lk(liveMutex_);   // one preparation at a time
-      std::shared_ptr<Live> cur = std::atomic_load(&live_); if (cur && cur->Ready() && cur->Key() == params && cur->SampleRate() == liveFs_) return;
       double pots[8]; if (params != 0) Tr909UnpackPots(v, params, pots);
-      std::shared_ptr<Live> nl = std::make_shared<Live>(); if (!nl->Prepare(tu, params != 0 ? pots : nullptr, params, liveFs_, 0.35)) return;
-      std::atomic_store(&live_, nl); if (cur) retired_.push_back(cur);
+      for (int form = 0; form < 2; ++form)
+      {
+        std::shared_ptr<Live>& slotPtr = form == 0 ? live_ : liveC_;
+        std::shared_ptr<Live> cur = std::atomic_load(&slotPtr); if (cur && cur->Ready() && cur->Key() == params && cur->SampleRate() == liveFs_) continue;
+        pcmfast::HitTuning tf = tu; if (form == 1) tf.replayKnot = 20;
+        std::shared_ptr<Live> nl = std::make_shared<Live>(); if (!nl->Prepare(tf, params != 0 ? pots : nullptr, params, liveFs_, 0.35)) return;
+        std::atomic_store(&slotPtr, nl); if (cur) retired_.push_back(cur);
+      }
       for (size_t i = 0; i < retired_.size();) { if (retired_[i].use_count() == 1) retired_.erase(retired_.begin() + static_cast<long>(i)); else ++i; }   // not referenced by a running hit
     }
     bool Render(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, std::vector<float>& out, int) override
@@ -229,7 +238,7 @@ private:
     bool Begin(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, int) override
     {
       hit_.reset();
-      if (!fast20 && fs == liveFs_) { std::shared_ptr<Live> lv = std::atomic_load(&live_); if (lv && lv->Ready() && lv->Key() == params && lv->SampleRate() == fs && seconds <= lv->Seconds() + 1e-9) { hit_ = lv; hit_->Begin(seed); hitWant_ = static_cast<long>(seconds * fs); hitProduced_ = 0; return true; } }
+      if (!fast20 && fs == liveFs_) { std::shared_ptr<Live> lv = coarse_ ? std::atomic_load(&liveC_) : std::atomic_load(&live_); if (!lv || !lv->Ready()) lv = std::atomic_load(&live_); if (lv && lv->Ready() && lv->Key() == params && lv->SampleRate() == fs && seconds <= lv->Seconds() + 1e-9) { hit_ = lv; hit_->Begin(seed); hitWant_ = static_cast<long>(seconds * fs); hitProduced_ = 0; return true; } }
       ApplyPots(v, params);
       noise_.Start(seed, fast20 ? 20 * 1e-6 : 5e-6, fast20 ? 0.13 : 0.0);
       dec_.Init(static_cast<double>(fs)); produced_ = 0; want_ = static_cast<long>(seconds * fs);
