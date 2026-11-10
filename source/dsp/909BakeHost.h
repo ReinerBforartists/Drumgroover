@@ -45,6 +45,12 @@ public:
   // Writes the next samples of the running hit; fewer than n only at its end.
   virtual int Pull(float* out, int n) = 0;
   virtual bool Active() const = 0;
+  // Position of the trigger in the shared noise stream (knot, HitNoise::kNoStream: none) for the next Start(); default: ignored.
+  virtual void SetStreamKnot(uint64_t knot) { (void)knot; }
+  // Sources that run hits from prepared sets (the BD in the shared noise stream): PrepareLive() builds what a hit of this accent needs (non-audio thread), LiveReady() says whether all of it is prepared for exactly these
+  // pots and this sample rate (audio thread, no allocation); a hit that is not ready is played from the cache and the preparation is requested.
+  virtual bool LiveReady(Tr909Voice voice, int accentCode, uint64_t params) const { (void)voice; (void)accentCode; (void)params; return false; }
+  virtual bool PrepareLive(Tr909Voice voice, int accentCode, uint64_t params, int sampleRateHz) { (void)voice; (void)accentCode; (void)params; (void)sampleRateHz; return false; }
   // Builds the tables a first hit of the PCM voices would build (default: nothing); never on the audio thread.
   virtual void Prebuild(int sampleRateHz) { (void)sampleRateHz; }
 };

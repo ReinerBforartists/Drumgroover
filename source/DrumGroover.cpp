@@ -9,6 +9,7 @@
 #include "dsp/909Playback.h"
 #include "dsp/909FactoryDefaults.h"
 #include "dsp/909ModelRunner.h"
+#include "dsp/909CircuitBake.h"
 #include "dsp/BakeAbort.h"
 
 #include <fstream>
@@ -3449,7 +3450,7 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
   dgg::TR808VariantPoolBaker::Instance().PlanUnits(total);
   // Variants are baked in groups of up to four at once when the model of the voice has a lane engine on this machine (909BakeHost.h Tr909BakeVariantGroup); one or two left over are baked singly (a group of
   // fewer than three hits is not faster than the single hits). The units of the progress display stay the variants.
-  const int groupSize = dgg::Tr909FullModelRunner().GroupSize(key.voice);
+  const int groupSize = dgg::Tr909BakeRunner().GroupSize(key.voice);   // the circuit engine renders single hits (BD, SD, LT, MT, HT, HC at nominal pots), the per-voice lane engines the rest
   std::vector<std::vector<int>> groups;
   for (size_t i = 0; i < missing.size();)
   {
@@ -3466,7 +3467,7 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
       const std::vector<int>& ks = groups[slot]; const int cnt = (int)ks.size();
       for (int k : ks) MarkSlotStarted(baseName, k);
       const dgg::BakeScope bakeScope(abortGen);   // Pause and Close raise the counter: a hit being rendered then stops and is not stored
-      thread_local dgg::Tr909FullModelRunner runner;
+      thread_local dgg::Tr909BakeRunner runner([](const std::string& m) { DGG_Log(m); });   // the complete circuit (Net909) renders the hit; per-voice models only outside its coverage
       std::vector<float> taps[4]; dgg::Tr909BakeResult results[4];
       const auto t0 = std::chrono::steady_clock::now();
       if (dgg::BakeAborted()) { for (int i = 0; i < cnt; ++i) results[i] = dgg::Tr909BakeResult::RunFailed; }
@@ -3545,7 +3546,7 @@ void Enqueue909Preview(const dgg::Tr909SetKey& key)
       if (!(gPreview909Has[v] && gPreview909Params[v] == key.params)) { report(1, 1); return; }   // the knob moved on while this job waited: nothing to bake
     }
     const dgg::BakeScope bakeScope(abortGen);
-    thread_local dgg::Tr909FullModelRunner runner;
+    thread_local dgg::Tr909BakeRunner runner([](const std::string& m) { DGG_Log(m); });
     std::vector<float> tap; dgg::Tr909BakeResult res = dgg::Tr909BakeResult::RunFailed;
     if (!dgg::BakeAborted()) res = dgg::Tr909BakeVariant(key, 1, runner, tap);
     if (res == dgg::Tr909BakeResult::Ok && !tap.empty() && !dgg::BakeAborted())
@@ -4274,8 +4275,11 @@ void DrumGroover::Setup909Pools(double sampleRate)
   dgg::Tr909LiveSynth::Instance().Enable([]() -> std::unique_ptr<dgg::Tr909LiveSource> { return std::unique_ptr<dgg::Tr909LiveSource>(new dgg::Tr909FullModelRunner()); });   // the live first hit of a cache miss (idempotent)
   dgg::Tr909LiveSynth::Instance().Prebuild(static_cast<int>(std::lround(sampleRate)));   // tables of the PCM voices of the live source: the first live hit builds nothing on the audio thread
   // Experimental: live sources of the PCM voices (hi-hats, cymbals) instead of the cache; only with the environment variable DGG_PCM_LIVE=1 (default: off, the cache path plays). Built in the background (idempotent).
-  if (const char* live = std::getenv("DGG_PCM_LIVE")) if (live[0] == '1')
-    dgg::Tr909LiveBank::Instance().BuildAsync([]() -> std::unique_ptr<dgg::Tr909LiveSource> { return std::unique_ptr<dgg::Tr909LiveSource>(new dgg::Tr909FullModelRunner()); }, static_cast<int>(std::lround(sampleRate)));
+  {
+    const char* live = std::getenv("DGG_PCM_LIVE"); const bool pcmLive = live && live[0] == '1';
+    // the BD runs live from prepared sets in the shared noise stream (the PCM voices only with the switch above); built in the background, idempotent
+    dgg::Tr909LiveBank::Instance().BuildAsync(pcmLive ? +[]() -> std::unique_ptr<dgg::Tr909LiveSource> { return std::unique_ptr<dgg::Tr909LiveSource>(new dgg::Tr909FullModelRunner()); } : static_cast<dgg::Tr909LiveSynth::Factory>(nullptr), static_cast<int>(std::lround(sampleRate)), &dgg::Tr909FullModelRunner::MakeSharedSource);
+  }
   for (int i = 0; i < dgg::kNumInstruments; ++i)
   {
     dgg::Tr909Voice v;
@@ -4316,6 +4320,7 @@ void DrumGroover::Trigger909(const dgg::InstrumentDef& inst, double velocity01, 
 
 void DrumGroover::ProcessMidiMsg(const IMidiMsg& msg)
 {
+  dgg::Tr909NoiseStream::SetTriggerSample(mStreamBlockStart + static_cast<uint64_t>(std::max(0, msg.mOffset)));   // trigger position in the shared 909 noise stream
   if (msg.StatusMsg() == IMidiMsg::kNoteOn && msg.Velocity() > 0)
   {
     if (msg.Channel() == kCustomPreviewMidiChannel)   // UI preview of a custom instrument, note = registry index
@@ -4565,6 +4570,7 @@ void DrumGroover::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 
   WaitForCacheBeforeOfflineRender();
 
+  const uint64_t streamBlockStart = mStreamBlockStart; mStreamBlockStart += static_cast<uint64_t>(nFrames);   // clock of the shared noise stream; ProcessMidiMsg of this block ran before with the block start
   const std::vector<dgg::DueEvent> dueEvents = mScheduler.Advance(
     GetPPQPos(), GetTempo(), GetTransportIsRunning(),
     nFrames, GetSampleRate(),
@@ -4607,6 +4613,7 @@ void DrumGroover::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
       while (evIdx < mergedDueEvents.size() && mergedDueEvents[evIdx].sampleOffset == pos)
       {
         const dgg::DueEvent& ev = mergedDueEvents[evIdx];
+        dgg::Tr909NoiseStream::SetTriggerSample(streamBlockStart + static_cast<uint64_t>(pos));
         auto trackIt = std::find_if(mTracks.begin(), mTracks.end(),
           [&](const dgg::Track& t) { return t.id == ev.trackId; });
         if (trackIt != mTracks.end())

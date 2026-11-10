@@ -429,6 +429,7 @@ private:
 
   // Active flag set by host OnActivate; if false, ProcessBlock skips processing.
   std::atomic<bool> mActive{true};
+  uint64_t mStreamBlockStart = 0;   // sample position of the start of the current block since the start of processing: the clock of the shared 909 noise stream (dsp/909NoiseStream.h); audio thread
 
   // User‑controlled mute flag, independent of host activation.
   std::atomic<bool> mUserMuted{false};

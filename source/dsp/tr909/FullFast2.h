@@ -236,6 +236,13 @@ template <class M> struct FullFast2
     UpdatePD();
     for (int i = 0; i < NP; ++i) ps0[i] = p[i]; capH = 1.0; ++q0Gen; EvalF(p, f0, nullptr); luOk = false;
   }
+  // State of the model (capacitor states and port voltages) set from outside, e.g. a point of the limit cycle of the free-running oscillators; the evaluations of the device currents are redone for it (same tail as Reset()).
+  void SetState(const double* zz, const double* pp)
+  {
+    for (int i = 0; i < R; ++i) z[i] = zz[i];
+    for (int i = 0; i < NP; ++i) { p[i] = pp[i]; ps0[i] = p[i]; }
+    hPrevStep = 0.0; fPrevOk = false; capH = 1.0; ++q0Gen; EvalF(p, f0, nullptr); luOk = false;
+  }
   void UIdle(double* u) const { for (int j = 0; j < NU; ++j) u[j] = M::kU0[j]; }   // inputs at the idle point (nominal accent entry)
   void SetHalf(int pi, int ph) { if ((int)halfIdx.size() <= pi) halfIdx.resize(pi + 1, -1); halfIdx[pi] = ph; }
   bool squareProps = false; std::vector<double> Esq_; double EsqH_ = 0.0;

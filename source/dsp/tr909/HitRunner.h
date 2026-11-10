@@ -83,10 +83,21 @@ inline HitTuning HitTuningFor(Tr909Voice v, bool fast20)
 class HitNoise
 {
 public:
+  static constexpr uint64_t kStreamSeed = 0x0909A0015EEDULL;   // seed of the shared noise stream of the circuit (one source for all voices)
+  static constexpr uint64_t kNoStream = ~0ULL;                  // 'no stream position': the hit uses its own sequence (Start(seed))
   void Start(uint64_t seed, double stepSeconds = 5e-6, double eq = 0.0)
   {
     smp_.clear(); step_ = stepSeconds; amp_ = 5.22 * std::sqrt(5e-6 / stepSeconds); eq_ = eq;
     rng_ = 0x9E3779B97F4A7C15ULL ^ 2ULL ^ (seed * 0xD1B54A32D192ED03ULL);
+  }
+  // Shared noise stream (the circuit has one noise source for all voices): the same sequence as Start(seed), but the hit begins at knot `startKnot` of the stream (absolute time / step of the trigger). The generator is a 64-bit LCG with 12 draws per knot:
+  // the state at knot n is the state at the start advanced by 12 n steps (jump by repeated squaring of the affine map), so every voice that reads the stream at the same absolute time gets the same values.
+  void StartAt(uint64_t seed, uint64_t startKnot, double stepSeconds = 5e-6, double eq = 0.0)
+  {
+    Start(seed, stepSeconds, eq);
+    uint64_t n = startKnot * 12ULL, A = 1ULL, C = 0ULL, a = 6364136223846793005ULL, c = 1442695040888963407ULL;   // (A, C): the map x -> A x + C advanced by n steps
+    while (n) { if (n & 1ULL) { A = A * a; C = C * a + c; } c = c * (a + 1ULL); a = a * a; n >>= 1; }   // (a, c) squared: x -> a (a x + c) + c
+    rng_ = A * rng_ + C;
   }
   // Constant source at the idle level (no noise) with knots every `stepSeconds`: separates the cost of the knots from the cost of the noise.
   void StartSilent(double stepSeconds) { Start(0, stepSeconds, 0.0); amp_ = 0.0; }
@@ -262,6 +273,18 @@ public:
 
   // Builds the model and its propagators without running a hit (the first Begin() does this otherwise; takes about a second per model).
   void Warm(const HitTuning& tu) { Prepare(tu); }
+  // Pre-roll of the free-running oscillators (BD-D32): the model with idle inputs (the noise source at its idle level 7.5 V, trigger 0) for `seconds` with the fixed step 2^j x 0.156 us, from the state the model has now
+  // (after Prepare / Begin: the rest state kZ0, or the state of a hit that has ended). cb(t, z, p, f0) after every step: t seconds since the start of this call, the capacitor states, the port voltages and the device currents.
+  template <class Cb> void IdleRun(double seconds, int j, Cb&& cb)
+  {
+    Model& m = *m_; const double x[2] = {7.5, 0.0}; const double h = kH0 * static_cast<double>(1LL << j); const long n = static_cast<long>(seconds / h);
+    for (long k = 0; k < n; ++k) { m.Step(pj_[j], x, x, 0, 1); cb(static_cast<double>(k + 1) * h, m.z, m.p, m.f0); }
+  }
+  // The next Begin() starts from this state (capacitor states z[kR], port voltages p[kNP]) instead of the rest state kZ0; ClearStartState() goes back.
+  void SetStartState(const double* z, const double* p) { startZ_.assign(z, z + Mdl::kR); startP_.assign(p, p + Mdl::kNP); }
+  void ClearStartState() { startZ_.clear(); startP_.clear(); }
+  const double* State() const { return m_->z; }
+  const double* Ports() const { return m_->p; }
   // Pot dependent model (PotSet.h): replaces A, Bg, XzS, DgS and the output row for all following hits; the arrays must outlive the runner / the next SetPot(). Not while a hit is running.
   void SetPot(const typename Model::PotPtrs& p) { pot_ = p; usePot_ = true; potStale_ = true; ++potVer_; }
   void ClearPot() { usePot_ = false; potStale_ = true; ++potVer_; }
@@ -378,6 +401,7 @@ private:
     if (const char* e = std::getenv("QLC")) { m.QlcEnable(std::atoi(e) != 0); if (const char* g = std::getenv("QLCERR")) m.qlcErr = std::atof(g); }
 #endif
     m.Reset(Mdl::kAcc); m.PortGrpInit();
+    if (!startZ_.empty()) m.SetState(startZ_.data(), startP_.data());
     if (tu.quasiLinearCaps) { m.QlcEnable(true); m.qlcErr = 1e-3; }
     m.QlEnable(true); m.qlTol = 0.1; m.qlErr = 1e-3; m.qleOn = true; m.qleHold = 500;
     m.qlHoldD.assign(Mdl::kNumDev, m.qlHold);
@@ -391,6 +415,7 @@ private:
     { const double h0 = 1e-5 / 64.0; while ((int)pj_.size() <= tu.jMax) { const int j = (int)pj_.size(); pj_.push_back(m.Prepare(h0 * static_cast<double>(1 << j))); m.SetHalf(pj_[j], pj_[j - 1]); } }
   }
 
+  std::vector<double> startZ_, startP_;   // start state of the next hit (SetStartState)
   std::unique_ptr<Model> m_; std::vector<int> pj_; bool built_ = false; typename Model::PotPtrs pot_{}; bool usePot_ = false, potStale_ = false;
   unsigned potVer_ = 0; HitTuning tu_; HitNoise* noise_ = nullptr; long long knotN_ = 1, noiseOffN_ = 1LL << 40, nEnd_ = 0, n_ = 0, preN_ = 0; int j_ = 0;
   double gFprev_[Mdl::kNF] = {0}, gHprev_ = 0.0, gEnv_ = 0.0, t_ = 0.0, y_ = 0.0;

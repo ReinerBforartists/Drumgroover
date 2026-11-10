@@ -27,7 +27,7 @@ public:
   size_t EpochBytes() const { size_t b = 0; for (const Epoch& e : eps_) b += sizeof(Epoch) + (e.LU.capacity() + e.JFA.capacity() + e.capG.capacity()) * 4 + e.ent.capacity() * sizeof(EntF); return b; }
   void Clear(const double* ports0) { tE.clear(); pE.clear(); for (int a = 0; a < NP; ++a) p0[a] = ports0[a]; }
   void Record(double t, const double* p) { tE.push_back(t); pE.insert(pE.end(), p, p + NP); }
-  long refreshes = 0, knots = 0; double thr = 0.3, laterMul = 12.0; int coarse = 1; double eq = 0.0; bool refine = false, single = false;   // single: the fixed matrices and the state in float (the response is a small deviation; float rounding is far below its accuracy)   // one step of iterative refinement with the full G (no effect on the result at the tested settings)   // G is re-evaluated when a port of the noise-free trajectory moved by thr x its thermal voltage (thr x 0.17 V without one)
+  double thr = 0.3, laterMul = 12.0; int coarse = 1; double eq = 0.0; bool refine = false, single = false;   // single: the fixed matrices and the state in float (the response is a small deviation; float rounding is far below its accuracy)   // one step of iterative refinement with the full G (no effect on the result at the tested settings)   // G is re-evaluated when a port of the noise-free trajectory moved by thr x its thermal voltage (thr x 0.17 V without one)
 
   // Streaming form (no allocation after Prime): Prime() once per model, Start() per hit, Next() per knot; the knot k covers (k h, (k + 1) h]. Run() is the batch form.
   // The Jacobian epochs (refresh points, active sets, factorisations) depend on the noise-free trajectory only: they are built here once (a dry run over the knots up to tEnd) and shared by all hits.
@@ -36,42 +36,51 @@ public:
     m_ = &m; P_ = &m.props[pi]; m.qlOn = false; m.qlcOn = false; m.capThr = 0.0; m.evCache = false; m.skipDev = nullptr;
     Setup(m, *P_); ent_.reserve(ND * 6 + 8); BuildEpochs(m, *P_, tEnd); BuildFloat(m, *P_);
   }
-  void Start(HitNoise& nz, double tOff, double tEnd)
+  // State of one hit (the tables of the epochs and the model are shared and not modified by a hit): several hits can run at the same time on one primed object, each with its own cursor.
+  struct Cursor
   {
-    nz_ = &nz; tOff_ = tOff; N_ = std::min(static_cast<long>(tEnd / P_->h), epochKnots_); k_ = 0; ep_ = 0; cur_ = nullptr;
-    for (int i = 0; i < R; ++i) dz_[i] = 0.0; for (int a = 0; a < NP; ++a) dp_[a] = 0.0; for (int j = 0; j < NF; ++j) dfPrev_[j] = 0.0;
-    nPrev_ = (coarse > 1 ? nz.AtCoarse(tOff, coarse, eq) : nz.At(tOff)) - 7.5; for (int i = 0; i < R; ++i) dzF_[i] = 0.0f; for (int a = 0; a < NP; ++a) dpF_[a] = 0.0f; for (int j = 0; j < NF; ++j) dfPrevF_[j] = 0.0f;
+    HitNoise* nz = nullptr; double tOff = 0.0, nPrev = 0.0; long N = 0, k = 0; size_t ep = 0; const void* cur = nullptr; long refreshes = 0, knots = 0;
+    double dz[R] = {0}, dp[NP] = {0}, dfPrev[NF] = {0}; float dzF[R] = {0}, dpF[NP] = {0}, dfPrevF[NF] = {0};
+  };
+  void Start(HitNoise& nz, double tOff, double tEnd) { Start(cur0_, nz, tOff, tEnd); }
+  bool Next(double& tOut, double& dyOut) { return Next(cur0_, tOut, dyOut); }
+  long RefreshCount() const { return cur0_.refreshes; } long KnotCount() const { return cur0_.knots; }
+  void Start(Cursor& C, HitNoise& nz, double tOff, double tEnd)
+  {
+    C.nz = &nz; C.tOff = tOff; C.N = std::min(static_cast<long>(tEnd / P_->h), epochKnots_); C.k = 0; C.ep = 0; C.cur = nullptr;
+    for (int i = 0; i < R; ++i) C.dz[i] = 0.0; for (int a = 0; a < NP; ++a) C.dp[a] = 0.0; for (int j = 0; j < NF; ++j) C.dfPrev[j] = 0.0;
+    C.nPrev = (coarse > 1 ? nz.AtCoarse(tOff, coarse, eq) : nz.At(tOff)) - 7.5; for (int i = 0; i < R; ++i) C.dzF[i] = 0.0f; for (int a = 0; a < NP; ++a) C.dpF[a] = 0.0f; for (int j = 0; j < NF; ++j) C.dfPrevF[j] = 0.0f;
   }
-  bool Next(double& tOut, double& dyOut)
+  bool Next(Cursor& C, double& tOut, double& dyOut)
   {
-    if (k_ >= N_) return false;
-    if (single) return NextF(tOut, dyOut);
-    Model& m = *m_; const typename Model::Prop& P = *P_; const double h = P.h; const long k = k_;
+    if (C.k >= C.N) return false;
+    if (single) return NextF(C, tOut, dyOut);
+    Model& m = *m_; const typename Model::Prop& P = *P_; const double h = P.h; const long k = C.k;
     double dzk[R], df0c[NF], dfkc[NF], rhs[NP], dpk[NP], res[NP], dfG[NF], df1[NF], vin[R], vpd[NP], zt[NP];
-    const double d0 = nPrev_, d1 = (coarse > 1 ? nz_->AtCoarse(tOff_ + (k + 1) * h, coarse, eq) : nz_->At(tOff_ + (k + 1) * h)) - 7.5, dd = (d1 - d0) / h; nPrev_ = d1;
-    if (ep_ < eps_.size() && eps_[ep_].start == k) { cur_ = &eps_[ep_]; ++ep_; ++refreshes; }
-    const Epoch& E = *cur_;
+    const double d0 = C.nPrev, d1 = (coarse > 1 ? C.nz->AtCoarse(C.tOff + (k + 1) * h, coarse, eq) : C.nz->At(C.tOff + (k + 1) * h)) - 7.5, dd = (d1 - d0) / h; C.nPrev = d1;
+    if (C.ep < eps_.size() && eps_[C.ep].start == k) { C.cur = &eps_[C.ep]; ++C.ep; ++C.refreshes; }
+    const Epoch& E = *static_cast<const Epoch*>(C.cur);
     for (int i = 0; i < R; ++i) vin[i] = P.Ga[i * NU + 1] * d0 + P.Gb[i * NU + 1] * d1 + (P.Ga[i * NU + 2] + P.Gb[i * NU + 2]) * dd;
     for (int a = 0; a < NP; ++a) vpd[a] = m.PD[a * NU + 1] * d1 + m.PD[a * NU + 2] * dd;
-    for (int j = 0; j < nGc_; ++j) df0c[j] = dfPrev_[gcCols_[j]];
-    Model::MatVec(P.Phi.data(), R, R, dz_, R, dzk, vin);
+    for (int j = 0; j < nGc_; ++j) df0c[j] = C.dfPrev[gcCols_[j]];
+    Model::MatVec(P.Phi.data(), R, R, C.dz, R, dzk, vin);
     Model::MatVec(gaF_.data(), nGc_, R, df0c, nGc_, dzk, dzk);
     Model::MatVec(P.PXz.data(), R, NP, dzk, R, dpk, vpd);
-    for (int j = 0; j < nCap_; ++j) dfkc[j] = -E.capG[j] * dp_[capPort_[j]];   // start-of-step part of the charge-device currents
+    for (int j = 0; j < nCap_; ++j) dfkc[j] = -E.capG[j] * C.dp[capPort_[j]];   // start-of-step part of the charge-device currents
     Model::MatVec(wCap_.data(), nCap_, NP, dfkc, nCap_, rhs, dpk);
-    Solve(E, rhs, dp_);
+    Solve(E, rhs, C.dp);
     if (refine)
     {
-      ApplyG(E, dp_, dfG);   // full G incl. the frozen ports
+      ApplyG(E, C.dp, dfG);   // full G incl. the frozen ports
       Model::MatVec(P.Zp.data(), NF, NP, dfG, NF, res, rhs);
-      for (int a = 0; a < NP; ++a) res[a] -= dp_[a];
-      Solve(E, res, zt); for (int a = 0; a < NP; ++a) dp_[a] += zt[a];
+      for (int a = 0; a < NP; ++a) res[a] -= C.dp[a];
+      Solve(E, res, zt); for (int a = 0; a < NP; ++a) C.dp[a] += zt[a];
     }
-    ApplyG(E, dp_, df1); for (int c = 0; c < nCap_; ++c) df1[capCur_[c]] += dfkc[c];
-    Model::MatVec(P.GbF.data(), NF, R, df1, NF, dz_, dzk);
-    double dy = m.pm.Dou[1] * d1 + m.pm.Dou[2] * dd + Model::DotF(m.pm.Xo, dz_, R, 0.0); dy = Model::DotF(m.pm.Dof, df1, NF, dy);
-    for (int j = 0; j < NF; ++j) dfPrev_[j] = df1[j];
-    tOut = (k + 1) * h; dyOut = dy; ++k_; ++knots; return true;
+    ApplyG(E, C.dp, df1); for (int c = 0; c < nCap_; ++c) df1[capCur_[c]] += dfkc[c];
+    Model::MatVec(P.GbF.data(), NF, R, df1, NF, C.dz, dzk);
+    double dy = m.pm.Dou[1] * d1 + m.pm.Dou[2] * dd + Model::DotF(m.pm.Xo, C.dz, R, 0.0); dy = Model::DotF(m.pm.Dof, df1, NF, dy);
+    for (int j = 0; j < NF; ++j) C.dfPrev[j] = df1[j];
+    tOut = (k + 1) * h; dyOut = dy; ++C.k; ++C.knots; return true;
   }
   template <class Emit>
   void Run(Model& m, int pi, HitNoise& nz, double tOff, double tEnd, Emit&& emit)
@@ -82,12 +91,11 @@ public:
 private:
   struct Ent { int cur, port; double g; };   // device Jacobian entry (current, port, slope)
   struct EntF { int cur, port; float g; };   // the same in the epoch tables (float: the response is a small deviation, the rounding of the tables is far below its accuracy)
-  std::vector<Ent> ent_; std::vector<double> gaF_, wCap_, capG_; std::vector<int> gcCols_, capPort_, capCur_, capDev_; int nGc_ = 0, nCap_ = 0; double invThr_[NP]; double dfPrev_[NF] = {0};
+  std::vector<Ent> ent_; std::vector<double> gaF_, wCap_, capG_; std::vector<int> gcCols_, capPort_, capCur_, capDev_; int nGc_ = 0, nCap_ = 0; double invThr_[NP];
   struct Epoch { long start = 0; int nA = 0, nF = 0; unsigned char act[NP], frz[NP], piv[NP]; std::vector<float> LU, JFA, capG; std::vector<EntF> ent; };
-  std::vector<Epoch> eps_; long epochKnots_ = 0; size_t ep_ = 0; const Epoch* cur_ = nullptr;
-  Model* m_ = nullptr; const typename Model::Prop* P_ = nullptr; HitNoise* nz_ = nullptr; double tOff_ = 0.0, nPrev_ = 0.0; long N_ = 0, k_ = 0; size_t seg_ = 0;
-  double dz_[R], dp_[NP];
-  std::vector<float> phiF_, gaFF_, pxzF_, wCapF_, gbFF_, xoF_, dofF_, ga1F_, gb1F_, ga2F_, gb2F_, pd1F_, pd2F_; float dzF_[R] = {0}, dpF_[NP] = {0}, dfPrevF_[NF] = {0};
+  std::vector<Epoch> eps_; long epochKnots_ = 0; Cursor cur0_;   // cur0_: the cursor of the single-hit interface
+  Model* m_ = nullptr; const typename Model::Prop* P_ = nullptr;
+  std::vector<float> phiF_, gaFF_, pxzF_, wCapF_, gbFF_, xoF_, dofF_, ga1F_, gb1F_, ga2F_, gb2F_, pd1F_, pd2F_;
   static void ToF(const std::vector<double>& a, std::vector<float>& b) { b.resize(a.size()); for (size_t i = 0; i < a.size(); ++i) b[i] = static_cast<float>(a[i]); }
   void BuildFloat(Model& m, const typename Model::Prop& P)
   {
@@ -118,29 +126,29 @@ private:
     }
     for (; i < rows; ++i) { const float* mr = Mat + (size_t)i * ld; float s = init ? init[i] : 0.0f; for (int k = 0; k < n; ++k) s += mr[k] * x[k]; y[i] = s; }
   }
-  bool NextF(double& tOut, double& dyOut)
+  bool NextF(Cursor& C, double& tOut, double& dyOut)
   {
-    Model& m = *m_; const typename Model::Prop& P = *P_; const double h = P.h; const long k = k_;
+    Model& m = *m_; const typename Model::Prop& P = *P_; const double h = P.h; const long k = C.k;
     float dzk[R], df0c[NF], dfkc[NF], rhs[NP], dpk[NP], df1[NF], vin[R], vpd[NP];
-    const double d0 = nPrev_, d1 = (coarse > 1 ? nz_->AtCoarse(tOff_ + (k + 1) * h, coarse, eq) : nz_->At(tOff_ + (k + 1) * h)) - 7.5, dd = (d1 - d0) / h; nPrev_ = d1;
-    if (ep_ < eps_.size() && eps_[ep_].start == k) { cur_ = &eps_[ep_]; ++ep_; ++refreshes; }
-    const Epoch& E = *cur_;
+    const double d0 = C.nPrev, d1 = (coarse > 1 ? C.nz->AtCoarse(C.tOff + (k + 1) * h, coarse, eq) : C.nz->At(C.tOff + (k + 1) * h)) - 7.5, dd = (d1 - d0) / h; C.nPrev = d1;
+    if (C.ep < eps_.size() && eps_[C.ep].start == k) { C.cur = &eps_[C.ep]; ++C.ep; ++C.refreshes; }
+    const Epoch& E = *static_cast<const Epoch*>(C.cur);
     const float f0 = static_cast<float>(d0), f1 = static_cast<float>(d1), fd = static_cast<float>(dd);
     for (int i = 0; i < R; ++i) vin[i] = ga1F_[i] * f0 + gb1F_[i] * f1 + ga2F_[i] * fd;
     for (int a = 0; a < NP; ++a) vpd[a] = pd1F_[a] * f1 + pd2F_[a] * fd;
-    for (int j = 0; j < nGc_; ++j) df0c[j] = dfPrevF_[gcCols_[j]];
-    MatVecF(phiF_.data(), R, R, dzF_, R, dzk, vin);
+    for (int j = 0; j < nGc_; ++j) df0c[j] = C.dfPrevF[gcCols_[j]];
+    MatVecF(phiF_.data(), R, R, C.dzF, R, dzk, vin);
     MatVecF(gaFF_.data(), nGc_, R, df0c, nGc_, dzk, dzk);
     MatVecF(pxzF_.data(), R, NP, dzk, R, dpk, vpd);
-    for (int j = 0; j < nCap_; ++j) dfkc[j] = -E.capG[j] * dpF_[capPort_[j]];
+    for (int j = 0; j < nCap_; ++j) dfkc[j] = -E.capG[j] * C.dpF[capPort_[j]];
     MatVecF(wCapF_.data(), nCap_, NP, dfkc, nCap_, rhs, dpk);
-    double rd[NP], xd[NP]; for (int a = 0; a < NP; ++a) rd[a] = rhs[a]; Solve(E, rd, xd); for (int a = 0; a < NP; ++a) dpF_[a] = static_cast<float>(xd[a]);
-    for (int j = 0; j < NF; ++j) df1[j] = 0.0f; for (const EntF& n : E.ent) df1[n.cur] += n.g * dpF_[n.port]; for (int c = 0; c < nCap_; ++c) df1[capCur_[c]] += dfkc[c];
-    MatVecF(gbFF_.data(), NF, R, df1, NF, dzF_, dzk);
-    float dyf = 0.0f; for (int i = 0; i < R; ++i) dyf += xoF_[i] * dzF_[i]; for (int j = 0; j < NF; ++j) dyf += dofF_[j] * df1[j];
+    double rd[NP], xd[NP]; for (int a = 0; a < NP; ++a) rd[a] = rhs[a]; Solve(E, rd, xd); for (int a = 0; a < NP; ++a) C.dpF[a] = static_cast<float>(xd[a]);
+    for (int j = 0; j < NF; ++j) df1[j] = 0.0f; for (const EntF& n : E.ent) df1[n.cur] += n.g * C.dpF[n.port]; for (int c = 0; c < nCap_; ++c) df1[capCur_[c]] += dfkc[c];
+    MatVecF(gbFF_.data(), NF, R, df1, NF, C.dzF, dzk);
+    float dyf = 0.0f; for (int i = 0; i < R; ++i) dyf += xoF_[i] * C.dzF[i]; for (int j = 0; j < NF; ++j) dyf += dofF_[j] * df1[j];
     const double dy = m.pm.Dou[1] * d1 + m.pm.Dou[2] * dd + dyf;
-    for (int j = 0; j < NF; ++j) dfPrevF_[j] = df1[j];
-    tOut = (k + 1) * h; dyOut = dy; ++k_; ++knots; return true;
+    for (int j = 0; j < NF; ++j) C.dfPrevF[j] = df1[j];
+    tOut = (k + 1) * h; dyOut = dy; ++C.k; ++C.knots; return true;
   }
   void BuildEpochs(Model& m, const typename Model::Prop& P, double tEnd)
   {
@@ -183,7 +191,6 @@ private:
     nCap_ = (int)capPort_.size(); wCap_.assign((size_t)NP * (nCap_ > 0 ? nCap_ : 1), 0.0); for (int a = 0; a < NP; ++a) for (int j = 0; j < nCap_; ++j) wCap_[(size_t)a * nCap_ + j] = P.Zp[(size_t)a * NF + capCur_[j]];
     capG_.assign(nCap_ > 0 ? nCap_ : 1, 0.0);
     for (int a = 0; a < NP; ++a) invThr_[a] = m.portVt[a] > 0.0 ? 1.0 / (thr * m.portVt[a]) : 1.0 / (thr * 0.17);
-    for (int j = 0; j < NF; ++j) dfPrev_[j] = 0.0;
   }
   void Refresh(Model& m, const typename Model::Prop& P, const double* pEn, double h)
   {

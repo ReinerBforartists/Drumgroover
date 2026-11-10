@@ -140,6 +140,7 @@ public:
     for (int i = 0; i < n; ++i)
     {
       SlotBase* s = SlotFor(v, runs[i].anchorCode); if (!s) { liveN_ = 0; return false; }
+      s->SetStreamKnot(streamKnot_);
       s->SetCoarse(n == 2 && (runs[i].weight < 0.5 || (runs[i].weight == 0.5 && i == 1)));
       if (!s->Begin(v, params, np == Tr909NoisePath::Fast20us, noiseSeed, seconds, sampleRateHz, runs[i].anchorCode)) { liveN_ = 0; return false; }
       live_[i] = s; liveW_[i] = runs[i].weight;
@@ -158,8 +159,25 @@ public:
     return w;
   }
   bool Active() const override { return liveN_ != 0; }
+  void SetStreamKnot(uint64_t knot) override { streamKnot_ = knot; }
+  // Prepared sets for the shared (live) form of the voices with a noise response (BD): the sets of this object are the store, a SharedSource runs hits from them.
+  bool PrepareLive(Tr909Voice v, int accentCode, uint64_t params, int sampleRateHz) override
+  {
+    Tr909AccentRun runs[2]; const int n = Tr909AccentRuns(v, accentCode, runs); if (n == 0) return false;
+    for (int i = 0; i < n; ++i) { SlotBase* s = SlotFor(v, runs[i].anchorCode); if (!s || !s->PrepareLive(v, params, sampleRateHz)) return false; }
+    return true;
+  }
+  bool LiveReady(Tr909Voice v, int accentCode, uint64_t params) const override
+  {
+    Tr909AccentRun runs[2]; const int n = Tr909AccentRuns(v, accentCode, runs); if (n == 0) return false;
+    for (int i = 0; i < n; ++i) { const SlotBase* s = SlotIfBuilt(v, runs[i].anchorCode); if (!s || !s->LiveReady(params)) return false; }
+    return true;
+  }
+  static Tr909FullModelRunner& Store() { static Tr909FullModelRunner* st = new Tr909FullModelRunner(); return *st; }   // never destroyed
+  static std::unique_ptr<Tr909LiveSource> MakeSharedSource() { return std::unique_ptr<Tr909LiveSource>(new SharedSource(Store())); }
 
 private:
+  uint64_t streamKnot_ = pcmfast::HitNoise::kNoStream;
   struct SlotBase
   {
     virtual ~SlotBase() = default;
@@ -169,6 +187,12 @@ private:
     virtual void Warm(Tr909Voice v, uint64_t params, bool fast20) = 0;
     virtual bool Begin(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, int accentCode) = 0;
     virtual int Pull(float* out, int n) = 0;
+    // Hits of the shared (live) form on the prepared sets of the slot; the hit object is preallocated by PrepareLive().
+    struct SharedHit { virtual ~SharedHit() = default; virtual int Pull(float* out, int n) = 0; virtual void Release() = 0; };
+    virtual bool PrepareLive(Tr909Voice, uint64_t, int) { return false; }   // non-audio thread: prepared sets (fine and coarse form) and hit objects for exactly these pots and this sample rate
+    virtual bool LiveReady(uint64_t) const { return false; }                // audio thread
+    virtual SharedHit* BeginShared(uint64_t, bool, uint64_t, uint64_t, double) { return nullptr; }   // audio thread, no allocation; nullptr when not ready or all hit objects are busy
+    virtual void SetStreamKnot(uint64_t) {}   // position of the next hit in the shared noise stream (HitNoise::kNoStream: own sequence)
     virtual void SetCoarse(bool) {}   // the next Begin() may use the coarse live form (the run with the smaller weight of a blend; BD-D28)
     virtual bool RenderGroup(Tr909Voice, uint64_t, const uint64_t*, int, double, int, std::vector<float>*) { return false; }   // n noise sequences of one parameter set in one go (linear-response voices)
     virtual void Prebuild(Tr909Voice, int) {}   // builds what the first hit would build (tables of the model at the sample rate), without starting a hit
@@ -203,9 +227,46 @@ private:
     // Live form in the linear-response mode (HitLive.h): prepared by Warm() on a non-audio thread for the sample rate set by Prebuild(); a hit uses it only when the parameter set (pots), sample rate and length match, else the
     // stepwise solver below runs the hit. The prepared object is replaced as a whole; the audio thread holds its own reference during a hit, retired objects are released on the preparing thread.
     using Live = pcmfast::LiveLin<Mdl, Pot>;
-    std::shared_ptr<Live> live_, liveC_, hit_; std::vector<std::shared_ptr<Live>> retired_; int liveFs_ = 0; long hitWant_ = 0, hitProduced_ = 0; std::mutex liveMutex_; bool coarse_ = false;
+    std::shared_ptr<Live> live_, liveC_, hit_; std::vector<std::shared_ptr<Live>> retired_; std::atomic<int> liveFs_{0}; long hitWant_ = 0, hitProduced_ = 0; std::mutex liveMutex_; bool coarse_ = false;
     void Prebuild(Tr909Voice, int fs) override { liveFs_ = fs; }
     void SetCoarse(bool c) override { coarse_ = c; }
+    void SetStreamKnot(uint64_t k) override { streamKnot_ = k; }
+    uint64_t streamKnot_ = pcmfast::HitNoise::kNoStream;
+    struct HitObj : SharedHit
+    {
+      std::shared_ptr<Live> lv; typename Live::HitState st; std::atomic<bool> busy{false};
+      int Pull(float* out, int n) override { return lv->Pull(st, out, n); }
+      void Release() override { lv.reset(); busy.store(false, std::memory_order_release); }   // a retired object is released by the preparing thread (retired_ keeps a reference until no hit holds one)
+    };
+    // the BD is monophonic: one hit object, a new trigger drops the running hit first (SharedSource::Start)
+    static constexpr int kPool = 1; std::unique_ptr<HitObj> pool_[kPool]; std::atomic<int> poolN_{0}; int poolFs_ = 0;
+    bool PrepareLive(Tr909Voice v, uint64_t params, int fs) override
+    {
+      if (fs <= 0) return false;
+      if (poolFs_ != fs) { poolN_.store(0, std::memory_order_release); for (auto& p : pool_) p.reset(); poolFs_ = fs; }   // another sample rate: the hit objects are rebuilt (processing is stopped while the rate changes)
+      liveFs_ = fs; BuildLive(v, params);
+      if (poolN_.load(std::memory_order_acquire) == 0)
+      {
+        const pcmfast::HitTuning tu = pcmfast::HitTuningFor(v, false);
+        for (auto& p : pool_) { p.reset(new HitObj()); p->st = Live::MakeHit(tu, static_cast<double>(fs)); }
+        poolN_.store(kPool, std::memory_order_release);
+      }
+      return LiveReady(params);
+    }
+    bool LiveReady(uint64_t params) const override
+    {
+      if (poolN_.load(std::memory_order_acquire) < kPool) return false;
+      const std::shared_ptr<Live> a = std::atomic_load(&live_), b = std::atomic_load(&liveC_); const int fs = liveFs_;
+      return a && b && a->Ready() && b->Ready() && a->Key() == params && b->Key() == params && a->SampleRate() == fs && b->SampleRate() == fs;
+    }
+    SharedHit* BeginShared(uint64_t params, bool coarse, uint64_t seed, uint64_t streamKnot, double seconds) override
+    {
+      if (poolN_.load(std::memory_order_acquire) < kPool) return nullptr;
+      std::shared_ptr<Live> lv = std::atomic_load(coarse ? &liveC_ : &live_); const int fs = liveFs_;
+      if (!lv || !lv->Ready() || lv->Key() != params || lv->SampleRate() != fs || seconds > lv->Seconds() + 1e-9) return nullptr;
+      for (auto& p : pool_) if (!p->busy.exchange(true, std::memory_order_acq_rel)) { p->lv = std::move(lv); p->lv->Begin(p->st, seed, streamKnot); return p.get(); }
+      return nullptr;
+    }
     // Two prepared forms per parameter set: the fine one (noise knots of the response every 10 us) and the coarse one (20 us, about half the cost per hit, response differs by -35 ... -57 dB re signal) for the run of a blend whose weight is below one half.
     void BuildLive(Tr909Voice v, uint64_t params)
     {
@@ -238,9 +299,9 @@ private:
     bool Begin(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, int) override
     {
       hit_.reset();
-      if (!fast20 && fs == liveFs_) { std::shared_ptr<Live> lv = coarse_ ? std::atomic_load(&liveC_) : std::atomic_load(&live_); if (!lv || !lv->Ready()) lv = std::atomic_load(&live_); if (lv && lv->Ready() && lv->Key() == params && lv->SampleRate() == fs && seconds <= lv->Seconds() + 1e-9) { hit_ = lv; hit_->Begin(seed); hitWant_ = static_cast<long>(seconds * fs); hitProduced_ = 0; return true; } }
+      if (!fast20 && fs == liveFs_) { std::shared_ptr<Live> lv = coarse_ ? std::atomic_load(&liveC_) : std::atomic_load(&live_); if (!lv || !lv->Ready()) lv = std::atomic_load(&live_); if (lv && lv->Ready() && lv->Key() == params && lv->SampleRate() == fs && seconds <= lv->Seconds() + 1e-9) { hit_ = lv; hit_->Begin(seed, streamKnot_); hitWant_ = static_cast<long>(seconds * fs); hitProduced_ = 0; return true; } }
       ApplyPots(v, params);
-      noise_.Start(seed, fast20 ? 20 * 1e-6 : 5e-6, fast20 ? 0.13 : 0.0);
+      if (!fast20 && streamKnot_ != pcmfast::HitNoise::kNoStream) noise_.StartAt(pcmfast::HitNoise::kStreamSeed, streamKnot_, 5e-6, 0.0); else noise_.Start(seed, fast20 ? 20 * 1e-6 : 5e-6, fast20 ? 0.13 : 0.0);
       dec_.Init(static_cast<double>(fs)); produced_ = 0; want_ = static_cast<long>(seconds * fs);
       runner.Begin(pcmfast::HitTuningFor(v, fast20), &noise_, seconds); return true;
     }
@@ -324,9 +385,16 @@ private:
     if (v < Tr909Voice::kCount && Tr909IsPcmVoice(v)) a = 0;
     if (a < 0 || static_cast<int>(v) < 0 || v >= Tr909Voice::kCount) return nullptr;
     std::unique_ptr<SlotBase>& slot = slots_[static_cast<int>(v)][a];
-    if (!slot) slot = Make(v, a);
+    if (!slot) { slot = Make(v, a); pub_[static_cast<int>(v)][a].store(slot.get(), std::memory_order_release); }
     return slot.get();
   }
+  SlotBase* SlotIfBuilt(Tr909Voice v, int anchorCode) const   // audio thread: never creates
+  {
+    int a = -1; for (int i = 0; i < kTr909AnchorCount; ++i) if (kTr909Anchors[i] == anchorCode) a = i;
+    if (a < 0 || static_cast<int>(v) < 0 || v >= Tr909Voice::kCount) return nullptr;
+    return pub_[static_cast<int>(v)][a].load(std::memory_order_acquire);
+  }
+  std::atomic<SlotBase*> pub_[static_cast<int>(Tr909Voice::kCount)][kTr909AnchorCount] = {};
 
   static std::unique_ptr<SlotBase> Make(Tr909Voice v, int a)
   {
@@ -343,6 +411,43 @@ private:
   }
 
   std::unique_ptr<SlotBase> slots_[static_cast<int>(Tr909Voice::kCount)][kTr909AnchorCount];
+  // A source of the live bank that runs one hit (one or two anchors blended) from the prepared sets of the store.
+  struct SharedSource : Tr909LiveSource
+  {
+    explicit SharedSource(Tr909FullModelRunner& s) : st(s) {}
+    Tr909FullModelRunner& st; SlotBase::SharedHit* h_[2] = {nullptr, nullptr}; double w_[2] = {0.0, 0.0}; int n_ = 0; uint64_t knot_ = pcmfast::HitNoise::kNoStream;
+    ~SharedSource() override { Drop(); }
+    bool Warm(Tr909Voice, int, Tr909NoisePath, uint64_t) override { return true; }
+    void SetStreamKnot(uint64_t k) override { knot_ = k; }
+    bool LiveReady(Tr909Voice v, int accentCode, uint64_t params) const override { return st.LiveReady(v, accentCode, params); }
+    bool PrepareLive(Tr909Voice v, int accentCode, uint64_t params, int fs) override { return st.PrepareLive(v, accentCode, params, fs); }
+    bool Start(Tr909Voice v, int accentCode, Tr909NoisePath, uint64_t seed, int, double seconds, uint64_t params) override
+    {
+      Drop(); Tr909AccentRun runs[2]; const int n = Tr909AccentRuns(v, accentCode, runs); if (n == 0) return false;
+      for (int i = 0; i < n; ++i)
+      {
+        SlotBase* s = st.SlotIfBuilt(v, runs[i].anchorCode); const bool coarse = n == 2 && (runs[i].weight < 0.5 || (runs[i].weight == 0.5 && i == 1));
+        h_[i] = s ? s->BeginShared(params, coarse, seed, knot_, seconds) : nullptr; if (!h_[i]) { Drop(); return false; }
+        w_[i] = runs[i].weight; n_ = i + 1;
+      }
+      return true;
+    }
+    int Pull(float* out, int n) override
+    {
+      if (n_ == 0) return 0;
+      if (n_ == 1) { const int g = h_[0]->Pull(out, n); if (g < n) Drop(); return g; }
+      float t0[256], t1[256]; int w = 0;
+      while (w < n && n_ != 0)
+      {
+        const int c = std::min(256, n - w); const int g0 = h_[0]->Pull(t0, c), g1 = h_[1]->Pull(t1, c), g = std::max(g0, g1);
+        for (int k = 0; k < g; ++k) out[w + k] = static_cast<float>(w_[0] * (k < g0 ? t0[k] : 0.0f) + w_[1] * (k < g1 ? t1[k] : 0.0f));
+        w += g; if (g < c) Drop();
+      }
+      return w;
+    }
+    bool Active() const override { return n_ != 0; }
+    void Drop() { for (int i = 0; i < n_; ++i) if (h_[i]) { h_[i]->Release(); h_[i] = nullptr; } n_ = 0; }
+  };
   SlotBase* live_[2] = {nullptr, nullptr}; double liveW_[2] = {0.0, 0.0}; int liveN_ = 0;
 };
 

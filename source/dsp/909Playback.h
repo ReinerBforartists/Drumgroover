@@ -9,6 +9,7 @@
 #include "909AccentPlan.h"
 #include "909PotParams.h"
 #include "909LiveHost.h"
+#include "909NoiseStream.h"
 #include "808VariantPoolCache.h"
 #include "DrumVoice.h"
 #include <algorithm>
@@ -121,7 +122,15 @@ public:
     EndHit();
     Tr909SetKey k; k.voice = mVoice; k.params = Params(); k.noise = mNoise; k.sampleRateHz = static_cast<int>(std::lround(mSampleRate));
     k.accentCode = Tr909CodeForVelocity(mVoice, velocity01);
-    if (Tr909IsPcmVoice(mVoice))   // hi-hats, crash, ride: computed live by a source of the bank, no cache (falls back to the cache path while the bank is not ready or all its sources are busy)
+    // BD (the voices with a noise response in the shared stream): computed live from prepared sets when they exist for exactly these pots, this accent and this sample rate; otherwise the cache variant plays
+    // and the preparation is requested (a hit never uses sets of other pots or another rate).
+    bool sharedLive = false;
+    if (mVoice == Tr909Voice::Bd && k.noise == Tr909NoisePath::Reference5us && !Tr909CircuitCovers(mVoice, k.noise) && Tr909LiveBank::Instance().Ready())   // the circuit engine bakes the BD: its cache is the sound, the per-voice live model is only for DGG_909_PER_VOICE
+    {
+      sharedLive = Tr909LiveBank::Instance().SharedReady(mVoice, k.accentCode, k.params);
+      if (!sharedLive) Tr909LiveBank::Instance().RequestPrepare(k);
+    }
+    if (Tr909IsPcmVoice(mVoice) || sharedLive)   // hi-hats, crash, ride, BD: computed live by a source of the bank, no cache (falls back to the cache path while the bank is not ready or all its sources are busy)
     {
       mRate = std::clamp(pitchRatio * basePitch, 0.25, 4.0); mPos = 0; mFrac = 0.0;
       const void* prev = nullptr;
@@ -130,6 +139,7 @@ public:
         mLiveBuf.clear(); mLiveDone = false;
         if (prev) static_cast<Tr909CachedVoice*>(const_cast<void*>(prev))->HandOverTo(*this);   // the hit that ran on the source ends; what it had computed and not played continues here
         else mLiveBuf.assign(carry.begin(), carry.end());
+        s->SetStreamKnot(Tr909NoiseStream::TriggerKnot(mSampleRate));   // the shared noise stream at the trigger position (sources without a noise stream ignore it)
         if (s->Start(k.voice, k.accentCode, k.noise, 1, k.sampleRateHz, Tr909HitSeconds(mVoice), k.params)) { mBankSrc = s; mLiveOn = true; mLiveBuf.reserve(static_cast<size_t>(mSampleRate * (Tr909HitSeconds(mVoice) + 0.05))); return; }
         Tr909LiveBank::Instance().Release(mVoice, s, this); mLiveBuf.clear();
       }
@@ -150,7 +160,7 @@ public:
       // The first hit is computed live, on the audio thread (909LiveHost.h), however long the model takes.
       static std::atomic<unsigned> liveCounter{0};
       mLiveBuf.clear(); mLiveDone = false;
-      mLiveOn = Tr909LiveSynth::Instance().Start(this, k, Tr909NoiseSeed(1 + static_cast<int>(liveCounter.fetch_add(1, std::memory_order_relaxed) % 7)), Tr909HitSeconds(mVoice));
+      mLiveOn = Tr909LiveSynth::Instance().Start(this, k, Tr909NoiseSeed(1 + static_cast<int>(liveCounter.fetch_add(1, std::memory_order_relaxed) % 7)), Tr909HitSeconds(mVoice), Tr909NoiseStream::TriggerKnot(mSampleRate));   // the shared noise stream at the trigger position (the seed only matters without a stream)
       if (mLiveOn) mLiveBuf.reserve(static_cast<size_t>(mSampleRate * (Tr909HitSeconds(mVoice) + 0.05)));
     }
   }
