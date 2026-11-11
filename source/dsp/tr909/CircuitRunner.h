@@ -1,7 +1,9 @@
 // TR-909: the complete circuit as the engine of a hit.
 //
-// Net909 (tr909/Net909.h) solves the full Nava netlist of BD, SD, LT, MT, HT, HC, RM and the shared NOISE sheet in one network (482 nodes), like the coupled NGSpice deck:
-// the free-running oscillators of the toms, SD and BD, the shared noise line, the shared tom shaping filter and the slow RC states are parts of ONE circuit. This runner renders a hit by
+// Net909 (tr909/Net909.h) solves the full Nava netlist of BD, SD, LT, MT, HT, HC, RM and the shared NOISE sheet (482 nodes), like the coupled NGSpice deck:
+// the free-running oscillators of the toms, SD and BD, the shared noise line, the shared tom shaping filter and the slow RC states are parts of ONE circuit. The matrix is split along the
+// structure of the circuit by tr909/Net909Part.h (PartNet: blocks BD, SD, HC, RM and the tom sheets, coupled through the shared NOISE line by waveform relaxation, validated against the monolithic
+// network and against NGSpice, plan tools/909_GESAMTSCHALTUNG_PLAN.md section S4). This runner renders a hit by
 // continuing that circuit from an idle state that was run for one second (tr909/models/circuit_all7_state.h) with the trigger pulse of the voice, the accent voltage and the noise source of the
 // hit, and returns the output of the voice minus its idle level at the sample rate of the request. It is a Tr909ModelRunner, so it can replace the per-voice models in the bake.
 //
@@ -11,6 +13,7 @@
 #include "../909BakeHost.h"
 #include "../909PotParams.h"
 #include "Net909.h"
+#include "Net909Part.h"
 #include "HitRunner.h"
 #include "models/circuit_all7_net.h"
 #include "models/circuit_all7_state.h"
@@ -29,7 +32,40 @@ public:
   explicit Tr909CircuitRunner(double dt = 1e-6, std::function<bool()> abort = nullptr) : dt_(dt), abort_(std::move(abort)) {}
 
   static constexpr double kMaxPreroll = 0.2;   // seconds of idle before the trigger, up to this
-  static double Preroll(uint64_t seed) { const double g = static_cast<double>(seed) * 0.6180339887498949; return (g - std::floor(g)) * kMaxPreroll; }   // golden-ratio sequence: consecutive variants spread over the span
+  // Idle delay before the trigger of variant `seed` (seed = variant index, 1, 2, ...): the free-running oscillators (twelve, 52 ... 310 Hz depending on the pots) are at a different phase for every delay. The table
+  // is a farthest-point sequence over delays in [0, 0.2 s): each next delay maximises the smallest circular phase distance (over all twelve oscillators and three pot states: nominal and two shifted sets with the measured
+  // frequencies) to the delays before it (tools/_sweep/tr909_cpp/preroll_table.py 0.2 64). Worst empty phase gap per oscillator, units of the ideal 1/N: N = 4 / 8 / 16 / 32 variants 2.3-2.8 / 4.4 / 3.6-5.5 / 4.5-4.8 (single golden-ratio delay
+  // frac(seed x 0.618) x 0.2 s, used before: 3.7-3.8 / 6.8-6.9 / 10.8-12.0 / 10.5-17.0). Beyond 64 variants the table repeats with a small golden-ratio offset (up to 3 ms).
+  static double Preroll(uint64_t seed)
+  {
+    static const double kTable[64] = {0.0000, 0.0028, 0.1471, 0.1495, 0.0021, 0.0006, 0.0986, 0.0937, 0.1059, 0.1183, 0.1953, 0.1474, 0.1988, 0.1484, 0.1792, 0.0989, 0.0436, 0.0326, 0.0507, 0.1121, 0.0025, 0.0486, 0.0540, 0.1537, 0.1794, 0.0919, 0.0985, 0.1472, 0.0319, 0.0988, 0.1245, 0.1423, 0.0439, 0.0181, 0.1577, 0.1171, 0.0388, 0.1785, 0.1053, 0.1391, 0.0801, 0.1436, 0.0518, 0.1925, 0.0457, 0.1792, 0.1423, 0.0103, 0.0320, 0.1903, 0.0115, 0.0507, 0.0547, 0.0021, 0.1835, 0.0713, 0.0944, 0.0547, 0.0006, 0.1725, 0.0067, 0.1018, 0.0468, 0.1698};
+    const uint64_t i = seed > 0 ? seed - 1 : 0; const double g = static_cast<double>(i >> 6) * 0.6180339887498949;
+    return kTable[i & 63u] + (g - std::floor(g)) * 0.003;
+  }
+  // Preroll sequence for a measured pot state: the same farthest-point rule over delays in [0, 0.2 s) in steps of 50 us, but with the twelve oscillator frequencies of THIS pot state (measured in its idle
+  // run) as the only phase axes: worst empty gap in a test with 25 random pot states 3.0 / 3.8 / 4.0 (8 / 16 / 32 variants) against 4.4 / 5.3 / 6.8 of the fixed table.
+  static constexpr int kOscillators = 12, kPrerollTable = 64;
+  static void BuildPrerollTable(const double* f, double* out, int n)
+  {
+    const int nc = static_cast<int>(kMaxPreroll / 5e-5 + 0.5);
+    std::vector<double> ph(static_cast<size_t>(nc) * kOscillators), mind(static_cast<size_t>(nc) * kOscillators, 1.0);
+    for (int c = 0; c < nc; ++c) for (int j = 0; j < kOscillators; ++j) { const double x = c * 5e-5 * f[j]; ph[static_cast<size_t>(c) * kOscillators + j] = x - std::floor(x); }
+    auto update = [&](int pick) { for (int c = 0; c < nc; ++c) for (int j = 0; j < kOscillators; ++j) { double d = std::fabs(ph[static_cast<size_t>(c) * kOscillators + j] - ph[static_cast<size_t>(pick) * kOscillators + j]); d = std::min(d, 1.0 - d); double& m = mind[static_cast<size_t>(c) * kOscillators + j]; m = std::min(m, d); } };
+    int pick = 0; out[0] = 0.0; update(0);
+    for (int k = 1; k < n; ++k)
+    {
+      double best = -1.0; int bi = 0;
+      for (int c = 0; c < nc; ++c) { double sc = 1.0; for (int j = 0; j < kOscillators; ++j) sc = std::min(sc, mind[static_cast<size_t>(c) * kOscillators + j]); if (sc > best) { best = sc; bi = c; } }
+      pick = bi; out[k] = pick * 5e-5; update(pick);
+    }
+  }
+  // Delay of variant `seed`: from the table of the pot state (64 entries, same repetition rule as Preroll) or the fixed table.
+  static double PrerollAt(const std::vector<double>* table, uint64_t seed)
+  {
+    if (!table || table->size() < static_cast<size_t>(kPrerollTable)) return Preroll(seed);
+    const uint64_t i = seed > 0 ? seed - 1 : 0; const double g = static_cast<double>(i >> 6) * 0.6180339887498949;
+    return (*table)[i & 63u] + (g - std::floor(g)) * 0.003;
+  }
   double fixedPreroll = -1.0;   // test hook: fixed idle time before the trigger (>= 0), otherwise Preroll(seed)
   bool silentNoise = false;   // test hook: the noise source stays at its idle level (compare with net909 runs that have no noise)
   static bool Supports(Tr909Voice v) { return v == Tr909Voice::Bd || v == Tr909Voice::Sd || v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht || v == Tr909Voice::Hc; }
@@ -59,19 +95,43 @@ private:
   }
   // Idle state for the pot state: the stored state belongs to nominal pots; for another pot state the circuit idles on for kSettle seconds with the pots set (the slow RC states of the pot networks follow;
   // 2 us steps, only the state is wanted), kept per pot state of the runner.
-  const n909::Net::State& StateFor(Tr909Voice v, uint64_t params)
+  struct Settled { n909::PartNet::Snapshot snap; std::vector<double> table; };   // idle state of a pot state and its Preroll table (empty: use the fixed table)
+  static const char* const* OscNodes() { static const char* const n[kOscillators] = {"bd_N_60", "sd_N_115", "sd_N_106", "lt_N_197", "lt_N_177", "lt_N_187", "mt_N_333", "mt_N_313", "mt_N_323", "ht_N_630", "ht_N_689", "ht_N_699"}; return n; }
+  // Frequency of an oscillator node from the upward crossings of its mid level (first to last crossing); false if it does not oscillate.
+  static bool CrossingFrequency(const n909::PartNet::Probe& p, double& f)
   {
-    if (params == 0) return st_;
+    if (p.t.size() < 100) return false;
+    double lo = p.v[0], hi = p.v[0]; for (double y : p.v) { lo = std::min(lo, y); hi = std::max(hi, y); }
+    if (hi - lo < 1.0) return false;
+    const double mid = 0.5 * (lo + hi); int n = 0; double tFirst = 0, tLast = 0;
+    for (size_t k = 1; k < p.t.size(); ++k) if (p.v[k - 1] < mid && p.v[k] >= mid) { const double tc = p.t[k - 1] + (mid - p.v[k - 1]) * (p.t[k] - p.t[k - 1]) / (p.v[k] - p.v[k - 1]); if (n++ == 0) tFirst = tc; tLast = tc; }
+    if (n < 4) return false; f = (n - 1) / (tLast - tFirst); return true;
+  }
+  const n909::PartNet::Snapshot& StateFor(Tr909Voice v, uint64_t params, const std::vector<double>*& table)
+  {
+    table = nullptr;
+    if (params == 0) return nominal_;
     const uint64_t key = (params << 3) ^ static_cast<uint64_t>(v);
-    auto it = settled_.find(key); if (it != settled_.end()) return it->second;
-    n909::Net& net = *net_; net.restoreState(st_);
+    auto it = settled_.find(key); if (it != settled_.end()) { table = it->second.table.empty() ? nullptr : &it->second.table; return it->second.snap; }
+    n909::PartNet& net = *net_; net.restore(nominal_);
     for (const char* t : {"BD", "SD", "LT", "MT", "HT", "HC", "RM"}) net.setSourceDc(std::string("VTRIG_") + t, 0.0);
     net.setSourceDc("Vnz", 7.5);
     for (const char* t : {"BD", "SD", "LT", "MT", "HT", "HC", "RM"}) net.setSourceDc(std::string("VACCENT_") + t, 2.4);   // the accent of the stored idle state
-    double t = 0.0; const double h = 2e-6; net.dt = h;
-    for (long i = 0; i < static_cast<long>(kSettle / h); ++i) { if (abort_ && (i & 255) == 0 && abort_()) break; if (!net.advance(t, h)) break; t += h; }
+    net.clearProbes(); net.fixedDt = 2e-6;
+    bool probesOk = true; for (int k = 0; k < kOscillators; ++k) probesOk = net.addProbe(OscNodes()[k]) && probesOk;
+    net.recordFrom = kSettle - 0.25;   // the last 0.25 s of the idle run give the oscillator frequencies of this pot state
+    const bool ok = net.run(kSettle); net.fixedDt = dt_;
     if (settled_.size() >= 8) settled_.erase(settled_.begin());
-    return settled_[key] = net.saveState();
+    if (!ok) { net.clearProbes(); return nominal_; }   // aborted: the caller sees the abort in the hit itself
+    Settled st; st.snap = net.snapshot();
+    if (probesOk && net.probes.size() == static_cast<size_t>(kOscillators))
+    {
+      double f[kOscillators]; bool all = true; for (int k = 0; k < kOscillators; ++k) all = CrossingFrequency(net.probes[static_cast<size_t>(k)], f[k]) && all;
+      if (all) { st.table.assign(kPrerollTable, 0.0); BuildPrerollTable(f, st.table.data(), kPrerollTable);
+        if (std::getenv("DGG_PART_STATS")) { fprintf(stderr, "pot state oscillators (Hz):"); for (int k = 0; k < kOscillators; ++k) fprintf(stderr, " %.2f", f[k]); fprintf(stderr, "\n"); } }
+    }
+    net.clearProbes();
+    Settled& ref = settled_[key] = std::move(st); table = ref.table.empty() ? nullptr : &ref.table; return ref.snap;
   }
   static const char* Tag(Tr909Voice v)   // sheet tag of the netlist (node and source names)
   {
@@ -81,23 +141,27 @@ private:
   {
     if (ready_) return true;
     std::string text; for (int i = 0; i < kTr909CircuitNetLineCount; ++i) { text += kTr909CircuitNetLines[i]; text += '\n'; }
-    net_ = std::make_unique<n909::Net>();
-    if (!net_->loadText(text)) { net_.reset(); return false; }
-    st_.x.assign(kTr909CircuitIdleState, kTr909CircuitIdleState + kTr909CircuitStateX);
-    st_.q1.assign(kTr909CircuitIdleState + kTr909CircuitStateX, kTr909CircuitIdleState + kTr909CircuitStateX + kTr909CircuitStateQ);
-    st_.q2.assign(kTr909CircuitIdleState + kTr909CircuitStateX + kTr909CircuitStateQ, kTr909CircuitIdleState + kTr909CircuitStateX + 2 * kTr909CircuitStateQ);
-    st_.stepIndex = kTr909CircuitStateStepIndex; st_.hPrev = kTr909CircuitStateHPrev;
-    if (!net_->restoreState(st_)) { net_.reset(); return false; }
+    net_ = std::make_unique<n909::PartNet>(); net_->fixedDt = dt_; net_->H = 20e-6;   // fixed step of the validated runs; relaxation window 20 us, NOISE tolerance 1e-7 V
+    if (!net_->build(text)) { net_.reset(); return false; }
+    n909::Net::State st;
+    st.x.assign(kTr909CircuitIdleState, kTr909CircuitIdleState + kTr909CircuitStateX);
+    st.q1.assign(kTr909CircuitIdleState + kTr909CircuitStateX, kTr909CircuitIdleState + kTr909CircuitStateX + kTr909CircuitStateQ);
+    st.q2.assign(kTr909CircuitIdleState + kTr909CircuitStateX + kTr909CircuitStateQ, kTr909CircuitIdleState + kTr909CircuitStateX + 2 * kTr909CircuitStateQ);
+    st.stepIndex = kTr909CircuitStateStepIndex; st.hPrev = kTr909CircuitStateHPrev;
+    if (!net_->loadFullState(st)) { net_.reset(); return false; }
+    nominal_ = net_->snapshot(); net_->abort = abort_;
     ready_ = true; return true;
   }
   bool Render(Tr909Voice v, uint64_t params, int accentCode, uint64_t seed, double seconds, int fs, std::vector<float>& out)
   {
-    n909::Net& net = *net_;
+    n909::PartNet& net = *net_;
     if (!SetPots(v, params)) return false;
-    if (!net.restoreState(StateFor(v, params))) return false;
+    const std::vector<double>* table = nullptr;
+    if (!net.restore(StateFor(v, params, table))) return false;
     const std::string tag = Tag(v), lower = tag == "BD" ? "bd" : tag == "SD" ? "sd" : tag == "LT" ? "lt" : tag == "MT" ? "mt" : tag == "HT" ? "ht" : "hc";
-    const int outNode = net.nodeIndex(lower + "_" + tag + "_OUT"); if (outNode < 0) return false;
-    const double t0 = kTriggerDelay + (fixedPreroll >= 0.0 ? fixedPreroll : Preroll(seed));   // trigger time of the hit in the run: the circuit idles on from the stored state before the trigger, so the free-running oscillators are at a different phase for every noise seed (variant)
+    net.clearProbes(); if (!net.addProbe(lower + "_" + tag + "_OUT")) return false;
+    if (const char* r = std::getenv("DGG_PART_IFREL")) net.ifRel = std::atof(r);   // test hook
+    const double t0 = kTriggerDelay + (fixedPreroll >= 0.0 ? fixedPreroll : PrerollAt(table, seed));   // trigger time of the hit in the run: the circuit idles on from the stored state before the trigger, so the free-running oscillators are at a different phase for every noise seed (variant)
     for (const char* t : {"BD", "SD", "LT", "MT", "HT", "HC", "RM"}) net.setSourceDc(std::string("VTRIG_") + t, 0.0);
     net.setSource("VTRIG_" + tag, [t0](double t) { return pcmfast::HitTrigger(t - t0); });
     net.setSourceDc("VACCENT_" + tag, Tr909AccentVolts(accentCode));
@@ -105,31 +169,24 @@ private:
     if (!silentNoise) net.setSource("Vnz", [&noise, t0](double t) { return t < t0 ? 7.5 : noise.At(kNoiseAtTrigger + (t - t0)); });
     else net.setSourceDc("Vnz", 7.5);
     const double ts = 1.0 / fs; const size_t nOut = static_cast<size_t>(seconds * fs + 0.5);
+    net.fixedDt = dt_; net.recordFrom = t0 - 5e-5;
+    if (!net.run(t0 + static_cast<double>(nOut) * ts + 2e-4)) { out.clear(); return false; }
+    if (std::getenv("DGG_PART_STATS")) { fprintf(stderr, "PartNet: windows %ld passes %ld unconverged %ld hist", net.windows, net.passes, net.unconverged); for (int i = 1; i < 8; ++i) fprintf(stderr, " %d:%ld", i, net.itHist[i]); fprintf(stderr, " max mismatch %.3g\n", net.ifMaxMismatch); }
+    const auto& pr = net.probes[0];
+    if (pr.t.size() < 2) { out.clear(); return false; }
+    size_t j = 0;
+    auto at = [&](double tt) { while (j + 1 < pr.t.size() - 1 && pr.t[j + 1] < tt) ++j; const double a = std::min(std::max((tt - pr.t[j]) / std::max(pr.t[j + 1] - pr.t[j], 1e-30), 0.0), 1.0); return pr.v[j] + (pr.v[j + 1] - pr.v[j]) * a; };
+    const double idle = at(t0);   // output just before the trigger
     out.assign(nOut, 0.0f);
-    double t = 0.0, prevV = net.V(outNode), idle = prevV, nextOut = t0;   // output samples from the trigger on; idle level = output just before the trigger
-    size_t k = 0; bool idleSet = false; unsigned steps = 0;
-    net.dt = dt_;
-    while (k < nOut)
-    {
-      if (abort_ && ((++steps & 255u) == 0) && abort_()) { out.clear(); return false; }
-      if (!net.advance(t, dt_)) { out.clear(); return false; }
-      const double tn = t + dt_, cur = net.V(outNode);
-      if (!idleSet && tn >= t0 - 1e-12) { idle = cur; idleSet = true; }
-      while (k < nOut && nextOut <= tn + 1e-15)
-      {
-        const double a = std::min(std::max((nextOut - t) / dt_, 0.0), 1.0);
-        out[k++] = static_cast<float>(prevV + (cur - prevV) * a - idle); nextOut += ts;
-      }
-      prevV = cur; t = tn;
-    }
+    for (size_t k = 0; k < nOut; ++k) out[k] = static_cast<float>(at(t0 + static_cast<double>(k) * ts) - idle);
     return true;
   }
   static constexpr double kTriggerDelay = 0.05;   // minimum idle before the trigger: the accent (a held level in the sequencer) and the pot states settle as in the NGSpice decks (50 ms)
   static constexpr double kNoiseAtTrigger = 0.05;   // HitRunner::kStartTime: the noise sequence of a hit is read from 50 ms on when the trigger arrives
   static constexpr double kSettle = 0.5;
-  std::map<uint64_t, n909::Net::State> settled_;
+  std::map<uint64_t, Settled> settled_;
   double dt_; std::function<bool()> abort_;
-  std::unique_ptr<n909::Net> net_; n909::Net::State st_; bool ready_ = false;
+  std::unique_ptr<n909::PartNet> net_; n909::PartNet::Snapshot nominal_; bool ready_ = false;
 };
 
 }  // namespace dgg

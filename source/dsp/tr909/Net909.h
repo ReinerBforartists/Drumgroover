@@ -3,6 +3,7 @@
 // (RB, RC, depletion and diffusion charge), ideal voltage sources. Macro models mirror the NGSpice subcircuits of nava_models.inc:
 // M5218_V1, CD4069UB_INV, AN6912_CMP, BA6110_OTA_N.
 #pragma once
+#include <chrono>
 #include <cstring>
 #include <cmath>
 #include <cstdio>
@@ -252,6 +253,9 @@ class Net {
 
   // ---- full assembly ----
   void assemble(double tNow) {
+#ifdef N909_PROFILE
+    const auto tpA0 = std::chrono::steady_clock::now();
+#endif
     if (A.size() != (size_t)nUnk * nUnk || touched.size() != A.size()) A.assign((size_t)nUnk * nUnk, 0.0); else for (int idx : touchedList) A[idx] = 0.0;
     B.assign(nUnk, 0.0); qNow.assign(nq, 0.0);
     int nn = nNodes - 1;
@@ -267,18 +271,42 @@ class Net {
       else conduct(r.a, r.b, r.dyn ? 1.0 / (tNow <= r.t0 ? r.r0 : (tNow >= r.t0 + r.tr || r.tr <= 0 ? r.r1 : r.r0 + (r.r1 - r.r0) * (tNow - r.t0) / r.tr)) : r.g);
     }
     for (auto& c : cap) if (!dcMode) chargeStamp(c.a, c.b, c.q, c.c * (V(c.a) - V(c.b)), c.c);
+#ifdef N909_PROFILE
+    const auto tpL = std::chrono::steady_clock::now(); profLin += std::chrono::duration<double>(tpL - tpA0).count();
+#endif
+#ifdef N909_PROFILE
+    auto tpP = std::chrono::steady_clock::now(); auto lap = [&](double& acc) { const auto n = std::chrono::steady_clock::now(); acc += std::chrono::duration<double>(n - tpP).count(); tpP = n; };
+#endif
     for (auto& d : dio) diodeStamp(d.a, d.c, d.Is, d.N, d.Rs, d.Cjo, d.Vj, d.M, d.Tt, d.Bv, d.Ibv, d.q, &d.vdLast);
+#ifdef N909_PROFILE
+    lap(profDio);
+#endif
     for (auto& t : bjt) bjtStamp(t);
+#ifdef N909_PROFILE
+    lap(profBjt);
+#endif
     for (auto& v : vs) {
       int br = nn + v.br; double val = v.f ? v.f(tNow) : v.dc * (rampT > 0 ? std::min(1.0, tNow / rampT) : srcScale);
       if (v.p > 0) { touch((size_t)(v.p - 1) * nUnk + br); touch((size_t)br * nUnk + (v.p - 1)); A[(size_t)(v.p - 1) * nUnk + br] += 1; A[(size_t)br * nUnk + (v.p - 1)] += 1; }
       if (v.n > 0) { touch((size_t)(v.n - 1) * nUnk + br); touch((size_t)br * nUnk + (v.n - 1)); A[(size_t)(v.n - 1) * nUnk + br] -= 1; A[(size_t)br * nUnk + (v.n - 1)] -= 1; }
       B[br] += val;
     }
+#ifdef N909_PROFILE
+    tpP = std::chrono::steady_clock::now();
+#endif
     for (auto& m : op) stamp5218(m);
+#ifdef N909_PROFILE
+    lap(profOp);
+#endif
     for (auto& m : inv) stamp4069(m);
+#ifdef N909_PROFILE
+    lap(profInv);
+#endif
     for (auto& m : cmp) stamp6912(m);
     for (auto& m : ota) stamp6110(m);
+#ifdef N909_PROFILE
+    lap(profOther);
+#endif
   }
 
   // ---- macro models ----
@@ -473,14 +501,24 @@ class Net {
     M = A; std::vector<double> R2 = Rhs; return luSolve(M, R2, sol);
   }
   long itTotal = 0, itHist[8] = {0,0,0,0,0,0,0,0};
+  double profAsm = 0, profSolve = 0, profLin = 0, profDio = 0, profBjt = 0, profOp = 0, profInv = 0, profOther = 0;   // seconds in assemble / solveSystem (only with -DN909_PROFILE)
   bool newton(double tNow, int maxIt = 160) {
     std::vector<double> sol, M, R;
     for (int it = 0; it < maxIt; ++it) {
       if (it == 20 && envJF && std::fabs(tNow - std::atof(envJF)) < 1e-9) { checkJacobian(tNow, 30); std::exit(0); }
+#ifdef N909_PROFILE
+      const auto tp0 = std::chrono::steady_clock::now();
+#endif
       ++itTotal; assemble(tNow);
+#ifdef N909_PROFILE
+      const auto tp1 = std::chrono::steady_clock::now();
+#endif
       if (!solveSystem(M, B, sol)) return false;
+#ifdef N909_PROFILE
+      { const auto tp2 = std::chrono::steady_clock::now(); profAsm += std::chrono::duration<double>(tp1 - tp0).count(); profSolve += std::chrono::duration<double>(tp2 - tp1).count(); }
+#endif
       double maxd = 0; bool conv = true;
-      for (int i = 0; i < nUnk; ++i) { double d = std::fabs(sol[i] - x[i]); double tol = (i < nNodes - 1 ? 1e-6 : 1e-8) + convRel * std::fabs(sol[i]); if (d > tol) conv = false; if (d > maxd) maxd = d; }
+      for (int i = 0; i < nUnk; ++i) { double d = std::fabs(sol[i] - x[i]); double tol = (i < nNodes - 1 ? nwAtolV : nwAtolI) + convRel * std::fabs(sol[i]); if (d > tol) conv = false; if (d > maxd) maxd = d; }
       // damp very large steps
       if (envDebug && std::fabs(tNow - std::atof(envDebug)) < 1e-9) { int im = 0; for (int i = 0; i < nUnk; ++i) if (std::fabs(sol[i] - x[i]) >= std::fabs(sol[im] - x[im])) im = i; fprintf(stderr, "it %d maxd %.3g at unk %d (%s) sol %.4g\n", it, maxd, im, im < nNodes - 1 ? nodeName[im + 1].c_str() : "branch", sol[im]); }
       double damp = 1.0; double vlim = (it < 3) ? 5.0 : 1.0; if (maxd > vlim) damp = vlim / maxd;
@@ -491,6 +529,9 @@ class Net {
     return false;
   }
   double convRel = std::getenv("N909_RELTOL") ? std::atof(std::getenv("N909_RELTOL")) : 1e-4;
+  double nwAtolV = 1e-6, nwAtolI = 1e-8;   // absolute Newton convergence tolerances (node voltages, branch currents); defaults = the values of the fixed-step runs
+  bool reassembleCharges = std::getenv("N909_NOREASM") == nullptr;   // true (default): one more assembly after the converged Newton solve to evaluate the charges at x exactly; N909_NOREASM=1 or false: reuse the charges of the last iteration
+  bool predictorStart = false;             // advanceAdaptive: Newton starts from the linear extrapolation of the last two accepted solutions instead of the last one
   double rampT = 0;     // supply ramp time of the start-up fallback (0 = off)
   void startupFromZero(double ramp) {   // used when no DC operating point is found: ramp the DC sources from 0
     rampT = ramp; dcMode = false; stepIndex = 0; x.assign(nUnk, 0.0); q1.assign(nq, 0.0); q2.assign(nq, 0.0); srcScale = 1.0; gminExtra = 0;
@@ -557,6 +598,7 @@ class Net {
     for (int tries = 0; tries < 40; ++tries)
     {
       const State keep = saveState(); const std::vector<double> xaKeep = xA, xbKeep = xB; const double habKeep = hAB;
+      if (predictorStart && hAB > 0.0) { const double r = h / hAB; for (int i = 0; i < nUnk; ++i) x[i] = xA[i] + r * (xA[i] - xB[i]); }
       if (!advance(t, h)) { rollback(keep); xA = xaKeep; xB = xbKeep; hAB = habKeep; if (h <= hMin * 1.0000001) return false; h = std::max(h * 0.5, hMin); continue; }
       double err = 0.0;
       if (hAB > 0.0) { const double r = h / hAB; for (int i = 0; i < nNodes - 1; ++i) { const double xp = xA[i] + r * (xA[i] - xB[i]); err = std::max(err, std::fabs(x[i] - xp) / (atol + rtol * std::fabs(x[i]))); } }
@@ -581,7 +623,7 @@ class Net {
   bool step(double tNow) {   // advance to time tNow (uses dt)
     std::vector<double> xs = x;
     if (!newton(tNow)) { x = xs; return false; }
-    q2 = q1; assemble(tNow); q1 = qNow; ++stepIndex; hPrev = dt;  // qNow of the converged solution (assemble evaluated charges at x)
+    q2 = q1; if (reassembleCharges) assemble(tNow); q1 = qNow; ++stepIndex; hPrev = dt;  // qNow of the converged solution (assemble evaluated charges at x); without the extra assembly qNow is the one of the last Newton iteration (evaluated one update before the converged x)
     return true;
   }
 };
