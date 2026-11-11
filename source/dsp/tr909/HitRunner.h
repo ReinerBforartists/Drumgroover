@@ -53,6 +53,12 @@ struct HitTuning
   int replayKnot = 5;        // spacing of the noise knots of the linear response in us (5: the noise source itself; 10 / 20: the coarse source of HitNoise::AtCoarse)
   double replayEq = 0.0;     // equaliser of the coarse source
   bool detReuse = false;     // linear-response mode: the noise-free run of the last hit is reused when model, pots, tuning and length are the same (the run does not depend on the noise)   // tolerance of the noise-free run before linNoiseT, factor on it after linNoiseT
+  bool linBaseNoisy = false; // linear-response mode: the expansion point is the noisy trajectory of a base sequence (seed linBaseSeed); the response is computed to the DIFFERENCE of the noise to that base (second-order effects of the noise, e.g. the mean pitch shift at high accents, are part of the base)
+  uint64_t linBaseSeed = 0;
+  bool replayStep = false;   // the linear response follows the actual steps of the base run (NoiseReplay::NextStep; needs linBaseNoisy: the steps of the noisy base never span a noise knot)
+  double replayStepThr = -1.0;   // epoch refresh for the stepwise response: < 0 every step, else after a port moved by this x its thermal voltage
+  int replayJ = -1;   // >= 0: the response is stepped with the propagator of step 2^replayJ x 0.156 us (default 5: the 5 us noise knot; smaller values subdivide the knot, the noise is linear between the knots)
+  bool replayDouble = false;   // diagnosis: active-block solve of the linear response in double precision
   double preRoll = 0.0;      // seconds of noise before the trigger (a multiple of the noise knot spacing): the noise-driven states then belong to the noise sequence of the hit
 };
 
@@ -87,7 +93,7 @@ public:
   static constexpr uint64_t kNoStream = ~0ULL;                  // 'no stream position': the hit uses its own sequence (Start(seed))
   void Start(uint64_t seed, double stepSeconds = 5e-6, double eq = 0.0)
   {
-    smp_.clear(); step_ = stepSeconds; amp_ = 5.22 * std::sqrt(5e-6 / stepSeconds); eq_ = eq;
+    smp_.clear(); base_ = nullptr; step_ = stepSeconds; amp_ = 5.22 * std::sqrt(5e-6 / stepSeconds); eq_ = eq;
     rng_ = 0x9E3779B97F4A7C15ULL ^ 2ULL ^ (seed * 0xD1B54A32D192ED03ULL);
   }
   // Shared noise stream (the circuit has one noise source for all voices): the same sequence as Start(seed), but the hit begins at knot `startKnot` of the stream (absolute time / step of the trigger). The generator is a 64-bit LCG with 12 draws per knot:
@@ -100,6 +106,8 @@ public:
     rng_ = A * rng_ + C;
   }
   // Constant source at the idle level (no noise) with knots every `stepSeconds`: separates the cost of the knots from the cost of the noise.
+  // Difference source: the samples become (own - base) (the base must have the same step and amplitude and stay valid); call right after Start().
+  void SetBase(HitNoise* b) { base_ = b; }
   void StartSilent(double stepSeconds) { Start(0, stepSeconds, 0.0); amp_ = 0.0; }
   double step() const { return step_; }
   void Reserve(size_t n) { smp_.reserve(n); }
@@ -127,11 +135,11 @@ private:
     while (static_cast<long>(smp_.size()) <= idx + 1)
     {
       double sm = 0; for (int q = 0; q < 12; ++q) { rng_ = rng_ * 6364136223846793005ULL + 1442695040888963407ULL; sm += (rng_ >> 11) * (1.0 / 9007199254740992.0); }
-      smp_.push_back((sm - 6.0) * amp_);
+      double v = (sm - 6.0) * amp_; if (base_) { base_->Fill(static_cast<long>(smp_.size())); v -= base_->smp_[smp_.size()]; } smp_.push_back(v);
     }
   }
   double Eq(long i) { const double rm = i > 0 ? smp_[i - 1] : smp_[i]; return (1.0 + 2.0 * eq_) * smp_[i] - eq_ * (rm + smp_[i + 1]); }
-  std::vector<double> smp_; uint64_t rng_ = 0; double step_ = 5e-6, amp_ = 5.22, eq_ = 0.0;
+  std::vector<double> smp_; uint64_t rng_ = 0; double step_ = 5e-6, amp_ = 5.22, eq_ = 0.0; HitNoise* base_ = nullptr;
 };
 
 }}  // namespace dgg::pcmfast
@@ -303,10 +311,12 @@ public:
   {
     if (tu.detReuse && det_.valid && det_.potVer == potVer_ && det_.seconds == seconds && det_.sig == TuningSig(tu)) { ts = det_.ts; ys = det_.ys; return true; }   // replay_ still holds the trajectory and the epochs of this run (only RunLinDet changes them)
     det_.valid = false;
-    HitNoise silent; silent.StartSilent(0.05);
+    HitNoise silent; silent.StartSilent(0.05); HitNoise* src = &silent;
+    if (tu.linBaseNoisy) { baseNz_.Start(tu.linBaseSeed, 5e-6, 0.0); src = &baseNz_; }
     HitTuning td = tu; td.noiseOffT = -1.0; td.ytol = tu.linYtol; td.ytail2T = tu.linT2T; td.ytail2Mul = tu.linT2Mul; td.ytailT = tu.linNoiseT; td.ytailMul = tu.linTailMul;
     const double tRep = tu.linNoiseT + 0.01; ts.clear(); ys.clear();
-    Begin(td, &silent, seconds); Model& m = *m_; replay_.Clear(m.p);
+    if (tu.linBaseNoisy) { td = tu; td.noiseOffT = -1.0; }   // the noisy base run: the production tuning of the noisy hit
+    Begin(td, src, seconds); Model& m = *m_; replay_.Clear(m.p);
     unsigned cnt = 0;
     while (!Finished())
     {
@@ -314,16 +324,18 @@ public:
       Advance(); if (t_ <= tRep + 0.001) replay_.Record(t_, m.p);
       ts.push_back(t_); ys.push_back(y_);
     }
-    replay_.thr = tu.replayThr; replay_.laterMul = tu.replayLater; replay_.refine = tu.replayRefine; replay_.single = tu.replayFloat; replay_.coarse = tu.replayKnot >= 10 ? tu.replayKnot / 5 : 1; replay_.eq = tu.replayEq; replay_.Prime(m, pj_[tu.replayKnot >= 20 ? 7 : (tu.replayKnot >= 10 ? 6 : 5)], tRep);   // Jacobi epochs of the response for this trajectory
+    replay_.dbl = tu.replayDouble;     replay_.thr = tu.replayThr; replay_.laterMul = tu.replayLater; replay_.refine = tu.replayRefine; replay_.single = tu.replayFloat; replay_.coarse = tu.replayKnot >= 10 ? tu.replayKnot / 5 : 1; replay_.eq = tu.replayEq; if (tu.replayStep) { replay_.stepThr = tu.replayStepThr; replay_.PrimeSteps(m, pj_.data(), tRep); } else replay_.Prime(m, pj_[tu.replayJ >= 0 ? tu.replayJ : (tu.replayKnot >= 20 ? 7 : (tu.replayKnot >= 10 ? 6 : 5))], tRep);   // Jacobi epochs of the response for this trajectory
     if (tu.detReuse) { det_.valid = true; det_.potVer = potVer_; det_.seconds = seconds; det_.sig = TuningSig(tu); det_.ts = ts; det_.ys = ys; }
     return true;
   }
   static double TuningSig(const HitTuning& t) { return t.ytol * 1.0 + t.yfloor * 3.0 + t.ytailT * 5.0 + t.ytailMul * 7.0 + t.ytail2T * 11.0 + t.ytail2Mul * 13.0 + t.dpTol * 17.0 + t.zohW * 19.0 + t.jGrow * 23.0 + t.capThr * 29.0 + t.chordFirst * 31.0 + t.linNoiseT * 37.0 + t.linYtol * 41.0 + t.linTailMul * 43.0 + t.linT2T * 53.0 + t.linT2Mul * 59.0 + t.replayKnot * 67.0 + t.replayEq * 71.0 + t.jMax * 61.0 + t.fastLinAlg * 47.0; }
+  HitNoise baseNz_;   // base noise sequence of the noisy expansion point (HitTuning::linBaseNoisy)
   struct DetCache { bool valid = false; unsigned potVer = 0; double seconds = 0.0, sig = 0.0; std::vector<double> ts, ys; } det_;
   // The response to the noise of `noise` around the noise-free trajectory of the last RunLinDet().
   bool RunLinResponse(const HitTuning& tu, HitNoise* noise, std::vector<double>& tk, std::vector<double>& dyk)
   {
-    tk.clear(); dyk.clear(); replay_.Start(*noise, kStartTime, tu.linNoiseT + 0.01); double t, dy; while (replay_.Next(t, dy)) { tk.push_back(t); dyk.push_back(dy); }
+    tk.clear(); dyk.clear(); if (tu.linBaseNoisy) noise->SetBase(&baseNz_); if (tu.replayStep) { replay_.StartSteps(*noise, kStartTime, tu.linNoiseT + 0.01); double t, dy; while (replay_.NextStep(t, dy)) { tk.push_back(t); dyk.push_back(dy); } return true; }
+    replay_.Start(*noise, kStartTime, tu.linNoiseT + 0.01); double t, dy; while (replay_.Next(t, dy)) { tk.push_back(t); dyk.push_back(dy); }
     return true;
   }
   // n hits (noise sequences) of one parameter set: one noise-free run, one linear response per noise; out[l] at the host rate.

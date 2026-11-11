@@ -35,17 +35,28 @@ class PartNet {
     long steps = 0, rejected = 0;
     Wave wf, wfPrev;
     std::vector<double> ts; std::vector<std::vector<double>> pv;   // steps of the present pass: time, probe values
+    std::vector<int> ifNode, ifIdx; std::vector<Wave> ifW;   // per secondary interface: node in this net (-1: not used), index of the VIF source (non-owner) / IFI current source (owner), waveform (owner: node voltage, other: current drawn)
+    std::vector<double> vdPrev, vdPrev2; bool eventAlways = false, weak = false;   // weak: weakly coupled to the NOISE line (toms block of a non-tom hit): runs once per window, no relaxation re-passes
+     std::vector<signed char> sat; double holdUntil = -1.0, hLast = 0.0; std::vector<double> vdPrevS, vdPrev2S; std::vector<signed char> satS; double holdUntilS = -1.0, hLastS = 0.0;   // event-controlled stepping (quiet windows): comparator input differences of the last two steps, saturation, fine-step hold
   };
+  // Secondary interface nodes (splitToms): nodes shared by blocks that are not the NOISE line. The owner block keeps the node and receives the loads of the other blocks as a current source; every other block
+  // sees the node as a voltage source following the owner's voltage. Both waveforms are relaxed together with the NOISE line (coupling kept in both directions).
+  struct Iface { std::string name, anchor; int owner = -1; Wave V, I; double vHold = 0.0, iHold = 0.0; };
+  bool splitToms = false;   // split the toms block (LT, MT + TOM_NOISE sheet, HT) along TOM_NOISE / noise_N_727; the trigger and accent sources of the toms are duplicated in the blocks that use them
+  std::vector<Iface> ifaces; std::set<std::string> extraRails;
   std::vector<std::unique_ptr<Block>> blocks;
   Net master; int noiseNode = -1; std::string noiseName = "NOISE";
   std::vector<std::pair<int, double>> thev; double gLoadFix = 0.0, gTot = 0.0;   // master: (source index, conductance) behind the NOISE line; fixed leak
   std::string fullText;
   // run parameters
   double H = 20e-6, rtol = 1e-3, atol = 1e-6, hMin = 1e-9, hMax = 1e-5, ifTol = 1e-7, ifRel = 1e-6, fixedDt = 0.0; int maxIt = 6;
+  // Event-controlled stepping in quiet windows (no noise on the NOISE line: the idle run before a hit): the block steps with the fixed step around comparator flips (nearest predicted crossing of a saturated op-amp
+  // input difference closer than eventMargin, or eventHold after a flip) and up to eventHMax between them; the full circuit is solved, only the step size follows the events. quietUntil < 0: off (noisy runs stay fixed).
+  double quietUntil = -1.0, eventHMax = 3e-6, eventMargin = 20e-6, eventHold = 12e-6, quietH = 60e-6;
   double nwAtolV = 1e-6, nwAtolI = 1e-8; bool predictor = false, reassemble = false; double bypassTol = 0.0; int jacReuse = 0; bool prestamp = false, compactRec = false, partialLU = false;   // Newton tolerances and predictor start of the blocks (Net defaults: 1e-6 / 1e-8, off)
   // statistics
   long windows = 0, passes = 0, unconverged = 0; long itHist[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-  double ifMaxMismatch = 0.0;
+  double ifMaxMismatch = 0.0, ifTolI = 1e-8, ifRelI = 1e-3, ifTolV = 5e-3, ifRelV = 3e-3;   // secondary interfaces: absolute / relative tolerance of the summed load current between passes
   // probes
   struct Probe { std::string name; int block = -1, node = 0; std::vector<double> t, v; };
   std::vector<Probe> probes;
@@ -77,6 +88,13 @@ class PartNet {
     }
     const int N = (int)nodeNames.size();
     std::set<std::string> glob = {"0", "p15", "m15", noiseName, "nz_int"};
+    ifaces.clear(); extraRails.clear();
+    if (splitToms) {
+      // TOM_NOISE (shaped noise, owner: the MT + noise sheet block) feeds the toms; TO_NOISE_LT / HT (tom output into the diode OR of the noise stage, owner: the tom's block) feed the noise sheet. MT's TO_NOISE_MT is inside its block.
+      const char* ifn[3][2] = {{"TOM_NOISE", "noise_N_712"}, {"TO_NOISE_LT", "lt_LT_OUT"}, {"TO_NOISE_HT", "ht_HT_OUT"}};
+      for (const auto& e : ifn) { Iface f; f.name = e[0]; f.anchor = e[1]; ifaces.push_back(f); glob.insert(e[0]); }
+      for (const char* n : {"TRIG_LT", "TRIG_MT", "TRIG_HT", "ACCENT_LT", "ACCENT_MT", "ACCENT_HT"}) { extraRails.insert(n); glob.insert(n); }
+    }
     auto isGlob = [&](int n) { return n == 0 || glob.count(nodeNames[n]) > 0; };
     std::vector<int> par(N); for (int i = 0; i < N; ++i) par[i] = i;
     std::function<int(int)> find = [&](int a) { while (par[a] != a) { par[a] = par[par[a]]; a = par[a]; } return a; };
@@ -99,6 +117,7 @@ class PartNet {
     // block texts
     const int nb = (int)big.size(); std::vector<std::vector<int>> bnodes(nb); std::vector<std::vector<const Line*>> blines(nb); std::vector<const Line*> mlines;
     std::vector<std::set<int>> bset(nb);
+    std::vector<const Line*> extraLines;
     int cap = 0, dio = 0, bjt = 0, opn = 0, inv = 0;   // element counters of the FULL netlist (same order as Net::loadStream)
     std::vector<std::vector<int>> capI(nb), dioI(nb), bjtI(nb), opI(nb), invI(nb);
     for (const Line& L : lines) {
@@ -106,7 +125,9 @@ class PartNet {
       const std::string& k = L.kind;
       if (b < 0) {   // all pins global: the rail sources go to every block that uses a rail; the rest is the NOISE master
         bool rail = (k == "V" || k == "VD") && glob.count(L.tok[1]) == 0 && (nodeNames[std::atoi(L.tok[2].c_str())] == "p15" || nodeNames[std::atoi(L.tok[2].c_str())] == "m15");
-        if (rail) for (int q = 0; q < nb; ++q) blines[q].push_back(&L); else mlines.push_back(&L);
+        const bool xrail = (k == "V" || k == "VD") && extraRails.count(nodeNames[std::atoi(L.tok[2].c_str())]) > 0;
+        if (xrail) extraLines.push_back(&L);
+        else if (rail) for (int q = 0; q < nb; ++q) blines[q].push_back(&L); else mlines.push_back(&L);
         continue;
       }
       blines[b].push_back(&L);
@@ -115,6 +136,8 @@ class PartNet {
       else if (k == "X5218") { opI[b].push_back(opn); ++opn; } else if (k == "X4069") { invI[b].push_back(inv); ++inv; }
       continue;
     }
+    for (const Line* XL : extraLines) for (int q = 0; q < nb; ++q) { const int xn = std::atoi(XL->tok[2].c_str()); bool use = false;   // toms trigger / accent sources: a copy in every block whose elements touch the node
+      for (const Line* L : blines[q]) { if (L == XL) continue; for (int pn : L->pins) if (std::atoi(L->tok[pn].c_str()) == xn) use = true; } if (use) blines[q].push_back(XL); }
     // counters for elements of other blocks (must also advance): recount in a second pass in line order
     cap = dio = bjt = opn = inv = 0; for (auto& v : capI) v.clear(); for (auto& v : dioI) v.clear(); for (auto& v : bjtI) v.clear(); for (auto& v : opI) v.clear(); for (auto& v : invI) v.clear();
     for (const Line& L : lines) {
@@ -127,6 +150,8 @@ class PartNet {
     std::string masterText;
     {   // master: nodes 0 .. N-1 kept (names), only its lines
       std::ostringstream os; for (int i = 0; i < N; ++i) os << "NODE " << i << " " << nodeNames[i] << "\n"; for (const Line* L : mlines) { for (size_t i = 0; i < L->tok.size(); ++i) os << (i ? " " : "") << L->tok[i]; os << "\n"; } masterText = os.str(); }
+    std::vector<int> ifId(ifaces.size(), -1);
+    for (size_t g = 0; g < ifaces.size(); ++g) { for (int i = 0; i < N; ++i) { if (nodeNames[i] == ifaces[g].name) ifId[g] = i; if (nodeNames[i] == ifaces[g].anchor) ifaces[g].owner = blockOfNode(i); } if (ifId[g] < 0 || ifaces[g].owner < 0) { if (err) *err = "interface node missing"; return false; } }
     for (int b = 0; b < nb; ++b) {
       std::set<int> used; used.insert(0); for (const Line* L : blines[b]) for (int p : L->pins) used.insert(std::atoi(L->tok[p].c_str()));
       std::vector<int> nodes(used.begin(), used.end()); std::unordered_map<int, int> nid; for (size_t i = 0; i < nodes.size(); ++i) nid[nodes[i]] = (int)i;
@@ -134,9 +159,12 @@ class PartNet {
       for (const Line* L : blines[b]) { for (size_t i = 0; i < L->tok.size(); ++i) { std::string s = L->tok[i]; if (std::find(L->pins.begin(), L->pins.end(), (int)i) != L->pins.end()) s = std::to_string(nid[std::atoi(s.c_str())]); os << (i ? " " : "") << s; } os << "\n"; }
       int nz = -1; for (size_t i = 0; i < nodes.size(); ++i) if (nodeNames[nodes[i]] == noiseName) nz = (int)i;
       if (nz > 0) os << "VD VNIF " << nz << " 0 7.5\n";
+      std::vector<int> ifLocal(ifaces.size(), -1); for (size_t g = 0; g < ifaces.size(); ++g) if (used.count(ifId[g])) { ifLocal[g] = nid[ifId[g]]; if (ifaces[g].owner == b) os << "I IFI" << g << " " << ifLocal[g] << " 0 0\n"; else os << "VD VIF" << g << " " << ifLocal[g] << " 0 7.5\n"; }
       auto blk = std::make_unique<Block>(); blk->text = os.str(); if (!blk->net.loadText(os.str())) { if (err) *err = "block load failed"; return false; }
       blk->nodes = (int)nodes.size(); blk->capIdx = capI[b]; blk->dioIdx = dioI[b]; blk->bjtIdx = bjtI[b]; blk->opIdx = opI[b]; blk->invIdx = invI[b];
       for (size_t i = 0; i < blk->net.vs.size(); ++i) if (blk->net.vs[i].name == "VNIF") blk->ifSrc = (int)i;
+      blk->ifNode = ifLocal; blk->ifIdx.assign(ifaces.size(), -1); blk->ifW.assign(ifaces.size(), Wave());
+      for (size_t g = 0; g < ifaces.size(); ++g) if (ifLocal[g] >= 0) { if (ifaces[g].owner == b) { for (size_t i = 0; i < blk->net.isrc.size(); ++i) if (blk->net.isrc[i].name == "IFI" + std::to_string(g)) blk->ifIdx[g] = (int)i; } else for (size_t i = 0; i < blk->net.vs.size(); ++i) if (blk->net.vs[i].name == "VIF" + std::to_string(g)) blk->ifIdx[g] = (int)i; }
       blk->name = sheetOf(nodes.size() > 1 ? nodes[1] : 0) + "+" + std::to_string(blk->nodes);
       blocks.push_back(std::move(blk));
     }
@@ -161,15 +189,15 @@ class PartNet {
   }
   bool setSource(const std::string& nm, std::function<double(double)> fn) {
     for (auto& v : master.vs) if (v.name == nm) { v.f = std::move(fn); return true; }
-    for (auto& b : blocks) if (b->net.setSource(nm, fn)) return true;
-    return false;
+    bool any = false; for (auto& b : blocks) any = b->net.setSource(nm, fn) || any;   // a source can be duplicated in several blocks (toms trigger / accent)
+    return any;
   }
   bool setPot(const std::string& nm, double pos) { bool f = false; for (auto& b : blocks) f = b->net.setPot(nm, pos) || f; return f; }
   void resetPots() { for (auto& b : blocks) b->net.resetPots(); }
   bool setSourceDc(const std::string& nm, double volts) {
     for (auto& v : master.vs) if (v.name == nm) { v.f = nullptr; v.dc = volts; return true; }
-    for (auto& b : blocks) if (b->net.setSourceDc(nm, volts)) return true;
-    return false;
+    bool any = false; for (auto& b : blocks) any = b->net.setSourceDc(nm, volts) || any;
+    return any;
   }
   int blockOfNodeName(const std::string& nm, int* node = nullptr) { for (size_t i = 0; i < blocks.size(); ++i) { const int k = blocks[i]->net.nodeIndex(nm); if (k >= 0) { if (node) *node = k; return (int)i; } } return -1; }
   bool addProbe(const std::string& nm) { Probe p; p.name = nm; p.block = blockOfNodeName(nm, &p.node); if (p.block < 0) return false; probes.push_back(p); return true; }
@@ -210,7 +238,7 @@ class PartNet {
       Block& b = *blocks[i]; if (!b.net.restoreState(sn.st[i])) return false;
       b.xA.clear(); b.xB.clear(); b.net.xA.clear(); b.net.xB.clear(); b.net.hAB = 0.0; b.hAB = 0.0; b.hCur = std::min(fixedDt > 0 ? fixedDt : 1e-6, hMax);
       b.net.nwAtolV = nwAtolV; b.net.nwAtolI = nwAtolI; b.net.predictorStart = predictor; b.net.reassembleCharges = reassemble; b.net.bypassTol = bypassTol; b.net.jacReuseMax = jacReuse; b.net.prestamp = prestamp; b.net.compactRec = compactRec; b.net.partialLU = partialLU;
-      b.wf.t.clear(); b.wf.v.clear(); b.wf.hold = sn.hold[i];
+      b.wf.t.clear(); b.wf.v.clear(); b.wf.hold = sn.hold[i]; b.hLast = 0.0;
     }
     T = 0.0; haveVEnd = false; gCarry = 0.0; return true;
   }
@@ -244,7 +272,29 @@ class PartNet {
     if (b.ifSrc >= 0) s.vs[b.ifSrc].f = [this](double t) { return vAt(t); };
     b.ts.clear(); b.wf.t.clear(); b.wf.v.clear(); b.pv.assign(probes.size(), {});
     b.wf.t.push_back(t0); b.wf.v.push_back(b.wf.hold);   // I at the window start (the state's)
+    // secondary interfaces: the owner draws the summed load current of the other blocks (source IFI) and records its node voltage; the others follow the owner's voltage (source VIF) and record the current they draw
+    auto recIf = [&](double tt) { for (size_t g = 0; g < ifaces.size(); ++g) if (b.ifNode[g] >= 0) { Wave& w = b.ifW[g]; w.t.push_back(tt); w.v.push_back(ifaces[g].owner >= 0 && blocks[static_cast<size_t>(ifaces[g].owner)].get() == &b ? s.V(b.ifNode[g]) : -s.x[static_cast<size_t>(s.nNodes - 1 + s.vs[static_cast<size_t>(b.ifIdx[g])].br)]); } };
+    for (size_t g = 0; g < ifaces.size(); ++g) if (b.ifNode[g] >= 0) { b.ifW[g].t.clear(); b.ifW[g].v.clear();
+      if (blocks[static_cast<size_t>(ifaces[g].owner)].get() == &b) s.isrc[static_cast<size_t>(b.ifIdx[g])].f = [this, g](double t) { return ifaces[g].I.at(t); };
+      else s.vs[static_cast<size_t>(b.ifIdx[g])].f = [this, g](double t) { return ifaces[g].V.at(t); }; }
+    recIf(t0);
     double t = t0; double h = b.hCur;
+    const bool quiet = fixedDt > 0 && eventHMax > fixedDt && (b.eventAlways || (quietUntil > 0.0 && t1 <= quietUntil + 1e-12));
+    if (quiet) {
+      const size_t NO = s.op.size(); auto vd = [&](size_t i) { return s.V(s.op[i].inp) - s.V(s.op[i].inn); };
+      if (b.vdPrev.size() != NO || b.hLast <= 0.0) { b.vdPrev.resize(NO); b.vdPrev2.resize(NO); b.sat.resize(NO); for (size_t i = 0; i < NO; ++i) { b.vdPrev[i] = b.vdPrev2[i] = vd(i); b.sat[i] = sgn3(s.V(s.op[i].out)); } b.hLast = fixedDt; b.holdUntil = t0 + eventHold; }
+      while (t < t1 - 1e-13) {
+        double tev = 1e9; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0) tev = std::min(tev, -d / r); else if (std::fabs(d) < 0.05) tev = 0.0; }
+        double hh = (t < b.holdUntil || tev <= eventMargin) ? fixedDt : std::min(eventHMax, std::max(fixedDt, 0.5 * (tev - eventMargin)));
+        hh = std::min(hh, t1 - t);
+        if (!s.advance(t, hh)) { b.net.x = b.st.x; break; }
+        t += hh; b.hLast = hh; b.wf.t.push_back(t); b.wf.v.push_back(loadCurrent(b)); recIf(t);
+        for (size_t i = 0; i < NO; ++i) { b.vdPrev2[i] = b.vdPrev[i]; b.vdPrev[i] = vd(i); const signed char st = sgn3(s.V(s.op[i].out)); if (st != b.sat[i]) b.holdUntil = t + eventHold; b.sat[i] = st; }
+        b.ts.push_back(t); for (size_t k = 0; k < probes.size(); ++k) b.pv[k].push_back(probes[k].block >= 0 && blocks[probes[k].block].get() == &b ? s.V(probes[k].node) : 0.0);
+      }
+      b.hCur = fixedDt; return;
+    }
+    b.hLast = 0.0;   // the fixed-step phase invalidates the event state (rebuilt when a quiet window follows)
     while (t < t1 - 1e-13) {
       double hh, hn;
       if (fixedDt > 0) { hh = std::min(fixedDt, t1 - t); if (!s.advance(t, hh)) { b.net.x = b.st.x; hh = 0; break; } hn = fixedDt; }
@@ -254,13 +304,14 @@ class PartNet {
         h = (clipped && hn >= hh) ? std::max(hn, h) : hn; if (h > hMax) h = hMax;
         b.steps = s.nAccepted; b.rejected = s.nRejected;
       }
-      t += hh; b.wf.t.push_back(t); b.wf.v.push_back(loadCurrent(b));
+      t += hh; b.wf.t.push_back(t); b.wf.v.push_back(loadCurrent(b)); recIf(t);
       b.ts.push_back(t); for (size_t k = 0; k < probes.size(); ++k) b.pv[k].push_back(probes[k].block >= 0 && blocks[probes[k].block].get() == &b ? s.V(probes[k].node) : 0.0);
     }
     b.hCur = h;
   }
-  void saveWindowStart(Block& b) { b.st = b.net.saveState(); b.xA = b.net.xA; b.xB = b.net.xB; b.hAB = b.net.hAB; b.hCurSave = b.hCur; }
-  void restoreWindowStart(Block& b) { b.net.restoreState(b.st); b.net.xA = b.xA; b.net.xB = b.xB; b.net.hAB = b.hAB; b.hCur = b.hCurSave; }
+  static signed char sgn3(double v) { return v > 10.0 ? 1 : (v < -10.0 ? -1 : 0); }
+  void saveWindowStart(Block& b) { b.vdPrevS = b.vdPrev; b.vdPrev2S = b.vdPrev2; b.satS = b.sat; b.holdUntilS = b.holdUntil; b.hLastS = b.hLast; b.st = b.net.saveState(); b.xA = b.net.xA; b.xB = b.net.xB; b.hAB = b.net.hAB; b.hCurSave = b.hCur; }
+  void restoreWindowStart(Block& b) { b.vdPrev = b.vdPrevS; b.vdPrev2 = b.vdPrev2S; b.sat = b.satS; b.holdUntil = b.holdUntilS; b.hLast = b.hLastS; b.net.restoreState(b.st); b.net.xA = b.xA; b.net.xB = b.xB; b.net.hAB = b.hAB; b.hCur = b.hCurSave; }
   // one macro window; returns false when a block fails. Waveform relaxation on the NOISE voltage V(t): the blocks draw the currents I(V); V = (Th - I) / gTot. Plain iteration (first pass) has the loop gain
   // Rno x (load conductance), which is no longer small while a hit drives the noise into the transistors of the voices; from the second pass on a secant estimate G(t) = dI / dV of the loads (from the two last
   // passes, clamped to passive values) is put into the update: V_new (gTot + G) = Th - I + G V_used (Newton on the interface waveform).
@@ -270,9 +321,14 @@ class PartNet {
     prepareThevenin(t0, t1);
     iHoldSum = 0.0; for (auto& b : blocks) iHoldSum += b->wf.hold; vAnalytic = true; vUse = Wave();
     Wave vPrevUsed, iPrevSum; bool havePrev = false;
+    for (Iface& f : ifaces) { f.V = Wave(); f.V.hold = f.vHold; f.I = Wave(); f.I.hold = f.iHold; }
+    std::vector<int> order; const int firstB = ifaces.empty() ? -1 : ifaces[0].owner; if (firstB >= 0) order.push_back(firstB); for (int i = 0; i < nb; ++i) if (i != firstB) order.push_back(i);   // the owner of the first secondary interface (TOM_NOISE) runs first, the toms read its voltage in the same pass
+    double ifVMis = 0.0;
     int it = 0; bool conv = false;
     for (; it < maxIt; ++it) {
-      for (int i = 0; i < nb; ++i) { if (it > 0) restoreWindowStart(*blocks[i]); runBlock(*blocks[i], t0, t1); }
+      for (int i : order) { if (it > 0 && blocks[i]->weak) continue; if (it > 0) restoreWindowStart(*blocks[i]); runBlock(*blocks[i], t0, t1);
+        for (size_t g = 0; g < ifaces.size(); ++g) if (ifaces[g].owner == i && blocks[i]->ifNode[g] >= 0) { const Wave& nw = blocks[i]->ifW[g]; double lo = 1e30, hi = -1e30, mv = 0.0; for (size_t k = 0; k < nw.t.size(); ++k) { lo = std::min(lo, nw.v[k]); hi = std::max(hi, nw.v[k]); mv = std::max(mv, std::fabs(nw.v[k] - ifaces[g].V.at(nw.t[k]))); }
+          ifVMis = std::max(ifVMis, mv - ifTolV - ifRelV * (hi - lo)); if (std::getenv("PART_DBG") && windows % 300 == 5) fprintf(stderr, "  owner of iface %zu: dV %.3g swing %.3g\n", g, mv, hi - lo); ifaces[g].V = nw; } }
       ++passes;
       std::vector<double> tg; for (auto& b : blocks) tg.insert(tg.end(), b->wf.t.begin(), b->wf.t.end());
       std::sort(tg.begin(), tg.end()); tg.erase(std::unique(tg.begin(), tg.end(), [](double a, double b) { return b - a < 1e-15; }), tg.end());
@@ -288,7 +344,11 @@ class PartNet {
       ifMaxMismatch = std::max(ifMaxMismatch, mism);
       if (gN > 0) gCarry = gSum / static_cast<double>(gN);
       vEnd = vUsed.v.back(); haveVEnd = true;
-      if (mism <= ifTol + ifRel * (vHi - vLo)) { conv = true; ++it; break; }   // absolute tolerance while the line is quiet (idle), relative to the swing of the noise while a hit drives it
+      bool ifOk = ifVMis <= 0.0; const double dbgV = ifVMis; ifVMis = 0.0;   // secondary interfaces: summed load current of the non-owner blocks (this pass) against the one the owner used
+      for (size_t g = 0; g < ifaces.size(); ++g) { Iface& f = ifaces[g]; Wave In; In.t = tg; In.v.assign(tg.size(), 0.0); double mI = 0.0, sI = 0.0;
+        for (size_t k = 0; k < tg.size(); ++k) { double sum = 0.0; for (int i = 0; i < nb; ++i) if (i != f.owner && blocks[i]->ifNode[g] >= 0) sum += blocks[i]->ifW[g].at(tg[k]); In.v[k] = sum; mI = std::max(mI, std::fabs(sum - f.I.at(tg[k]))); sI = std::max(sI, std::fabs(sum)); }
+        if (mI > ifTolI + ifRelI * sI) ifOk = false; if (std::getenv("PART_DBG") && windows % 300 == 5) fprintf(stderr, "win %ld pass %d iface %zu: Vexcess %.3g  dI %.3g (|I| %.3g)  noise mism %.3g\n", windows, it, g, dbgV, mI, sI, mism); f.I = In; }
+      if (mism <= ifTol + ifRel * (vHi - vLo) && ifOk) { conv = true; ++it; break; }   // absolute tolerance while the line is quiet (idle), relative to the swing of the noise while a hit drives it
       vPrevUsed = vUsed; iPrevSum = iSum; havePrev = true; vUse = vNew; vAnalytic = false;
     }
     if (!conv) ++unconverged;
@@ -296,14 +356,17 @@ class PartNet {
     // commit: probes, current at the end of the window as the next starting current
     for (size_t k = 0; k < probes.size(); ++k) { Probe& p = probes[k]; Block& b = *blocks[p.block]; if (p.t.empty() && t0 >= recordFrom) { p.t.push_back(t0); p.v.push_back(b.st.x.empty() ? 0.0 : (p.node > 0 ? b.st.x[p.node - 1] : 0.0)); } for (size_t j = 0; j < b.ts.size(); ++j) { if (b.ts[j] < recordFrom) continue; p.t.push_back(b.ts[j]); p.v.push_back(b.pv[k][j]); } }
     for (auto& b : blocks) b->wf.hold = b->wf.v.back();
+    for (size_t g = 0; g < ifaces.size(); ++g) { Iface& f = ifaces[g]; if (!f.V.v.empty()) f.vHold = f.V.v.back(); if (!f.I.v.empty()) f.iHold = f.I.v.back(); }
     T = t1; return true;
   }
   bool run(double tstop) {
     // probes need their starting value (the state at T)
     for (Probe& p : probes) if (p.t.empty() && T >= recordFrom) { p.t.push_back(T); p.v.push_back(p.node > 0 ? blocks[p.block]->net.x[p.node - 1] : 0.0); }
     for (auto& b : blocks) b->wf.hold = loadCurrent(*b);
+    for (size_t g = 0; g < ifaces.size(); ++g) { Iface& f = ifaces[g]; f.iHold = 0.0;   // interface state at T: owner voltage, summed load current of the others
+      for (size_t i = 0; i < blocks.size(); ++i) { Block& b = *blocks[i]; if (b.ifNode[g] < 0) continue; Net& n = b.net; if (static_cast<int>(i) == f.owner) f.vHold = n.V(b.ifNode[g]); else f.iHold += -n.x[static_cast<size_t>(n.nNodes - 1 + n.vs[static_cast<size_t>(b.ifIdx[g])].br)]; } }
     unsigned nw = 0;
-    while (T < tstop - 1e-13) { if (abort && ((++nw & 63u) == 0) && abort()) return false; const double t1 = std::min(T + H, tstop); if (!window(T, t1)) return false; }
+    while (T < tstop - 1e-13) { if (abort && ((++nw & 63u) == 0) && abort()) return false; const bool q = quietUntil > 0.0 && fixedDt > 0.0 && eventHMax > fixedDt && T + 2.0 * H <= quietUntil; const double t1 = std::min(T + (q ? quietH : H), q ? std::min(tstop, quietUntil) : tstop); if (!window(T, t1)) return false; }
     return true;
   }
 };

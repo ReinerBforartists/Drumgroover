@@ -48,6 +48,7 @@ public:
   {
     // the shared noise stream at the trigger position, or the hit's own sequence
     if (streamKnot == HitNoise::kNoStream) h.noise.Start(seed, 5e-6, 0.0); else h.noise.StartAt(HitNoise::kStreamSeed, streamKnot, 5e-6, 0.0);
+    if (tu_.linBaseNoisy) h.noise.SetBase(&runner_.baseNz_);
     runner_.replay_.Start(h.cur, h.noise, Runner::StartTime(), tu_.linNoiseT + 0.01); h.dec.Restart(0.0); h.pos = 0; h.replayOn = true;
   }
   // Audio thread: up to n samples of the hit at the host rate; fewer at the end of the hit.

@@ -743,6 +743,7 @@ class Net {
   // voltage relative to atol + rtol |v|, estimates the local error of BDF2 (constant 1/3). A rejected step is repeated with a smaller h. On return h is the size of the step taken and hNext the size proposed for the next one.
   std::vector<double> xA, xB; double hAB = 0, errMax = 0; long nRejected = 0, nAccepted = 0;
   void rollback(const State& st) { linBDirty = true; x = st.x; q1 = st.q1; q2 = st.q2; stepIndex = st.stepIndex; hPrev = st.hPrev; }   // back to the state before a step (the solver mode, e.g. the supply ramp of the start-up, stays)
+  int errNode = -1;   // node that limited the last adaptive step (diagnostic)
   bool advanceAdaptive(double t, double& h, double& hNext, double rtol, double atol, double hMin, double hMax)
   {
     if (xA.size() != x.size()) { xA = x; xB = x; hAB = 0; }
@@ -752,8 +753,8 @@ class Net {
       const State keep = saveState(); const std::vector<double> xaKeep = xA, xbKeep = xB; const double habKeep = hAB;
       if (predictorStart && hAB > 0.0) { const double r = h / hAB; for (int i = 0; i < nUnk; ++i) x[i] = xA[i] + r * (xA[i] - xB[i]); }
       if (!advance(t, h)) { rollback(keep); xA = xaKeep; xB = xbKeep; hAB = habKeep; if (h <= hMin * 1.0000001) return false; h = std::max(h * 0.5, hMin); continue; }
-      double err = 0.0;
-      if (hAB > 0.0) { const double r = h / hAB; for (int i = 0; i < nNodes - 1; ++i) { const double xp = xA[i] + r * (xA[i] - xB[i]); err = std::max(err, std::fabs(x[i] - xp) / (atol + rtol * std::fabs(x[i]))); } }
+      double err = 0.0; errNode = -1;
+      if (hAB > 0.0) { const double r = h / hAB; for (int i = 0; i < nNodes - 1; ++i) { const double xp = xA[i] + r * (xA[i] - xB[i]); const double ei = std::fabs(x[i] - xp) / (atol + rtol * std::fabs(x[i])); if (ei > err) { err = ei; errNode = i + 1; } } }
       const double e = err / 3.0; errMax = e;
       if (e > 1.0 && h > hMin * 1.0000001) { rollback(keep); xA = xaKeep; xB = xbKeep; hAB = habKeep; ++nRejected; h = std::max(h * std::max(0.9 * std::pow(1.0 / e, 1.0 / 3.0), 0.25), hMin); continue; }
       xB = xA; xA = x; hAB = h; ++nAccepted;   // accepted

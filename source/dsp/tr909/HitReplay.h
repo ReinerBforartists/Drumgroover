@@ -27,6 +27,9 @@ public:
   size_t EpochBytes() const { size_t b = 0; for (const Epoch& e : eps_) b += sizeof(Epoch) + (e.LU.capacity() + e.JFA.capacity() + e.capG.capacity()) * 4 + e.ent.capacity() * sizeof(EntF); return b; }
   void Clear(const double* ports0) { tE.clear(); pE.clear(); for (int a = 0; a < NP; ++a) p0[a] = ports0[a]; }
   void Record(double t, const double* p) { tE.push_back(t); pE.insert(pE.end(), p, p + NP); }
+  bool capPrev = false;   // diagnosis: charge-device lag term with the capacitance slope of the previous knot
+  double capLag = 1.0;   // diagnosis: factor on the start-of-step part of the charge-device currents
+  bool dbl = false;   // the active-block solve of the epochs in double precision (diagnosis of the float inverse)
   double thr = 0.3, laterMul = 12.0; int coarse = 1; double eq = 0.0; bool refine = false, single = false;   // single: the fixed matrices and the state in float (the response is a small deviation; float rounding is far below its accuracy)   // one step of iterative refinement with the full G (no effect on the result at the tested settings)   // G is re-evaluated when a port of the noise-free trajectory moved by thr x its thermal voltage (thr x 0.17 V without one)
 
   // Streaming form (no allocation after Prime): Prime() once per model, Start() per hit, Next() per knot; the knot k covers (k h, (k + 1) h]. Run() is the batch form.
@@ -40,7 +43,7 @@ public:
   struct Cursor
   {
     HitNoise* nz = nullptr; double tOff = 0.0, nPrev = 0.0; long N = 0, k = 0; size_t ep = 0; const void* cur = nullptr; long refreshes = 0, knots = 0;
-    double dz[R] = {0}, dp[NP] = {0}, dfPrev[NF] = {0}; float dzF[R] = {0}, dpF[NP] = {0}, dfPrevF[NF] = {0};
+    double capGp[NF] = {0}; bool capGpOk = false; double dz[R] = {0}, dp[NP] = {0}, dfPrev[NF] = {0}; float dzF[R] = {0}, dpF[NP] = {0}, dfPrevF[NF] = {0};
   };
   void Start(HitNoise& nz, double tOff, double tEnd) { Start(cur0_, nz, tOff, tEnd); }
   bool Next(double& tOut, double& dyOut) { return Next(cur0_, tOut, dyOut); }
@@ -66,7 +69,8 @@ public:
     Model::MatVec(P.Phi.data(), R, R, C.dz, R, dzk, vin);
     Model::MatVec(gaF_.data(), nGc_, R, df0c, nGc_, dzk, dzk);
     Model::MatVec(P.PXz.data(), R, NP, dzk, R, dpk, vpd);
-    for (int j = 0; j < nCap_; ++j) dfkc[j] = -E.capG[j] * C.dp[capPort_[j]];   // start-of-step part of the charge-device currents
+    for (int j = 0; j < nCap_; ++j) dfkc[j] = -capLag * ((capPrev && C.capGpOk) ? C.capGp[j] : E.capG[j]) * C.dp[capPort_[j]];   // start-of-step part of the charge-device currents (capPrev: with the slope of the previous knot, Q(p1) - Q(p0) linearised at both ends)
+    for (int j = 0; j < nCap_; ++j) C.capGp[j] = E.capG[j]; C.capGpOk = true;
     Model::MatVec(wCap_.data(), nCap_, NP, dfkc, nCap_, rhs, dpk);
     Solve(E, rhs, C.dp);
     if (refine)
@@ -88,11 +92,54 @@ public:
     Prime(m, pi, tEnd); Start(nz, tOff, tEnd); double t, dy; while (Next(t, dy)) emit(t, dy);
   }
 
+  // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  // Stepwise mode: the response follows the ACTUAL STEPS of the recorded base run (tE / pE: step ends, one record per step; the base run of the noisy expansion point has steps of 2^j x h0, never spanning a noise knot).
+  // Per step s (h = tE[s] - tE[s-1], propagators props[pj[j]], ports p0 = pE[s-1] -> p1 = pE[s]):  dzk = Phi dz + GaF df0 + input,  dpk = PXz dzk + input,  dfk = -C(p0)/h dp_prev (charge devices),
+  // (I - Zp G(p1)) dp = dpk + Zp dfk,  df1 = G dp + dfk,  dz1 = dzk + GbF df1.  This is the linearisation of the model's own step (the 5 us knot map of Next() is a different discretisation of the same system).
+  // pj[0..5]: indices of the propagators of the steps 2^j x h0 (j = 0..5, h0 = 5 us / 32), as the runner's pj_.
+  double stepThr = -1.0;   // >= 0: a new epoch only when a port moved by stepThr x its thermal voltage since the last epoch (same j); < 0: an epoch for every step (exact)
+  long StepCount() const { return stepsN_; }
+  void PrimeSteps(Model& m, const int* pj, double tEnd)
+  {
+    m_ = &m; P_ = &m.props[pj[5]]; m.qlOn = false; m.qlcOn = false; m.capThr = 0.0; m.evCache = false; m.skipDev = nullptr;
+    for (int j = 0; j < 6; ++j) pjIdx_[j] = pj[j]; h0_ = P_->h / 32.0;
+    Setup(m, *P_); ent_.reserve(ND * 6 + 8); BuildStepEpochs(m, tEnd);
+  }
+  void StartSteps(Cursor& C, HitNoise& nz, double tOff, double tEnd)
+  {
+    Start(C, nz, tOff, tEnd); long n = 0; while (n < static_cast<long>(tE.size()) && tE[static_cast<size_t>(n)] <= tEnd) ++n; C.N = std::min(n, stepsN_);
+  }
+  void StartSteps(HitNoise& nz, double tOff, double tEnd) { StartSteps(cur0_, nz, tOff, tEnd); }
+  bool NextStep(double& tOut, double& dyOut) { return NextStep(cur0_, tOut, dyOut); }
+  bool NextStep(Cursor& C, double& tOut, double& dyOut)
+  {
+    if (C.k >= C.N) return false;
+    Model& m = *m_; const long s = C.k; const double tEnd = tE[static_cast<size_t>(s)], tBeg = s > 0 ? tE[static_cast<size_t>(s - 1)] : 0.0;
+    if (C.ep < eps_.size() && eps_[C.ep].start == s) { C.cur = &eps_[C.ep]; ++C.ep; ++C.refreshes; }
+    const Epoch& E = *static_cast<const Epoch*>(C.cur); const typename Model::Prop& P = m.props[pjIdx_[E.j]]; const double h = tEnd - tBeg;
+    double dzk[R], dfkc[NF], rhs[NP], dpk[NP], df1[NF], vin[R], vpd[NP];
+    const double d0 = C.nPrev, d1 = (coarse > 1 ? C.nz->AtCoarse(C.tOff + tEnd, coarse, eq) : C.nz->At(C.tOff + tEnd)) - 7.5, dd = (d1 - d0) / h; C.nPrev = d1;
+    for (int i = 0; i < R; ++i) vin[i] = P.Ga[i * NU + 1] * d0 + P.Gb[i * NU + 1] * d1 + (P.Ga[i * NU + 2] + P.Gb[i * NU + 2]) * dd;
+    for (int a = 0; a < NP; ++a) vpd[a] = m.PD[a * NU + 1] * d1 + m.PD[a * NU + 2] * dd;
+    Model::MatVec(P.Phi.data(), R, R, C.dz, R, dzk, vin);
+    { const int nc = static_cast<int>(P.gaCols.size()); double fc[NF]; for (int j = 0; j < nc; ++j) fc[j] = C.dfPrev[P.gaCols[static_cast<size_t>(j)]]; if (nc > 0) Model::MatVec(P.GaFc.data(), nc, R, fc, nc, dzk, dzk); }
+    Model::MatVec(P.PXz.data(), R, NP, dzk, R, dpk, vpd);
+    for (int j = 0; j < nCap_; ++j) dfkc[j] = -capLag * static_cast<double>(E.capGs[static_cast<size_t>(j)]) * C.dp[capPort_[static_cast<size_t>(j)]];
+    for (int a = 0; a < NP; ++a) { double sacc = dpk[a]; for (int j = 0; j < nCap_; ++j) sacc += P.Zp[static_cast<size_t>(a) * NF + capCur_[static_cast<size_t>(j)]] * dfkc[j]; rhs[a] = sacc; }
+    Solve(E, rhs, C.dp);
+    ApplyG(E, C.dp, df1); for (int c = 0; c < nCap_; ++c) df1[capCur_[static_cast<size_t>(c)]] += dfkc[c];
+    Model::MatVec(P.GbF.data(), NF, R, df1, NF, C.dz, dzk);
+    double dy = m.pm.Dou[1] * d1 + m.pm.Dou[2] * dd + Model::DotF(m.pm.Xo, C.dz, R, 0.0); dy = Model::DotF(m.pm.Dof, df1, NF, dy);
+    for (int j = 0; j < NF; ++j) C.dfPrev[j] = df1[j];
+    tOut = tEnd; dyOut = dy; ++C.k; ++C.knots; return true;
+  }
+
 private:
+  int pjIdx_[6] = {0, 0, 0, 0, 0, 0}; double h0_ = 0.0; long stepsN_ = 0;
   struct Ent { int cur, port; double g; };   // device Jacobian entry (current, port, slope)
   struct EntF { int cur, port; float g; };   // the same in the epoch tables (float: the response is a small deviation, the rounding of the tables is far below its accuracy)
   std::vector<Ent> ent_; std::vector<double> gaF_, wCap_, capG_; std::vector<int> gcCols_, capPort_, capCur_, capDev_; int nGc_ = 0, nCap_ = 0; double invThr_[NP];
-  struct Epoch { long start = 0; int nA = 0, nF = 0; unsigned char act[NP], frz[NP], piv[NP]; std::vector<float> LU, JFA, capG; std::vector<EntF> ent; };
+  struct Epoch { long start = 0; int j = 5; std::vector<float> capGs; int nA = 0, nF = 0; unsigned char act[NP], frz[NP], piv[NP]; std::vector<float> LU, JFA, capG; std::vector<double> LUd, JFAd; std::vector<EntF> ent; };   // LUd / JFAd: double precision inverse of the active block and frozen coupling (dbl)
   std::vector<Epoch> eps_; long epochKnots_ = 0; Cursor cur0_;   // cur0_: the cursor of the single-hit interface
   Model* m_ = nullptr; const typename Model::Prop* P_ = nullptr;
   std::vector<float> phiF_, gaFF_, pxzF_, wCapF_, gbFF_, xoF_, dofF_, ga1F_, gb1F_, ga2F_, gb2F_, pd1F_, pd2F_;
@@ -161,6 +208,7 @@ private:
       Refresh(m, P, pEn, h); for (int a = 0; a < NP; ++a) pRef[a] = pEn[a]; have = true;
       eps_.emplace_back(); Epoch& e = eps_.back(); e.start = k; e.nA = m.nAct; e.nF = m.nFrz;
       for (int i = 0; i < NP; ++i) { e.act[i] = (unsigned char)m.actL[i]; e.frz[i] = (unsigned char)m.frzL[i]; e.piv[i] = (unsigned char)m.piv[i]; }
+      if (dbl) e.LUd.assign((size_t)e.nA * e.nA, 0.0);
       e.LU.assign((size_t)e.nA * e.nA, 0.0f);   // the inverse of the active block (column c: solution for the unit vector c), computed once here from the factorisation
       for (int c = 0; c < e.nA; ++c)
       {
@@ -168,10 +216,47 @@ private:
         for (int q = 0; q < e.nA; ++q) if (m.piv[q] != q) std::swap(Fa[q], Fa[m.piv[q]]);
         for (int i = 1; i < e.nA; ++i) Fa[i] -= Model::DotF(m.LU[i], Fa, i, 0.0);
         for (int i = e.nA - 1; i >= 0; --i) Fa[i] = (Fa[i] - Model::DotF(&m.LU[i][i + 1], &Fa[i + 1], e.nA - i - 1, 0.0)) / m.LU[i][i];
-        for (int i = 0; i < e.nA; ++i) e.LU[(size_t)i * e.nA + c] = static_cast<float>(Fa[i]);
+        for (int i = 0; i < e.nA; ++i) { e.LU[(size_t)i * e.nA + c] = static_cast<float>(Fa[i]); if (dbl) e.LUd[(size_t)i * e.nA + c] = Fa[i]; }
       }
+      if (dbl) { e.JFAd.assign((size_t)(e.nF > 0 ? e.nF : 1) * (e.nA > 0 ? e.nA : 1), 0.0); for (int f = 0; f < e.nF; ++f) for (int j = 0; j < e.nA; ++j) e.JFAd[(size_t)f * e.nA + j] = m.JFA[f][j]; }
       e.JFA.assign((size_t)(e.nF > 0 ? e.nF : 1) * (e.nA > 0 ? e.nA : 1), 0.0f); for (int f = 0; f < e.nF; ++f) for (int j = 0; j < e.nA; ++j) e.JFA[(size_t)f * e.nA + j] = static_cast<float>(m.JFA[f][j]);
       e.capG.assign(capG_.begin(), capG_.end()); e.ent.reserve(ent_.size()); for (const Ent& n : ent_) e.ent.push_back({n.cur, n.port, static_cast<float>(n.g)});
+    }
+  }
+
+  void CapGAt(Model& m, const double* pSt, double h, std::vector<float>& out)
+  {
+    double jd[ND][6], f[NF]; for (int d = 0; d < ND; ++d) for (int e = 0; e < 6; ++e) jd[d][e] = 0.0;
+    for (int i = 0; i < NP; ++i) m.ps0[i] = pSt[i]; ++m.q0Gen; m.capH = h; m.EvalF(pSt, f, jd);
+    out.assign(static_cast<size_t>(nCap_ > 0 ? nCap_ : 1), 0.0f); for (int j = 0; j < nCap_; ++j) out[static_cast<size_t>(j)] = static_cast<float>(jd[capDev_[static_cast<size_t>(j)]][0]);
+  }
+  void BuildStepEpochs(Model& m, double tEnd)
+  {
+    eps_.clear(); stepsN_ = 0; double pRef[NP]; bool have = false; int jRef = -1; const long S = static_cast<long>(tE.size()); double pSt[NP];
+    for (long s = 0; s < S && tE[static_cast<size_t>(s)] <= tEnd; ++s)
+    {
+      const double tb = s > 0 ? tE[static_cast<size_t>(s - 1)] : 0.0, h = tE[static_cast<size_t>(s)] - tb; int j = static_cast<int>(std::lround(std::log2(h / h0_))); if (j < 0) j = 0; if (j > 5) j = 5;
+      const double* pEn = &pE[static_cast<size_t>(s) * NP]; if (s > 0) for (int a = 0; a < NP; ++a) pSt[a] = pE[static_cast<size_t>(s - 1) * NP + a]; else for (int a = 0; a < NP; ++a) pSt[a] = p0[a];
+      bool refresh = !have || stepThr < 0.0 || j != jRef;
+      if (!refresh) for (int a = 0; a < NP; ++a) if (std::fabs(pEn[a] - pRef[a]) * invThr_[a] > stepThr) { refresh = true; break; }
+      ++stepsN_; if (!refresh) continue;
+      const typename Model::Prop& P = m.props[pjIdx_[j]]; Refresh(m, P, pEn, h); for (int a = 0; a < NP; ++a) pRef[a] = pEn[a]; have = true; jRef = j;
+      eps_.emplace_back(); Epoch& e = eps_.back(); e.start = s; e.j = j; e.nA = m.nAct; e.nF = m.nFrz;
+      for (int i = 0; i < NP; ++i) { e.act[i] = (unsigned char)m.actL[i]; e.frz[i] = (unsigned char)m.frzL[i]; e.piv[i] = (unsigned char)m.piv[i]; }
+      if (dbl) e.LUd.assign((size_t)e.nA * e.nA, 0.0);
+      e.LU.assign((size_t)e.nA * e.nA, 0.0f);
+      for (int c = 0; c < e.nA; ++c)
+      {
+        double Fa[NP]; for (int i = 0; i < e.nA; ++i) Fa[i] = i == c ? 1.0 : 0.0;
+        for (int q = 0; q < e.nA; ++q) if (m.piv[q] != q) std::swap(Fa[q], Fa[m.piv[q]]);
+        for (int i = 1; i < e.nA; ++i) Fa[i] -= Model::DotF(m.LU[i], Fa, i, 0.0);
+        for (int i = e.nA - 1; i >= 0; --i) Fa[i] = (Fa[i] - Model::DotF(&m.LU[i][i + 1], &Fa[i + 1], e.nA - i - 1, 0.0)) / m.LU[i][i];
+        for (int i = 0; i < e.nA; ++i) { e.LU[(size_t)i * e.nA + c] = static_cast<float>(Fa[i]); if (dbl) e.LUd[(size_t)i * e.nA + c] = Fa[i]; }
+      }
+      if (dbl) { e.JFAd.assign((size_t)(e.nF > 0 ? e.nF : 1) * (e.nA > 0 ? e.nA : 1), 0.0); for (int f = 0; f < e.nF; ++f) for (int jj = 0; jj < e.nA; ++jj) e.JFAd[(size_t)f * e.nA + jj] = m.JFA[f][jj]; }
+      e.JFA.assign((size_t)(e.nF > 0 ? e.nF : 1) * (e.nA > 0 ? e.nA : 1), 0.0f); for (int f = 0; f < e.nF; ++f) for (int jj = 0; jj < e.nA; ++jj) e.JFA[(size_t)f * e.nA + jj] = static_cast<float>(m.JFA[f][jj]);
+      e.capG.assign(capG_.begin(), capG_.end()); e.ent.reserve(ent_.size()); for (const Ent& n : ent_) e.ent.push_back({n.cur, n.port, static_cast<float>(n.g)});
+      CapGAt(m, pSt, h, e.capGs);
     }
   }
 
@@ -218,6 +303,15 @@ private:
   // solves (I - Zp G) x = b with the active-set factorisation of the epoch (frozen ports explicitly)
   static void Solve(const Epoch& e, const double* b, double* x)
   {
+    if (!e.LUd.empty() || (e.nA == 0 && !e.JFAd.empty()))
+    {
+      double Fa[NP], Ff[NP], xa[NP]; const int nA = e.nA, nF = e.nF;
+      for (int i = 0; i < nA; ++i) Fa[i] = b[e.act[i]]; for (int f = 0; f < nF; ++f) Ff[f] = b[e.frz[f]];
+      for (int i = 0; i < nA; ++i) { double sacc = 0.0; for (int j = 0; j < nA; ++j) sacc += e.LUd[(size_t)i * nA + j] * Fa[j]; xa[i] = sacc; }
+      for (int f = 0; f < nF; ++f) { double sacc = 0.0; for (int j = 0; j < nA; ++j) sacc += e.JFAd[(size_t)f * nA + j] * xa[j]; Ff[f] -= sacc; }
+      for (int i = 0; i < nA; ++i) x[e.act[i]] = xa[i]; for (int f = 0; f < nF; ++f) x[e.frz[f]] = Ff[f];
+      return;
+    }
     float Fa[NP], Ff[NP], xa[NP]; const int nA = e.nA, nF = e.nF;
     for (int i = 0; i < nA; ++i) Fa[i] = static_cast<float>(b[e.act[i]]); for (int f = 0; f < nF; ++f) Ff[f] = static_cast<float>(b[e.frz[f]]);
     MatVecF(e.LU.data(), nA, nA, Fa, nA, xa, nullptr);   // LU holds the inverse of the active block
