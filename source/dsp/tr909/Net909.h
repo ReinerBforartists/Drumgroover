@@ -3,6 +3,7 @@
 // (RB, RC, depletion and diffusion charge), ideal voltage sources. Macro models mirror the NGSpice subcircuits of nava_models.inc:
 // M5218_V1, CD4069UB_INV, AN6912_CMP, BA6110_OTA_N.
 #pragma once
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <cmath>
@@ -31,6 +32,7 @@ struct Bjt {
 struct Vsrc { std::string name; int p = 0, n = 0; double dc = 0; int br = 0; std::function<double(double)> f; };
 struct Res { int a, b; double g; bool dyn = false; double r0 = 0, r1 = 0, t0 = 0, tr = 0; std::vector<double> pw; };   // pw: piecewise-linear resistance over time, pairs (t, R) (net element RW)   // dyn: resistance r0 before t0, ramping linearly to r1 over tr (net element RT)
 struct Cap { int a, b; double c; int q; };
+struct Isrc { std::string name; int p = 0, n = 0; double dc = 0; std::function<double(double)> f; };   // independent current source: the current I flows from node p through the source to node n (leaves p, enters n)
 struct Op5218 { int inp, inn, out, vcc, vee, n1; int qc; };
 struct Inv4069 { int in, out, vdd, vss; int qin, qout; };
 struct Cmp6912 { int inp, inn, out, vcc, vee; };
@@ -41,7 +43,7 @@ class Net {
   struct InvFn { double an, ap, pp, vtn, vtp, lam, cs; };
   InvFn invFit = {0, 0, 0, 0, 0, 0, 0};
   std::vector<std::string> nodeName;
-  std::vector<Res> res; std::vector<Cap> cap; std::vector<Diode> dio; std::vector<Bjt> bjt; std::vector<Vsrc> vs;
+  std::vector<Isrc> isrc; std::vector<Res> res; std::vector<Cap> cap; std::vector<Diode> dio; std::vector<Bjt> bjt; std::vector<Vsrc> vs;
   std::vector<Op5218> op; std::vector<Inv4069> inv; std::vector<Cmp6912> cmp; std::vector<Ota6110> ota;
   int nNodes = 0;   // including ground (index 0) and internal nodes
   int nUnk = 0;     // nodes-1 + branches
@@ -78,6 +80,7 @@ class Net {
       else if (k == "Q") { Bjt q; std::string typ; is >> q.c >> q.b >> q.e >> typ; q.s = typ == "pnp" ? -1 : 1;
         is >> q.IS >> q.BF >> q.NF >> q.VAF >> q.RB >> q.RC >> q.CJC >> q.VJC >> q.MJC >> q.CJE >> q.VJE >> q.MJE >> q.NE >> q.ISE >> q.IKF >> q.TF; if (!(is >> q.BR)) q.BR = 1; addBjt(q); }
       else if (k == "VD" || k == "V") { Vsrc v; is >> v.name >> v.p >> v.n >> v.dc; vs.push_back(v); }
+      else if (k == "I") { Isrc v; is >> v.name >> v.p >> v.n >> v.dc; isrc.push_back(v); }   // I <name> <p> <n> <dc>
       else if (k == "VP") { Vsrc v; double v0, v1, d, r, fl, w, per; is >> v.name >> v.p >> v.n >> v0 >> v1 >> d >> r >> fl >> w >> per;
         v.f = [=](double t) { if (per > 0 && per < 1e8 && t > d) t = d + std::fmod(t - d, per);
           if (t < d) return v0; if (t < d + r) return v0 + (v1 - v0) * (t - d) / r; if (t < d + r + w) return v1; if (t < d + r + w + fl) return v1 + (v0 - v1) * (t - d - r - w) / fl; return v0; }; vs.push_back(v); }
@@ -109,18 +112,19 @@ class Net {
   // Circuit state for continuing a run (free-running oscillators and slow RC states are part of the circuit): unknowns, charge history of the integrator, step history.
   struct State { std::vector<double> x, q1, q2; int stepIndex = 0; double hPrev = 0; };
   State saveState() const { State st; st.x = x; st.q1 = q1; st.q2 = q2; st.stepIndex = stepIndex; st.hPrev = hPrev; return st; }
-  bool restoreState(const State& st) { if (st.x.size() != x.size() || st.q1.size() != q1.size() || st.q2.size() != q2.size()) return false; x = st.x; xprev1 = x; q1 = st.q1; q2 = st.q2; stepIndex = st.stepIndex; hPrev = st.hPrev; dcMode = false; srcScale = 1.0; rampT = 0.0; gminExtra = 0.0; opGain = 1.0; vdState.clear(); return true; }
+  bool restoreState(const State& st) { linBDirty = true; if (st.x.size() != x.size() || st.q1.size() != q1.size() || st.q2.size() != q2.size()) return false; x = st.x; xprev1 = x; q1 = st.q1; q2 = st.q2; stepIndex = st.stepIndex; hPrev = st.hPrev; dcMode = false; srcScale = 1.0; rampT = 0.0; gminExtra = 0.0; opGain = 1.0; vdState.clear(); return true; }
   struct PotLeg { int res = 0; std::string pot; bool second = false; double rt = 0, ex = 1, g0 = 0; };   // g0: conductance of the deck (nominal position)
   std::vector<PotLeg> potLegs;
   // Position (0..1) of a circuit pot named like the deck parameter without 'vr_' (VR2_bd, VR10_lt ...): sets the resistance of its legs (the netlist keeps the structure; only the conductances change). False: no such pot.
-  void resetPots() { for (const PotLeg& pl : potLegs) res[pl.res].g = pl.g0; }   // all pots at the nominal position of the deck, bit-exact
+  void resetPots() { linAValid = false; luValid = false; for (const PotLeg& pl : potLegs) res[pl.res].g = pl.g0; }   // all pots at the nominal position of the deck, bit-exact
   bool setPot(const std::string& name, double pos)
   {
-    bool found = false; const double p = std::max(pos, 0.001);
+    bool found = false; linAValid = false; luValid = false; const double p = std::max(pos, 0.001);
     for (const PotLeg& pl : potLegs) if (pl.pot == name) { const double pe = std::pow(p, pl.ex); res[pl.res].g = 1.0 / (pl.second ? pl.rt * (1.0 - pe) + 1e-3 : pl.rt * pe); found = true; }
     return found;
   }
   bool setSource(const std::string& nm, std::function<double(double)> fn) { Vsrc* v = source(nm); if (!v) return false; v->f = std::move(fn); return true; }   // replaces the time function of a source of the netlist (trigger, accent, noise)
+  bool setCurrent(const std::string& nm, std::function<double(double)> fn) { for (auto& v : isrc) if (v.name == nm) { v.f = std::move(fn); return true; } return false; }
   bool setSourceDc(const std::string& nm, double volts) { Vsrc* v = source(nm); if (!v) return false; v->f = nullptr; v->dc = volts; return true; }
 
   // ---- helpers ----
@@ -131,8 +135,19 @@ class Net {
   std::vector<char> touched; bool patDirty = true;   // structural pattern of A (all positions ever stamped), see SparseLU below
   std::vector<int> touchedList;   // indices of touched entries: only these need zeroing before the next assembly
   void touch(size_t idx) { if (touched.size() != A.size()) { touched.assign(A.size(), 0); touchedList.clear(); patDirty = true; } if (!touched[idx]) { touched[idx] = 1; touchedList.push_back((int)idx); patDirty = true; } }
-  void ad(int i, int j, double v) { if (i > 0 && j > 0) { size_t idx = (size_t)(i - 1) * nUnk + (j - 1); touch(idx); A[idx] += v; } }
-  void rhs(int i, double v) { if (i > 0) B[i - 1] += v; }
+  // ---- device bypass (off by default: bypassTol 0): the stamp of a nonlinear device (diode, BJT, macro) is recorded; while its terminal voltages stay within bypassTol of the voltages of the recorded evaluation the record is replayed instead of
+  // evaluating the device again (SPICE 'bypass'). The linearisation of the old point is stamped (error second order in the voltage change); the charge elements are re-stamped from the recorded (q, c, v) with the present voltages and the
+  // present step coefficients / charge history, so the integration stays consistent. Only in transient mode without homotopy (gminExtra 0, opGain 1).
+  struct Rec { std::vector<std::pair<int, double>> a, b; struct Chg { int a, b, slot; double q0, c0, v0; }; std::vector<Chg> c; double v[8] = {0}; int nv = 0; bool valid = false; };
+  double bypassTol = 0.0; long nBypassed = 0, nEvaluated = 0; bool compactRec = false, recOnly = false, replayOrder = std::getenv("N909_REPLAYORDER") != nullptr;   // recOnly: a device evaluation only records its stamp, the replay writes it (same summation order for evaluated and replayed devices; needed by the partial refactorisation)
+  // partial refactorisation (needs bypassTol > 0): the columns of A that a re-evaluated device changed are marked; only the LU columns that depend on a marked column (their own or one in their U pattern) are recomputed
+  std::vector<double> Alast; bool partialLU = false; std::vector<char> colDirty, dirtyK; long nPartialLU = 0, nColsRefactored = 0, nColsTotal = 0;
+  // ---- pre-stamped linear part (off by default): Gmin, resistors and the capacitor companion models are stamped once per step coefficients (matrix) and once per Newton solve (right-hand side, charge history); every iteration copies them
+  bool prestamp = false, linAValid = false, linBDirty = true; double linKey[6] = {0, 0, 0, 0, 0, 0}; std::vector<int> linAIdx, linBIdx, slotOf; std::vector<double> linAVal, linBVal; Rec* linRec = nullptr; Rec linTmp; long nPrestampBuilds = 0, nPrestampCopies = 0;
+  int dynRes = -1; bool hasDynRes() { if (dynRes < 0) { dynRes = 0; for (const auto& r : res) if (r.dyn || !r.pw.empty()) { dynRes = 1; break; } } return dynRes == 1; }
+  Rec* curRec = nullptr; std::vector<Rec> recDio, recBjt, recOp, recInv, recCmp, recOta;
+  void ad(int i, int j, double v) { if (i > 0 && j > 0) { size_t idx = (size_t)(i - 1) * nUnk + (j - 1); touch(idx); if (curRec) { if (recOnly) { curRec->a.push_back({(int)idx, v}); return; } curRec->a.push_back({(int)idx, v}); } else if (linRec) linRec->a.push_back({(int)idx, v}); A[idx] += v; } }
+  void rhs(int i, double v) { if (i > 0) { if (curRec) { curRec->b.push_back({i - 1, v}); if (recOnly) return; } else if (linRec) linRec->b.push_back({i - 1, v}); B[i - 1] += v; } }
   // current i leaving node a, entering node b, linearised in (nodes k[], derivatives g[])
   void nlCurrent(int a, int b, double i0, int nk, const int* k, const double* g) {
     double ieq = i0; for (int m = 0; m < nk; ++m) ieq -= g[m] * V(k[m]);
@@ -143,8 +158,13 @@ class Net {
   // charge element between nodes a,b: q(v) with c = dq/dv at the present iterate
   void chargeStamp(int a, int b, int slot, double q0, double c0) {
     if (dcMode) return;
+    const double vNow = V(a) - V(b);
+    if (curRec) { curRec->c.push_back({a, b, slot, q0, c0, vNow}); if (!recOnly) { Rec* keep = curRec; curRec = nullptr; chargeStampAt(a, b, slot, q0, c0, vNow); curRec = keep; } }
+    else chargeStampAt(a, b, slot, q0, c0, vNow);
+  }
+  void chargeStampAt(int a, int b, int slot, double q0, double c0, double v0) {
     double a0, a1, a2; if (stepIndex == 0) { a0 = 1; a1 = -1; a2 = 0; } else if (varStepBdf2 && hPrev > 0) { const double r = dt / hPrev; a0 = (1 + 2 * r) / (1 + r); a1 = -(1 + r); a2 = r * r / (1 + r); } else { a0 = 1.5; a1 = -2; a2 = 0.5; }   // variable-step BDF2 (r = h / h_prev; r = 1 gives 1.5, -2, 0.5): after a halved step the history is not equally spaced
-    double v0 = V(a) - V(b); double g = a0 * c0 / dt; double ieq = (a0 * (q0 - c0 * v0) + a1 * q1[slot] + a2 * q2[slot]) / dt;
+    double g = a0 * c0 / dt; double ieq = (a0 * (q0 - c0 * v0) + a1 * q1[slot] + a2 * q2[slot]) / dt;
     conduct(a, b, g); rhs(a, -ieq); rhs(b, ieq);
     qNow[slot] = q0;
   }
@@ -251,14 +271,72 @@ class Net {
     }
   }
 
+  template <class F> void withBypass(Rec& r, const int* nd, int n, F&& stamp) {
+    if (bypassTol > 0.0 && !dcMode && gminExtra == 0.0 && opGain == 1.0 && r.valid && r.nv == n) {
+      bool ok = true; for (int k = 0; k < n; ++k) if (std::fabs(V(nd[k]) - r.v[k]) >= bypassTol) { ok = false; break; }
+      if (ok) {
+        for (const auto& e : r.a) A[(size_t)e.first] += e.second;
+        for (const auto& e : r.b) B[(size_t)e.first] += e.second;
+        for (const auto& c : r.c) { const double vn = V(c.a) - V(c.b); chargeStampAt(c.a, c.b, c.slot, c.q0 + c.c0 * (vn - c.v0), c.c0, vn); }
+        ++nBypassed; return;
+      }
+    }
+    ++nEvaluated; r.a.clear(); r.b.clear(); r.c.clear(); recOnly = partialLU || replayOrder; curRec = &r; stamp(); curRec = nullptr; recOnly = false;
+    if (partialLU) { if ((int)colDirty.size() != nUnk) colDirty.assign(nUnk, 0); for (const auto& e : r.a) colDirty[(size_t)(e.first % nUnk)] = 1; for (const auto& c : r.c) { if (c.a > 0) colDirty[(size_t)(c.a - 1)] = 1; if (c.b > 0) colDirty[(size_t)(c.b - 1)] = 1; } }   // the charge elements of the device (conductance a0 c / dt of its junction capacitances) are stamped outside the recorded list
+    if (compactRec) {   // entries of the same matrix / right-hand-side position are summed once (a replay then writes every position once; the sum differs from the sequential adds only in rounding)
+      auto compact = [](std::vector<std::pair<int, double>>& v) { if (v.size() < 2) return; std::stable_sort(v.begin(), v.end(), [](const std::pair<int, double>& a, const std::pair<int, double>& b) { return a.first < b.first; });
+        size_t w = 0; for (size_t i = 0; i < v.size(); ++i) { if (w > 0 && v[w - 1].first == v[i].first) v[w - 1].second += v[i].second; else v[w++] = v[i]; } v.resize(w); };
+      compact(r.a); compact(r.b);
+    }
+    r.nv = n; for (int k = 0; k < n; ++k) r.v[k] = V(nd[k]); r.valid = true;
+    if (partialLU || replayOrder) {   // write the recorded stamp exactly as a replay does
+      for (const auto& e : r.a) A[(size_t)e.first] += e.second;
+      for (const auto& e : r.b) B[(size_t)e.first] += e.second;
+      for (const auto& c : r.c) chargeStampAt(c.a, c.b, c.slot, c.q0, c.c0, c.v0);
+    }
+  }
   // ---- full assembly ----
+  long asmEvaluated = 0; bool asmDyn = false; double asmKey[4] = {0, 0, 0, 0}; bool luValid = false; double luKey[4] = {0, 0, 0, 0}; long nLuReused = 0, nChord = 0; int jacReuseMax = 0, luAge = 0, newtonIt = 0; std::vector<double> chordR;   // jacReuseMax > 0: modified Newton, at most that many consecutive solves with a stale factorisation (needs bypassTol > 0)
+    // bypass: the matrix of this assembly equals the factored one when no device was evaluated and the step coefficients are the same
   void assemble(double tNow) {
+    const long evalBefore = nEvaluated;
 #ifdef N909_PROFILE
     const auto tpA0 = std::chrono::steady_clock::now();
 #endif
     if (A.size() != (size_t)nUnk * nUnk || touched.size() != A.size()) A.assign((size_t)nUnk * nUnk, 0.0); else for (int idx : touchedList) A[idx] = 0.0;
     B.assign(nUnk, 0.0); qNow.assign(nq, 0.0);
     int nn = nNodes - 1;
+    bool usedLin = false;
+    if (prestamp && !dcMode && !hasDynRes()) {
+      const double key[6] = {dt, hPrev, (double)(stepIndex == 0), (double)(varStepBdf2 && hPrev > 0), gminExtra, (double)A.size()};
+      if (!linAValid || linBDirty || std::memcmp(key, linKey, sizeof(key)) != 0) {
+        linTmp.a.clear(); linTmp.b.clear(); linRec = &linTmp;
+        for (int i = 1; i < nNodes; ++i) ad(i, i, kGmin + gminExtra);
+        for (auto& r : res) conduct(r.a, r.b, r.g);
+        for (auto& c : cap) chargeStamp(c.a, c.b, c.q, c.c * (V(c.a) - V(c.b)), c.c);
+        linRec = nullptr;
+        // the recorded stamps are accumulated per matrix / right-hand side entry in recording order (the order of the unrecorded path: bit-identical sums)
+        if (slotOf.size() != A.size()) slotOf.assign(A.size(), -1);
+        linAIdx.clear(); linAVal.clear(); for (const auto& e : linTmp.a) { int& sl = slotOf[(size_t)e.first]; if (sl < 0) { sl = (int)linAIdx.size(); linAIdx.push_back(e.first); linAVal.push_back(0.0); } linAVal[(size_t)sl] += e.second; } for (int idx : linAIdx) slotOf[(size_t)idx] = -1;
+        std::vector<int> slotB(nUnk, -1); linBIdx.clear(); linBVal.clear(); for (const auto& e : linTmp.b) { int& sl = slotB[(size_t)e.first]; if (sl < 0) { sl = (int)linBIdx.size(); linBIdx.push_back(e.first); linBVal.push_back(0.0); } linBVal[(size_t)sl] += e.second; }
+        std::memcpy(linKey, key, sizeof(key)); linAValid = true; linBDirty = false; ++nPrestampBuilds;
+        // this assembly: the stamps are already in A / B (the recorded run); nothing to copy
+      } else {
+        if (linBDirty) {   // new charge history: only the right-hand side of the capacitor companion models changes (the matrix part is the same for the same step coefficients)
+          double a0, a1, a2; if (stepIndex == 0) { a0 = 1; a1 = -1; a2 = 0; } else if (varStepBdf2 && hPrev > 0) { const double r = dt / hPrev; a0 = (1 + 2 * r) / (1 + r); a1 = -(1 + r); a2 = r * r / (1 + r); } else { a0 = 1.5; a1 = -2; a2 = 0.5; }
+          std::vector<int> slotB(nUnk, -1); linBIdx.clear(); linBVal.clear();
+          auto addB = [&](int row, double v) { if (row <= 0) return; int& sl = slotB[(size_t)(row - 1)]; if (sl < 0) { sl = (int)linBIdx.size(); linBIdx.push_back(row - 1); linBVal.push_back(0.0); } linBVal[(size_t)sl] += v; };
+          for (auto& c : cap) { const double v0 = V(c.a) - V(c.b); const double q0 = c.c * v0; const double ieq = (a0 * (q0 - c.c * v0) + a1 * q1[(size_t)c.q] + a2 * q2[(size_t)c.q]) / dt; addB(c.a, -ieq); addB(c.b, ieq); }
+          linBDirty = false;
+        }
+        for (size_t k = 0; k < linAIdx.size(); ++k) A[(size_t)linAIdx[k]] = linAVal[k];
+        for (size_t k = 0; k < linBIdx.size(); ++k) B[(size_t)linBIdx[k]] = linBVal[k];
+        for (auto& c : cap) qNow[(size_t)c.q] = c.c * (V(c.a) - V(c.b));
+        ++nPrestampCopies;
+      }
+      usedLin = true;
+    }
+    if (!usedLin) {
     for (int i = 1; i < nNodes; ++i) ad(i, i, kGmin + gminExtra);
     for (auto& r : res)
     {
@@ -271,20 +349,39 @@ class Net {
       else conduct(r.a, r.b, r.dyn ? 1.0 / (tNow <= r.t0 ? r.r0 : (tNow >= r.t0 + r.tr || r.tr <= 0 ? r.r1 : r.r0 + (r.r1 - r.r0) * (tNow - r.t0) / r.tr)) : r.g);
     }
     for (auto& c : cap) if (!dcMode) chargeStamp(c.a, c.b, c.q, c.c * (V(c.a) - V(c.b)), c.c);
+    }
 #ifdef N909_PROFILE
     const auto tpL = std::chrono::steady_clock::now(); profLin += std::chrono::duration<double>(tpL - tpA0).count();
 #endif
 #ifdef N909_PROFILE
     auto tpP = std::chrono::steady_clock::now(); auto lap = [&](double& acc) { const auto n = std::chrono::steady_clock::now(); acc += std::chrono::duration<double>(n - tpP).count(); tpP = n; };
 #endif
-    for (auto& d : dio) diodeStamp(d.a, d.c, d.Is, d.N, d.Rs, d.Cjo, d.Vj, d.M, d.Tt, d.Bv, d.Ibv, d.q, &d.vdLast);
+#ifdef N909_PROFILE
+    {   // bypass potential: how many evaluations changed their terminal voltages by less than tol since the last evaluation of the same device
+      static const double tols[3] = {1e-5, 1e-4, 1e-3};
+      auto probe = [&](int cls, size_t idx, int n, const int* nd) {
+        if (byLast[cls].size() <= idx * 6) byLast[cls].resize((idx + 1) * 6 + 6 * 8, 1e30);
+        double mx = 0.0; for (int k = 0; k < n; ++k) { double& l = byLast[cls][idx * 6 + k]; const double v = V(nd[k]); mx = std::max(mx, std::fabs(v - l)); l = v; }
+        ++byN[cls]; for (int t = 0; t < 3; ++t) if (mx < tols[t]) ++byHit[cls][t];
+      };
+      for (size_t i = 0; i < dio.size(); ++i) { int nd[2] = {dio[i].a, dio[i].c}; probe(0, i, 2, nd); }
+      for (size_t i = 0; i < bjt.size(); ++i) { int nd[3] = {bjt[i].bi, bjt[i].e, bjt[i].ci}; probe(1, i, 3, nd); }
+      for (size_t i = 0; i < op.size(); ++i) { int nd[4] = {op[i].inp, op[i].inn, op[i].n1, op[i].out}; probe(2, i, 4, nd); }
+      for (size_t i = 0; i < inv.size(); ++i) { int nd[4] = {inv[i].in, inv[i].out, inv[i].vdd, inv[i].vss}; probe(3, i, 4, nd); }
+    }
+#endif
+    if (bypassTol > 0.0) { if (recDio.size() != dio.size()) recDio.assign(dio.size(), Rec()); if (recBjt.size() != bjt.size()) recBjt.assign(bjt.size(), Rec()); if (recOp.size() != op.size()) recOp.assign(op.size(), Rec()); if (recInv.size() != inv.size()) recInv.assign(inv.size(), Rec()); if (recCmp.size() != cmp.size()) recCmp.assign(cmp.size(), Rec()); if (recOta.size() != ota.size()) recOta.assign(ota.size(), Rec()); }
+    if (bypassTol > 0.0) for (size_t i = 0; i < dio.size(); ++i) { Diode& d = dio[i]; const int nd[2] = {d.a, d.c}; withBypass(recDio[i], nd, 2, [&] { diodeStamp(d.a, d.c, d.Is, d.N, d.Rs, d.Cjo, d.Vj, d.M, d.Tt, d.Bv, d.Ibv, d.q, &d.vdLast); }); }
+    else for (auto& d : dio) diodeStamp(d.a, d.c, d.Is, d.N, d.Rs, d.Cjo, d.Vj, d.M, d.Tt, d.Bv, d.Ibv, d.q, &d.vdLast);
 #ifdef N909_PROFILE
     lap(profDio);
 #endif
-    for (auto& t : bjt) bjtStamp(t);
+    if (bypassTol > 0.0) for (size_t i = 0; i < bjt.size(); ++i) { Bjt& t = bjt[i]; const int nd[5] = {t.bi, t.e, t.ci, t.b, t.c}; withBypass(recBjt[i], nd, 5, [&] { bjtStamp(t); }); }
+    else for (auto& t : bjt) bjtStamp(t);
 #ifdef N909_PROFILE
     lap(profBjt);
 #endif
+    for (auto& v : isrc) { const double val = v.f ? v.f(tNow) : v.dc * (dcMode ? srcScale : 1.0); rhs(v.p, -val); rhs(v.n, val); }
     for (auto& v : vs) {
       int br = nn + v.br; double val = v.f ? v.f(tNow) : v.dc * (rampT > 0 ? std::min(1.0, tNow / rampT) : srcScale);
       if (v.p > 0) { touch((size_t)(v.p - 1) * nUnk + br); touch((size_t)br * nUnk + (v.p - 1)); A[(size_t)(v.p - 1) * nUnk + br] += 1; A[(size_t)br * nUnk + (v.p - 1)] += 1; }
@@ -294,16 +391,21 @@ class Net {
 #ifdef N909_PROFILE
     tpP = std::chrono::steady_clock::now();
 #endif
-    for (auto& m : op) stamp5218(m);
+    if (bypassTol > 0.0) for (size_t i = 0; i < op.size(); ++i) { Op5218& m = op[i]; const int nd[6] = {m.inp, m.inn, m.out, m.vcc, m.vee, m.n1}; withBypass(recOp[i], nd, 6, [&] { stamp5218(m); }); }
+    else for (auto& m : op) stamp5218(m);
 #ifdef N909_PROFILE
     lap(profOp);
 #endif
-    for (auto& m : inv) stamp4069(m);
+    if (bypassTol > 0.0) for (size_t i = 0; i < inv.size(); ++i) { Inv4069& m = inv[i]; const int nd[4] = {m.in, m.out, m.vdd, m.vss}; withBypass(recInv[i], nd, 4, [&] { stamp4069(m); }); }
+    else for (auto& m : inv) stamp4069(m);
 #ifdef N909_PROFILE
     lap(profInv);
 #endif
-    for (auto& m : cmp) stamp6912(m);
-    for (auto& m : ota) stamp6110(m);
+    if (bypassTol > 0.0) { for (size_t i = 0; i < cmp.size(); ++i) { Cmp6912& m = cmp[i]; const int nd[4] = {m.out, m.vee, m.inn, m.inp}; withBypass(recCmp[i], nd, 4, [&] { stamp6912(m); }); }
+      for (size_t i = 0; i < ota.size(); ++i) { Ota6110& m = ota[i]; Bjt& qc = bjt[m.qc]; const int nd[8] = {m.ctrl, qc.bi, qc.ci, m.inp, m.inn, m.out, m.vcc, m.vee}; withBypass(recOta[i], nd, 8, [&] { stamp6110(m); }); } }
+    else { for (auto& m : cmp) stamp6912(m); for (auto& m : ota) stamp6110(m); }
+    asmEvaluated = nEvaluated - evalBefore; asmDyn = false; for (const auto& r : res) if (r.dyn || !r.pw.empty()) { asmDyn = true; break; }
+    asmKey[0] = dt; asmKey[1] = hPrev; asmKey[2] = (double)(stepIndex == 0) + 2.0 * (double)dcMode; asmKey[3] = gminExtra + 1e3 * (rampT > 0 ? 1.0 : 0.0);
 #ifdef N909_PROFILE
     lap(profOther);
 #endif
@@ -484,6 +586,28 @@ class Net {
     }
     return true;
   }
+  bool spRefactorPartial() {   // same column computation as spRefactor, only for the columns that depend on a marked A column; false: a pivot became small (the caller refactors completely)
+    int n = sp.n; double* w = sp.w.data(); if ((int)dirtyK.size() != n) dirtyK.assign(n, 0);
+    for (int k = 0; k < n; ++k) {
+      bool dk = colDirty[(size_t)sp.q[k]] != 0;
+      if (!dk) for (int e = sp.up[k]; e < sp.up[k + 1]; ++e) if (dirtyK[(size_t)sp.ui[e]]) { dk = true; break; }
+      dirtyK[(size_t)k] = dk ? 1 : 0; if (!dk) continue;
+      ++nColsRefactored; int c = sp.q[k];
+      for (int e = sp.acp[c]; e < sp.acp[c + 1]; ++e) { int r = sp.ari[e]; w[sp.pinv[r]] = A[(size_t)r * n + c]; }
+      for (int e = sp.up[k]; e < sp.up[k + 1]; ++e) {
+        int j = sp.ui[e]; double xj = w[j]; sp.ux[e] = xj;
+        for (int f = sp.lp[j]; f < sp.lp[j + 1]; ++f) w[sp.li[f]] -= sp.lx[f] * xj;
+      }
+      double piv = w[k], mx = std::fabs(piv);
+      for (int f = sp.lp[k]; f < sp.lp[k + 1]; ++f) mx = std::max(mx, std::fabs(w[sp.li[f]]));
+      bool bad = !(std::fabs(piv) >= 1e-3 * mx) || std::fabs(piv) < 1e-30 || !std::isfinite(piv);
+      if (!bad) { sp.d[k] = piv; for (int f = sp.lp[k]; f < sp.lp[k + 1]; ++f) sp.lx[f] = w[sp.li[f]] / piv; }
+      for (int e = sp.up[k]; e < sp.up[k + 1]; ++e) w[sp.ui[e]] = 0.0;
+      w[k] = 0.0; for (int f = sp.lp[k]; f < sp.lp[k + 1]; ++f) w[sp.li[f]] = 0.0;
+      if (bad) { std::fill(sp.w.begin(), sp.w.end(), 0.0); return false; }
+    }
+    nColsTotal += n; return true;
+  }
   void spSolve(const std::vector<double>& b, std::vector<double>& sol) {
     int n = sp.n; double* y = sp.y.data(); sol.assign(n, 0.0);
     for (int i = 0; i < n; ++i) y[sp.pinv[i]] = b[i];
@@ -493,14 +617,42 @@ class Net {
   }
   bool solveSystem(std::vector<double>& M, const std::vector<double>& Rhs, std::vector<double>& sol) {
     if (useSparse) {
-      if (patDirty || !sp.ok || sp.n != nUnk) { spAnalyze(); patDirty = false; if (!spPivot()) goto dense; }
+      if (patDirty || !sp.ok || sp.n != nUnk) { spAnalyze(); patDirty = false; luValid = false; if (!spPivot()) goto dense; }
+      if (bypassTol > 0.0 && luValid && asmEvaluated == 0 && !asmDyn && std::memcmp(asmKey, luKey, sizeof(asmKey)) == 0) { ++nLuReused; spSolve(Rhs, sol); return true; }   // no device evaluated, same step coefficients: the factorisation is still the matrix
+      if (jacReuseMax > 0 && luValid && !asmDyn && luAge < jacReuseMax && newtonIt < 3 && std::memcmp(asmKey, luKey, sizeof(asmKey)) == 0 && (int)x.size() == sp.n) {
+        // modified Newton: the old factorisation solves for the update, dx = LU^-1 (B - A x), with the matrix and right-hand side of this assembly (stale Jacobian; the iteration continues until the update is below the tolerances as before)
+        const int n = sp.n; std::vector<double>& rr = chordR; rr.assign(Rhs.begin(), Rhs.end());
+        for (int c = 0; c < n; ++c) { const double xc = x[c]; if (xc == 0.0) continue; for (int e = sp.acp[c]; e < sp.acp[c + 1]; ++e) { const int row = sp.ari[e]; rr[row] -= A[(size_t)row * n + c] * xc; } }
+        spSolve(rr, sol); for (int i = 0; i < n; ++i) sol[i] += x[i];
+        ++luAge; ++nChord; return true;
+      }
+      if (partialLU && bypassTol > 0.0 && luValid && !asmDyn && (int)colDirty.size() == nUnk && std::memcmp(asmKey, luKey, sizeof(asmKey)) == 0) {
+        luValid = false;
+        const bool chk = std::getenv("N909_PARTIAL_CHECK") != nullptr;
+        if (chk && Alast.size() == A.size()) { static int rep2 = 0; if (rep2 < 6) { int nb = 0; for (int c = 0; c < nUnk && nb < 4; ++c) if (!colDirty[(size_t)c]) for (int r = 0; r < nUnk; ++r) if (A[(size_t)r * nUnk + c] != Alast[(size_t)r * nUnk + c]) { fprintf(stderr, "A changed but column %d not marked: row %d (%s) col (%s): %.9g -> %.9g\n", c, r, r < nNodes - 1 ? nodeName[r + 1].c_str() : "branch", c < nNodes - 1 ? nodeName[c + 1].c_str() : "branch", Alast[(size_t)r * nUnk + c], A[(size_t)r * nUnk + c]);
+            const int idxw = r * nUnk + c; auto find = [&](const char* nm, std::vector<Rec>& v) { for (size_t q = 0; q < v.size(); ++q) for (const auto& e : v[q].a) if (e.first == idxw) fprintf(stderr, "   in record of %s %zu (value %.9g, valid %d)\n", nm, q, e.second, (int)v[q].valid); }; find("dio", recDio); find("bjt", recBjt); find("op", recOp); find("inv", recInv); find("cmp", recCmp); find("ota", recOta);
+            ++nb; ++rep2; break; } } }
+        std::vector<double> chkL, chkU, chkD; std::vector<char> dirtyCopy;
+        if (spRefactorPartial()) {
+          if (chk) {   // diagnosis: the complete refactorisation must give the same factors
+            chkL = sp.lx; chkU = sp.ux; chkD = sp.d; dirtyCopy = dirtyK;
+            const bool ok = spRefactor(); int bad = 0, first = -1;
+            if (ok) { for (size_t i = 0; i < chkD.size(); ++i) if (chkD[i] != sp.d[i]) { if (first < 0) first = (int)i; ++bad; } for (size_t i = 0; i < chkL.size(); ++i) if (chkL[i] != sp.lx[i]) { if (first < 0) { first = -2 - (int)i; } ++bad; } for (size_t i = 0; i < chkU.size(); ++i) if (chkU[i] != sp.ux[i]) ++bad; }
+            if (bad) { static int reported = 0; if (reported++ < 5) fprintf(stderr, "partial refactorisation differs from the complete one: %d entries, first column %d (dirty %d of %d)\n", bad, first, (int)std::count(dirtyCopy.begin(), dirtyCopy.end(), (char)1), sp.n); }
+          }
+          if (chk) Alast = A;
+          ++nPartialLU; luValid = true; luAge = 0; std::fill(colDirty.begin(), colDirty.end(), 0); spSolve(Rhs, sol); return true; }
+      }
+      luValid = false;
       if (!spRefactor()) { if (!spPivot() || !spRefactor()) goto dense; }
+      luValid = true; luAge = 0; std::memcpy(luKey, asmKey, sizeof(asmKey)); if (partialLU && std::getenv("N909_PARTIAL_CHECK")) Alast = A; if (partialLU) { colDirty.assign(nUnk, 0); nColsTotal += sp.n; nColsRefactored += sp.n; }
       spSolve(Rhs, sol); return true;
     }
   dense:
     M = A; std::vector<double> R2 = Rhs; return luSolve(M, R2, sol);
   }
   long itTotal = 0, itHist[8] = {0,0,0,0,0,0,0,0};
+  std::vector<double> byLast[4]; long byN[4] = {0, 0, 0, 0}, byHit[4][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}};   // bypass potential counters (N909_PROFILE)
   double profAsm = 0, profSolve = 0, profLin = 0, profDio = 0, profBjt = 0, profOp = 0, profInv = 0, profOther = 0;   // seconds in assemble / solveSystem (only with -DN909_PROFILE)
   bool newton(double tNow, int maxIt = 160) {
     std::vector<double> sol, M, R;
@@ -509,7 +661,7 @@ class Net {
 #ifdef N909_PROFILE
       const auto tp0 = std::chrono::steady_clock::now();
 #endif
-      ++itTotal; assemble(tNow);
+      newtonIt = it; if (it == 0) linBDirty = true; ++itTotal; assemble(tNow);
 #ifdef N909_PROFILE
       const auto tp1 = std::chrono::steady_clock::now();
 #endif
@@ -590,7 +742,7 @@ class Net {
   // One accepted step from t with a step size chosen by the local error: the predictor is the linear extrapolation of the last two accepted solutions (xA at t, xB at t - hAB); the difference of the corrector to it, per node
   // voltage relative to atol + rtol |v|, estimates the local error of BDF2 (constant 1/3). A rejected step is repeated with a smaller h. On return h is the size of the step taken and hNext the size proposed for the next one.
   std::vector<double> xA, xB; double hAB = 0, errMax = 0; long nRejected = 0, nAccepted = 0;
-  void rollback(const State& st) { x = st.x; q1 = st.q1; q2 = st.q2; stepIndex = st.stepIndex; hPrev = st.hPrev; }   // back to the state before a step (the solver mode, e.g. the supply ramp of the start-up, stays)
+  void rollback(const State& st) { linBDirty = true; x = st.x; q1 = st.q1; q2 = st.q2; stepIndex = st.stepIndex; hPrev = st.hPrev; }   // back to the state before a step (the solver mode, e.g. the supply ramp of the start-up, stays)
   bool advanceAdaptive(double t, double& h, double& hNext, double rtol, double atol, double hMin, double hMax)
   {
     if (xA.size() != x.size()) { xA = x; xB = x; hAB = 0; }
@@ -623,7 +775,7 @@ class Net {
   bool step(double tNow) {   // advance to time tNow (uses dt)
     std::vector<double> xs = x;
     if (!newton(tNow)) { x = xs; return false; }
-    q2 = q1; if (reassembleCharges) assemble(tNow); q1 = qNow; ++stepIndex; hPrev = dt;  // qNow of the converged solution (assemble evaluated charges at x); without the extra assembly qNow is the one of the last Newton iteration (evaluated one update before the converged x)
+    q2 = q1; linBDirty = true; if (reassembleCharges) assemble(tNow); q1 = qNow; ++stepIndex; hPrev = dt;  // qNow of the converged solution (assemble evaluated charges at x); without the extra assembly qNow is the one of the last Newton iteration (evaluated one update before the converged x)
     return true;
   }
 };

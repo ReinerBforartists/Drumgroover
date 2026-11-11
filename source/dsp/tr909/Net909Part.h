@@ -27,7 +27,7 @@ class PartNet {
     }
   };
   struct Block {
-    Net net; std::string name; int nodes = 0;
+    Net net; std::string name, text; int nodes = 0;
     int ifSrc = -1;   // index of the NOISE interface source in net.vs (-1: block does not touch the NOISE line)
     std::vector<int> capIdx, dioIdx, bjtIdx, opIdx, invIdx;   // index of the element in the full netlist (for the state transfer)
     double hCur = 1e-6;
@@ -42,7 +42,7 @@ class PartNet {
   std::string fullText;
   // run parameters
   double H = 20e-6, rtol = 1e-3, atol = 1e-6, hMin = 1e-9, hMax = 1e-5, ifTol = 1e-7, ifRel = 1e-6, fixedDt = 0.0; int maxIt = 6;
-  double nwAtolV = 1e-6, nwAtolI = 1e-8; bool predictor = false, reassemble = false;   // Newton tolerances and predictor start of the blocks (Net defaults: 1e-6 / 1e-8, off)
+  double nwAtolV = 1e-6, nwAtolI = 1e-8; bool predictor = false, reassemble = false; double bypassTol = 0.0; int jacReuse = 0; bool prestamp = false, compactRec = false, partialLU = false;   // Newton tolerances and predictor start of the blocks (Net defaults: 1e-6 / 1e-8, off)
   // statistics
   long windows = 0, passes = 0, unconverged = 0; long itHist[8] = {0, 0, 0, 0, 0, 0, 0, 0};
   double ifMaxMismatch = 0.0;
@@ -134,7 +134,7 @@ class PartNet {
       for (const Line* L : blines[b]) { for (size_t i = 0; i < L->tok.size(); ++i) { std::string s = L->tok[i]; if (std::find(L->pins.begin(), L->pins.end(), (int)i) != L->pins.end()) s = std::to_string(nid[std::atoi(s.c_str())]); os << (i ? " " : "") << s; } os << "\n"; }
       int nz = -1; for (size_t i = 0; i < nodes.size(); ++i) if (nodeNames[nodes[i]] == noiseName) nz = (int)i;
       if (nz > 0) os << "VD VNIF " << nz << " 0 7.5\n";
-      auto blk = std::make_unique<Block>(); if (!blk->net.loadText(os.str())) { if (err) *err = "block load failed"; return false; }
+      auto blk = std::make_unique<Block>(); blk->text = os.str(); if (!blk->net.loadText(os.str())) { if (err) *err = "block load failed"; return false; }
       blk->nodes = (int)nodes.size(); blk->capIdx = capI[b]; blk->dioIdx = dioI[b]; blk->bjtIdx = bjtI[b]; blk->opIdx = opI[b]; blk->invIdx = invI[b];
       for (size_t i = 0; i < blk->net.vs.size(); ++i) if (blk->net.vs[i].name == "VNIF") blk->ifSrc = (int)i;
       blk->name = sheetOf(nodes.size() > 1 ? nodes[1] : 0) + "+" + std::to_string(blk->nodes);
@@ -195,7 +195,7 @@ class PartNet {
       for (const Vsrc& v : s.vs) { if (v.name == "VNIF") continue; for (const Vsrc& f : full.vs) if (f.name == v.name) st.x[nnS + v.br] = full.x[nnF + f.br]; }
       if (!s.restoreState(st)) return false;
       b.xA.clear(); b.xB.clear(); b.hAB = 0.0; b.hCur = std::min(fixedDt > 0 ? fixedDt : 1e-6, hMax);
-      s.nwAtolV = nwAtolV; s.nwAtolI = nwAtolI; s.predictorStart = predictor; s.reassembleCharges = reassemble;
+      s.nwAtolV = nwAtolV; s.nwAtolI = nwAtolI; s.predictorStart = predictor; s.reassembleCharges = reassemble; s.bypassTol = bypassTol; s.jacReuseMax = jacReuse; s.prestamp = prestamp; s.compactRec = compactRec; s.partialLU = partialLU;
     }
     // starting currents of the blocks on the NOISE line
     for (auto& bp : blocks) { bp->wf.t.clear(); bp->wf.v.clear(); bp->wf.hold = 0.0; }
@@ -209,7 +209,7 @@ class PartNet {
     for (size_t i = 0; i < blocks.size(); ++i) {
       Block& b = *blocks[i]; if (!b.net.restoreState(sn.st[i])) return false;
       b.xA.clear(); b.xB.clear(); b.net.xA.clear(); b.net.xB.clear(); b.net.hAB = 0.0; b.hAB = 0.0; b.hCur = std::min(fixedDt > 0 ? fixedDt : 1e-6, hMax);
-      b.net.nwAtolV = nwAtolV; b.net.nwAtolI = nwAtolI; b.net.predictorStart = predictor; b.net.reassembleCharges = reassemble;
+      b.net.nwAtolV = nwAtolV; b.net.nwAtolI = nwAtolI; b.net.predictorStart = predictor; b.net.reassembleCharges = reassemble; b.net.bypassTol = bypassTol; b.net.jacReuseMax = jacReuse; b.net.prestamp = prestamp; b.net.compactRec = compactRec; b.net.partialLU = partialLU;
       b.wf.t.clear(); b.wf.v.clear(); b.wf.hold = sn.hold[i];
     }
     T = 0.0; haveVEnd = false; gCarry = 0.0; return true;

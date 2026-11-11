@@ -149,6 +149,8 @@ private:
     st.q2.assign(kTr909CircuitIdleState + kTr909CircuitStateX + kTr909CircuitStateQ, kTr909CircuitIdleState + kTr909CircuitStateX + 2 * kTr909CircuitStateQ);
     st.stepIndex = kTr909CircuitStateStepIndex; st.hPrev = kTr909CircuitStateHPrev;
     if (!net_->loadFullState(st)) { net_.reset(); return false; }
+    net_->bypassTol = 1e-4;   // device bypass (Net909.h): validated over full 350 ms hits against NGSpice and the run without bypass (plan, section S4 faster circuit)
+    if (const char* bp = std::getenv("DGG_PART_BYPASS")) net_->bypassTol = std::atof(bp);   // test hook: other tolerance, 0 = off
     nominal_ = net_->snapshot(); net_->abort = abort_;
     ready_ = true; return true;
   }
