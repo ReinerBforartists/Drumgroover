@@ -1,6 +1,6 @@
 // TR-909 fast voices: what a bake of one cache set does, independent of the model that renders a single hit.
 //
-// The model side (FullFast2 voices, one header per voice and accent anchor) is a Tr909ModelRunner: it renders ONE hit at an anchor accent with a
+// The model side (circuit runner, PCM voices) is a Tr909ModelRunner: it renders ONE hit at an anchor accent with a
 // given noise seed and noise path and returns the samples at the requested rate. This file decides which runs a set needs (909AccentPlan.h),
 // calls the runner with the same seed for every run, and blends the results. A set whose accent is not validated is refused before any
 // model run is made.
@@ -47,10 +47,6 @@ public:
   virtual bool Active() const = 0;
   // Position of the trigger in the shared noise stream (knot, HitNoise::kNoStream: none) for the next Start(); default: ignored.
   virtual void SetStreamKnot(uint64_t knot) { (void)knot; }
-  // Sources that run hits from prepared sets (the BD in the shared noise stream): PrepareLive() builds what a hit of this accent needs (non-audio thread), LiveReady() says whether all of it is prepared for exactly these
-  // pots and this sample rate (audio thread, no allocation); a hit that is not ready is played from the cache and the preparation is requested.
-  virtual bool LiveReady(Tr909Voice voice, int accentCode, uint64_t params) const { (void)voice; (void)accentCode; (void)params; return false; }
-  virtual bool PrepareLive(Tr909Voice voice, int accentCode, uint64_t params, int sampleRateHz) { (void)voice; (void)accentCode; (void)params; (void)sampleRateHz; return false; }
   // Builds the tables a first hit of the PCM voices would build (default: nothing); never on the audio thread.
   virtual void Prebuild(int sampleRateHz) { (void)sampleRateHz; }
 };

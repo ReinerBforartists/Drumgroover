@@ -11,7 +11,7 @@ struct Tr909NoiseStream
 {
   static uint64_t& Sample() { static uint64_t s = 0; return s; }   // sample position of the trigger being handled
   static void SetTriggerSample(uint64_t s) { Sample() = s; }
-  // Knot of the stream (5 us spacing) of the trigger. The hit's noise starts 50 ms before the trigger (HitRunner kStartTime), the stream's time axis is shifted by the same 50 ms, so the knot is simply t / 5 us.
+  // Knot of the stream (5 us spacing) of the trigger. The hit's noise starts 50 ms before the trigger, the stream's time axis is shifted by the same 50 ms, so the knot is simply t / 5 us.
   static uint64_t TriggerKnot(double sampleRateHz) { return static_cast<uint64_t>(std::llround(static_cast<double>(Sample()) / sampleRateHz / 5e-6)); }
 };
 

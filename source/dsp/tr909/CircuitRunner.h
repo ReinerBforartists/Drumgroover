@@ -5,7 +5,7 @@
 // structure of the circuit by tr909/Net909Part.h (PartNet: blocks BD, SD, HC, RM and the tom sheets, coupled through the shared NOISE line by waveform relaxation, validated against the monolithic
 // network and against NGSpice, plan tools/909_GESAMTSCHALTUNG_PLAN.md section S4). This runner renders a hit by
 // continuing that circuit from an idle state that was run for one second (tr909/models/circuit_all7_state.h) with the trigger pulse of the voice, the accent voltage and the noise source of the
-// hit, and returns the output of the voice minus its idle level at the sample rate of the request. It is a Tr909ModelRunner, so it can replace the per-voice models in the bake.
+// hit, and returns the output of the voice minus its idle level at the sample rate of the request. It is a Tr909ModelRunner (the bake engine of BD, SD, LT, MT, HT, HC).
 //
 // Not a real-time engine (a hit takes minutes on one thread); the bake and the reference comparisons use it. Supported: voices BD, SD, LT, MT, HT, HC at any pot state of the voice (909PotParams.h; the pots are the circuit pots of the netlist), the 5 us reference noise path.
 // Anything else returns false (no silent replacement by another engine).
@@ -14,7 +14,7 @@
 #include "../909PotParams.h"
 #include "Net909.h"
 #include "Net909Part.h"
-#include "HitRunner.h"
+#include "HitNoise.h"
 #include "models/circuit_all7_net.h"
 #include "models/circuit_all7_state.h"
 #include <functional>
@@ -168,7 +168,7 @@ private:
     for (const char* t : {"BD", "SD", "LT", "MT", "HT", "HC", "RM"}) net.setSourceDc(std::string("VTRIG_") + t, 0.0);
     net.setSource("VTRIG_" + tag, [t0](double t) { return pcmfast::HitTrigger(t - t0); });
     net.setSourceDc("VACCENT_" + tag, Tr909AccentVolts(accentCode));
-    pcmfast::HitNoise noise; noise.Start(seed, 5e-6, 0.0);   // the same source as the per-voice models: the noise of the hit starts at knot 10000 of the sequence (kStartTime) when the trigger arrives
+    pcmfast::HitNoise noise; noise.Start(seed, 5e-6, 0.0);   // the noise of the hit starts at knot 10000 of the sequence (50 ms) when the trigger arrives
     if (!silentNoise) net.setSource("Vnz", [&noise, t0](double t) { return t < t0 ? 7.5 : noise.At(kNoiseAtTrigger + (t - t0)); });
     else net.setSourceDc("Vnz", 7.5);
     const double ts = 1.0 / fs; const size_t nOut = static_cast<size_t>(seconds * fs + 0.5);
@@ -194,7 +194,7 @@ private:
     return true;
   }
   static constexpr double kTriggerDelay = 0.05;   // minimum idle before the trigger: the accent (a held level in the sequencer) and the pot states settle as in the NGSpice decks (50 ms)
-  static constexpr double kNoiseAtTrigger = 0.05;   // HitRunner::kStartTime: the noise sequence of a hit is read from 50 ms on when the trigger arrives
+  static constexpr double kNoiseAtTrigger = 0.05;   // the noise sequence of a hit is read from 50 ms on when the trigger arrives
   static constexpr double kSettle = 0.5;
   std::map<uint64_t, Settled> settled_;
   double dt_; std::function<bool()> abort_;

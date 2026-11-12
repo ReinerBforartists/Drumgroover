@@ -98,11 +98,10 @@ inline int Tr909AccentRuns(Tr909Voice v, int code, Tr909AccentRun out[2])
 // "<BaseName>_v<k>.f32" like every other set; k selects the noise seed of the variant (seed = k), so the seed is part of the file name.
 enum class Tr909NoisePath : int { Reference5us = 0, Fast20us = 1 };
 
-// The cache of these voices is baked by the complete circuit (tr909/CircuitRunner.h, 909CircuitBake.h): BD, SD, LT, MT, HT, HC with the 5 us noise path. DGG_909_PER_VOICE=1 (environment) selects the per-voice models (diagnosis).
+// The cache of these voices is baked by the complete circuit (tr909/CircuitRunner.h, 909CircuitBake.h): BD, SD, LT, MT, HT, HC with the 5 us noise path.
 inline bool Tr909CircuitCovers(Tr909Voice v, Tr909NoisePath n)
 {
-  static const bool perVoiceOnly = std::getenv("DGG_909_PER_VOICE") != nullptr;
-  return !perVoiceOnly && n == Tr909NoisePath::Reference5us && (v == Tr909Voice::Bd || v == Tr909Voice::Sd || v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht || v == Tr909Voice::Hc);
+  return n == Tr909NoisePath::Reference5us && (v == Tr909Voice::Bd || v == Tr909Voice::Sd || v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht || v == Tr909Voice::Hc);
 }
 
 

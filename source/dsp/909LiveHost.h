@@ -60,43 +60,22 @@ class Tr909LiveBank
 public:
   static Tr909LiveBank& Instance() { static Tr909LiveBank* inst = new Tr909LiveBank(); return *inst; }   // never destroyed
   // Builds the sources once (idempotent); returns at once, the bank is ready when the thread has finished.
-  // fShared (optional): the factory of the sources that run hits from prepared sets (BD in the shared noise stream, several at the same time); the thread keeps running as the preparation worker of these sets.
-  void BuildAsync(Tr909LiveSynth::Factory f, int sampleRateHz, Tr909LiveSynth::Factory fShared = nullptr)
+  void BuildAsync(Tr909LiveSynth::Factory f, int sampleRateHz)
   {
-    if ((f == nullptr && fShared == nullptr) || mStarted.exchange(true)) return;
-    std::thread([this, f, sampleRateHz, fShared]
+    if (f == nullptr || mStarted.exchange(true)) return;
+    std::thread([this, f, sampleRateHz]
     {
       // the hi-hat circuit exists once: a new hit takes over the source of the running one (retrigger), as the PCM counter of the 909 restarts
       const int counts[] = { 1 /*Hh*/, 1 /*Ho*/, 4 /*Cr*/, 4 /*Ri*/ }; const Tr909Voice voices[] = { Tr909Voice::Hh, Tr909Voice::Ho, Tr909Voice::Cr, Tr909Voice::Ri };
-      for (int i = 0; i < (f ? 4 : 0); ++i)
+      for (int i = 0; i < 4; ++i)
         for (int n = 0; n < counts[i]; ++n)
         {
           std::unique_ptr<Entry> e(new Entry()); e->src = f();
           e->src->Start(voices[i], 127, Tr909NoisePath::Reference5us, 1, sampleRateHz, 0.01, 0);   // builds the slot of the model (and the idle tables) off the audio thread
           mEntries[static_cast<int>(voices[i])].push_back(std::move(e));
         }
-      if (fShared) { std::unique_ptr<Entry> e(new Entry()); e->src = fShared(); mEntries[static_cast<int>(Tr909Voice::Bd)].push_back(std::move(e)); }   // BD: monophonic (one source; a new trigger takes it over)
       mReady.store(true, std::memory_order_release);
-      if (!fShared) return;
-      for (;;)   // the preparation worker: the newest request wins
-      {
-        Tr909SetKey k; { std::unique_lock<std::mutex> lk(mPrepMutex); mPrepCv.wait(lk, [this] { return mPrepPending; }); k = mPrepKey; mPrepPending = false; }
-        auto& v = mEntries[static_cast<int>(k.voice)]; if (!v.empty()) v[0]->src->PrepareLive(k.voice, k.accentCode, k.params, k.sampleRateHz);
-        std::lock_guard<std::mutex> lk(mPrepMutex); mPrepBusy = mPrepPending;
-      }
     }).detach();
-  }
-  // Audio thread: are all prepared sets of this hit (anchors, both forms, hit objects) there for exactly these pots and this sample rate?
-  bool SharedReady(Tr909Voice v, int accentCode, uint64_t params) const
-  {
-    const auto& e = mEntries[static_cast<int>(v)]; return Ready() && !e.empty() && e[0]->src->LiveReady(v, accentCode, params);
-  }
-  // Audio thread: asks the worker to prepare the sets of this hit (never blocks: a busy lock skips the request, the next hit asks again).
-  void RequestPrepare(const Tr909SetKey& k)
-  {
-    std::unique_lock<std::mutex> lk(mPrepMutex, std::try_to_lock); if (!lk.owns_lock()) return;
-    if (mPrepBusy && mPrepKey.voice == k.voice && mPrepKey.accentCode == k.accentCode && mPrepKey.params == k.params && mPrepKey.sampleRateHz == k.sampleRateHz) return;   // already being prepared
-    mPrepKey = k; mPrepPending = true; mPrepBusy = true; mPrepCv.notify_one();
   }
   bool Ready() const { return mReady.load(std::memory_order_acquire); }
   // A source of the voice for `owner` (audio thread): a free one, else the one that has run longest is taken over (*prevOwner = its previous owner, whose hit ends); nullptr while the bank is not ready.
@@ -125,7 +104,6 @@ public:
 private:
   struct Entry { std::unique_ptr<Tr909LiveSource> src; const void* owner = nullptr; unsigned long long seq = 0; };
   unsigned long long mSeq = 0;
-  std::mutex mPrepMutex; std::condition_variable mPrepCv; Tr909SetKey mPrepKey; bool mPrepPending = false, mPrepBusy = false;
   std::vector<std::unique_ptr<Entry>> mEntries[static_cast<int>(Tr909Voice::kCount)]; std::atomic<bool> mStarted{false}, mReady{false};
 };
 
