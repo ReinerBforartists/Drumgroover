@@ -9,7 +9,6 @@
 #include "909AccentPlan.h"
 #include "909PotParams.h"
 #include "909LiveHost.h"
-#include "909LiveRelease.h"
 #include "909NoiseStream.h"
 #include "808VariantPoolCache.h"
 #include "DrumVoice.h"
@@ -126,7 +125,7 @@ public:
     // BD (the voices with a noise response in the shared stream): computed live from prepared sets when they exist for exactly these pots, this accent and this sample rate; otherwise the cache variant plays
     // and the preparation is requested (a hit never uses sets of other pots or another rate).
     bool sharedLive = false;
-    if (((mVoice == Tr909Voice::Bd && !Tr909CircuitCovers(mVoice, k.noise)) || (kTr909LiveTomsEnabled && Tr909LiveIsTom(mVoice) && Tr909LiveAccentReleased(mVoice, k.accentCode, k.params))) && k.noise == Tr909NoisePath::Reference5us && Tr909LiveBank::Instance().Ready())   // the circuit engine bakes the BD: its cache is the sound, the per-voice live model is only for DGG_909_PER_VOICE
+    if (mVoice == Tr909Voice::Bd && k.noise == Tr909NoisePath::Reference5us && !Tr909CircuitCovers(mVoice, k.noise) && Tr909LiveBank::Instance().Ready())   // the circuit engine bakes the BD: its cache is the sound, the per-voice live model is only for DGG_909_PER_VOICE
     {
       sharedLive = Tr909LiveBank::Instance().SharedReady(mVoice, k.accentCode, k.params);
       if (!sharedLive) Tr909LiveBank::Instance().RequestPrepare(k);

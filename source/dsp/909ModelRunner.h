@@ -83,19 +83,11 @@
 #include "tr909/models/hc_a127_pot.h"
 #include "tr909/PotSet.h"
 #include "909PotParams.h"
-#include "909LiveRelease.h"
 #include <atomic>
 #include <memory>
 #include <mutex>
 
 namespace dgg {
-
-// Tuning of the live form of a voice: BD as before, the toms with the gated setting (HitRunner.h HitTuningLinFor); other voices have no live form (linNoiseT < 0).
-inline pcmfast::HitTuning Tr909LiveTuning(Tr909Voice v)
-{
-  return (kTr909LiveTomsEnabled && (v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht)) ? pcmfast::HitTuningLinFor(v, false) : pcmfast::HitTuningFor(v, false);
-}
-
 
 class Tr909FullModelRunner : public Tr909ModelRunner, public Tr909LiveSource
 {
@@ -208,7 +200,6 @@ private:
   template <class Mdl, class Pot>
   struct Slot : SlotBase
   {
-    int anchor_ = 0; explicit Slot(int anchorCode) : anchor_(anchorCode) {}
     pcmfast::HitRunner<Mdl> runner;
     pcmfast::PotSet<Mdl, Pot> potSet; uint64_t potParams = 0, potId = 0;   // potId: unique per assembly, never reused (0: no set)
     const Tr909LanePot* Select(Tr909Voice v, uint64_t params, Tr909LanePot& lp)
@@ -251,11 +242,10 @@ private:
     {
       if (fs <= 0) return false;
       if (poolFs_ != fs) { poolN_.store(0, std::memory_order_release); for (auto& p : pool_) p.reset(); poolFs_ = fs; }   // another sample rate: the hit objects are rebuilt (processing is stopped while the rate changes)
-      if (Tr909LiveTuning(v).linNoiseT < 0.0 || !Tr909LiveReleased(v, anchor_, params)) return false;   // no live form, or not measured: the existing path plays
       liveFs_ = fs; BuildLive(v, params);
       if (poolN_.load(std::memory_order_acquire) == 0)
       {
-        const pcmfast::HitTuning tu = Tr909LiveTuning(v);
+        const pcmfast::HitTuning tu = pcmfast::HitTuningFor(v, false);
         for (auto& p : pool_) { p.reset(new HitObj()); p->st = Live::MakeHit(tu, static_cast<double>(fs)); }
         poolN_.store(kPool, std::memory_order_release);
       }
@@ -278,16 +268,15 @@ private:
     // Two prepared forms per parameter set: the fine one (noise knots of the response every 10 us) and the coarse one (20 us, about half the cost per hit, response differs by -35 ... -57 dB re signal) for the run of a blend whose weight is below one half.
     void BuildLive(Tr909Voice v, uint64_t params)
     {
-      const pcmfast::HitTuning tu = Tr909LiveTuning(v); if (tu.linNoiseT < 0.0 || liveFs_ <= 0 || !Tr909LiveReleased(v, anchor_, params)) return;
+      const pcmfast::HitTuning tu = pcmfast::HitTuningFor(v, false); if (tu.linNoiseT < 0.0 || liveFs_ <= 0) return;
       std::lock_guard<std::mutex> lk(liveMutex_);   // one preparation at a time
       double pots[8]; if (params != 0) Tr909UnpackPots(v, params, pots);
       for (int form = 0; form < 2; ++form)
       {
         std::shared_ptr<Live>& slotPtr = form == 0 ? live_ : liveC_;
         std::shared_ptr<Live> cur = std::atomic_load(&slotPtr); if (cur && cur->Ready() && cur->Key() == params && cur->SampleRate() == liveFs_) continue;
-        pcmfast::HitTuning tf = tu; if (form == 1 && !Tr909LiveIsTom(v)) tf.replayKnot = 20;   // the 20 us form fails the gate of the toms (knot 5 us only): the coarse slot of a tom holds the same object
-        if (form == 1 && Tr909LiveIsTom(v)) { std::shared_ptr<Live> f0 = std::atomic_load(&live_); if (!f0 || !f0->Ready()) return; std::atomic_store(&slotPtr, f0); continue; }
-        std::shared_ptr<Live> nl = std::make_shared<Live>(); if (!nl->Prepare(tf, params != 0 ? pots : nullptr, params, liveFs_, 0.35)) return;   // false also when the self test of the reduced replay fails
+        pcmfast::HitTuning tf = tu; if (form == 1) tf.replayKnot = 20;
+        std::shared_ptr<Live> nl = std::make_shared<Live>(); if (!nl->Prepare(tf, params != 0 ? pots : nullptr, params, liveFs_, 0.35)) return;
         std::atomic_store(&slotPtr, nl); if (cur) retired_.push_back(cur);
       }
       for (size_t i = 0; i < retired_.size();) { if (retired_[i].use_count() == 1) retired_.erase(retired_.begin() + static_cast<long>(i)); else ++i; }   // not referenced by a running hit
@@ -304,7 +293,7 @@ private:
       ApplyPots(v, params); pcmfast::HitNoise nz[4]; for (int l = 0; l < n; ++l) nz[l].Start(seeds[l], 5e-6, 0.0);
       return runner.RenderLinGroup(tu, nz, n, seconds, static_cast<double>(fs), out);
     }
-    void Warm(Tr909Voice v, uint64_t params, bool fast20) override { ApplyPots(v, params); runner.Warm(pcmfast::HitTuningFor(v, fast20)); if (!fast20 && !Tr909LiveIsTom(v)) BuildLive(v, params); }   // the toms prepare their live sets only on the preparation worker (PrepareLive): Warm() may run on the audio thread (first live hit)
+    void Warm(Tr909Voice v, uint64_t params, bool fast20) override { ApplyPots(v, params); runner.Warm(pcmfast::HitTuningFor(v, fast20)); if (!fast20) BuildLive(v, params); }
     bool Begin(Tr909Voice v, uint64_t params, bool fast20, uint64_t seed, double seconds, int fs, int) override
     {
       hit_.reset();
@@ -407,7 +396,7 @@ private:
 
   static std::unique_ptr<SlotBase> Make(Tr909Voice v, int a)
   {
-#define DGG_909_SLOT(V, VOICE, CODE, IDX) if (v == Tr909Voice::VOICE && a == IDX) return std::unique_ptr<SlotBase>(new Slot<Tr909_##V##_A##CODE, Tr909_##V##_A##CODE##_Pot>(CODE));
+#define DGG_909_SLOT(V, VOICE, CODE, IDX) if (v == Tr909Voice::VOICE && a == IDX) return std::unique_ptr<SlotBase>(new Slot<Tr909_##V##_A##CODE, Tr909_##V##_A##CODE##_Pot>());
 #define DGG_909_VOICE(V, VOICE) DGG_909_SLOT(V, VOICE, 25, 0) DGG_909_SLOT(V, VOICE, 50, 1) DGG_909_SLOT(V, VOICE, 75, 2) DGG_909_SLOT(V, VOICE, 100, 3) DGG_909_SLOT(V, VOICE, 127, 4)
     DGG_909_VOICE(BD, Bd) DGG_909_VOICE(SD, Sd) DGG_909_VOICE(LT, Lt) DGG_909_VOICE(MT, Mt) DGG_909_VOICE(HT, Ht) DGG_909_VOICE(HC, Hc)
     if (v == Tr909Voice::Cr && a == 0) return std::unique_ptr<SlotBase>(new PcmSlot<CrashModelA0>());
