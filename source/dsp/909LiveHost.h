@@ -4,6 +4,7 @@
 // the hit plays what it computes. There is one live source (one hit is computed at a time): a new live hit takes it over, the hit that had it ends where it is.
 #pragma once
 #include "909BakeHost.h"
+#include "909LiveRelease.h"
 #include <atomic>
 #include <condition_variable>
 #include <memory>
@@ -75,7 +76,7 @@ public:
           e->src->Start(voices[i], 127, Tr909NoisePath::Reference5us, 1, sampleRateHz, 0.01, 0);   // builds the slot of the model (and the idle tables) off the audio thread
           mEntries[static_cast<int>(voices[i])].push_back(std::move(e));
         }
-      if (fShared) { std::unique_ptr<Entry> e(new Entry()); e->src = fShared(); mEntries[static_cast<int>(Tr909Voice::Bd)].push_back(std::move(e)); }   // BD: monophonic (one source; a new trigger takes it over)
+      if (fShared) { for (const Tr909Voice sv : { Tr909Voice::Bd, Tr909Voice::Lt, Tr909Voice::Mt, Tr909Voice::Ht }) { if (sv != Tr909Voice::Bd && !kTr909LiveTomsEnabled) continue; std::unique_ptr<Entry> e(new Entry()); e->src = fShared(); mEntries[static_cast<int>(sv)].push_back(std::move(e)); } }   // BD and the toms: one source each, monophonic (a new trigger takes it over)
       mReady.store(true, std::memory_order_release);
       if (!fShared) return;
       for (;;)   // the preparation worker: the newest request wins

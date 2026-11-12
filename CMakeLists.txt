@@ -135,3 +135,8 @@ if(MSVC)
   set_source_files_properties(source/dsp/tr909/HitLanesLT.cpp source/dsp/tr909/HitLanesMT.cpp source/dsp/tr909/HitLanesHT.cpp source/dsp/tr909/HitLanesBD.cpp source/dsp/tr909/PcmHatAvx2.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
 endif()
 
+# DrumGroover.cpp includes every 909 model (30 voice / anchor models and their pot variants) through 909ModelRunner.h: the object file exceeds the default section limit of MSVC (C1128).
+if(MSVC)
+  set_source_files_properties(source/DrumGroover.cpp PROPERTIES COMPILE_OPTIONS "/bigobj")
+endif()
+

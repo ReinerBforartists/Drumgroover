@@ -58,6 +58,8 @@ struct HitTuning
   bool replayStep = false;   // the linear response follows the actual steps of the base run (NoiseReplay::NextStep; needs linBaseNoisy: the steps of the noisy base never span a noise knot)
   double replayStepThr = -1.0;   // epoch refresh for the stepwise response: < 0 every step, else after a port moved by this x its thermal voltage
   int replayJ = -1;   // >= 0: the response is stepped with the propagator of step 2^replayJ x 0.156 us (default 5: the 5 us noise knot; smaller values subdivide the knot, the noise is linear between the knots)
+  double replayCondTol = 0.0;   // work copy: > 0: reduced-order form of the replay, relative rank tolerance of the one-knot matrices
+  int replayCond = 0;   // work copy: > 0: per epoch the condensed state-space form of the replay, blocks of this many knots (exact: the same linear map, powers precomputed)
   bool replayDouble = false;   // diagnosis: active-block solve of the linear response in double precision
   double preRoll = 0.0;      // seconds of noise before the trigger (a multiple of the noise knot spacing): the noise-driven states then belong to the noise sequence of the hit
 };
@@ -81,6 +83,16 @@ inline HitTuning HitTuningFor(Tr909Voice v, bool fast20)
   if (const char* e = std::getenv("LINNOISET")) t.linNoiseT = std::atof(e);
   if (const char* e = std::getenv("NOISEOFFT")) t.noiseOffT = std::atof(e);
 #endif
+  return t;
+}
+
+// Linear-response (live) setting of the toms (gated 2026-11-12, tools/909_TOMS_BETRIEBSBEREICHE.md): noise-free expansion point WITH the tanh event prediction, linYtol 3e-4, noise knot 5 us, Jacobian threshold 10 Vt
+// (knot 20 / threshold 30 fail the LT gate), reduced-order replay with self test (replayCondTol, falls back to the exact replay). R115 gate anchors 25-127 (LT), 25-75 (MT), 25-100 (HT), seeds 0-11, nominal pots;
+// MT anchors 100 / 127 and HT 127 are NOT released, level 0.9 (pot state P6) diverges for all three, pots only as measured (see the table). NOT wired into HitTuningFor(): the live path (909ModelRunner.h) is enabled by linNoiseT >= 0 there.
+inline HitTuning HitTuningLinFor(Tr909Voice v, bool fast20 = false)
+{
+  HitTuning t = HitTuningFor(v, fast20);
+  if (v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht) { t.noTanhEvents = false; t.linNoiseT = 0.35; t.linYtol = 3e-4; t.replayKnot = 5; t.replayThr = 10.0; t.replayCondTol = 1e-11; }
   return t;
 }
 
@@ -324,11 +336,24 @@ public:
       Advance(); if (t_ <= tRep + 0.001) replay_.Record(t_, m.p);
       ts.push_back(t_); ys.push_back(y_);
     }
-    replay_.dbl = tu.replayDouble;     replay_.thr = tu.replayThr; replay_.laterMul = tu.replayLater; replay_.refine = tu.replayRefine; replay_.single = tu.replayFloat; replay_.coarse = tu.replayKnot >= 10 ? tu.replayKnot / 5 : 1; replay_.eq = tu.replayEq; if (tu.replayStep) { replay_.stepThr = tu.replayStepThr; replay_.PrimeSteps(m, pj_.data(), tRep); } else replay_.Prime(m, pj_[tu.replayJ >= 0 ? tu.replayJ : (tu.replayKnot >= 20 ? 7 : (tu.replayKnot >= 10 ? 6 : 5))], tRep);   // Jacobi epochs of the response for this trajectory
+    replay_.dbl = tu.replayDouble; replay_.cond = tu.replayCond; replay_.condTol = tu.replayCondTol; replay_.startT = kStartTime;     replay_.thr = tu.replayThr; replay_.laterMul = tu.replayLater; replay_.refine = tu.replayRefine; replay_.single = tu.replayFloat; replay_.coarse = tu.replayKnot >= 10 ? tu.replayKnot / 5 : 1; replay_.eq = tu.replayEq; if (tu.replayStep) { replay_.stepThr = tu.replayStepThr; replay_.PrimeSteps(m, pj_.data(), tRep); } else replay_.Prime(m, pj_[tu.replayJ >= 0 ? tu.replayJ : (tu.replayKnot >= 20 ? 7 : (tu.replayKnot >= 10 ? 6 : 5))], tRep);   // Jacobi epochs of the response for this trajectory
     if (tu.detReuse) { det_.valid = true; det_.potVer = potVer_; det_.seconds = seconds; det_.sig = TuningSig(tu); det_.ts = ts; det_.ys = ys; }
     return true;
   }
   static double TuningSig(const HitTuning& t) { return t.ytol * 1.0 + t.yfloor * 3.0 + t.ytailT * 5.0 + t.ytailMul * 7.0 + t.ytail2T * 11.0 + t.ytail2Mul * 13.0 + t.dpTol * 17.0 + t.zohW * 19.0 + t.jGrow * 23.0 + t.capThr * 29.0 + t.chordFirst * 31.0 + t.linNoiseT * 37.0 + t.linYtol * 41.0 + t.linTailMul * 43.0 + t.linT2T * 53.0 + t.linT2Mul * 59.0 + t.replayKnot * 67.0 + t.replayEq * 71.0 + t.jMax * 61.0 + t.fastLinAlg * 47.0; }
+  // Diagnosis (work copy): per port the largest |response| / thermal voltage in [t0, t1] (s after the trigger) of the exact replay (condensed forms off) and the base port voltage range in that window.
+  bool DiagPorts(const HitTuning& tu, HitNoise* noise, double seconds, double t0, double t1, std::vector<double>& maxRel, std::vector<double>& pLo, std::vector<double>& pHi, std::vector<double>& vtOut)
+  {
+    HitTuning x = tu; x.replayCond = 0; x.replayCondTol = 0.0; std::vector<double> ts, ys; if (!RunLinDet(x, seconds, ts, ys)) return false;
+    Model& m = *m_; const int NPp = Mdl::kNP; maxRel.assign(NPp, 0.0); pLo.assign(NPp, 1e30); pHi.assign(NPp, -1e30); vtOut.assign(NPp, 0.0); for (int a = 0; a < NPp; ++a) vtOut[a] = m.portVt[a] > 0.0 ? m.portVt[a] : 0.17;
+    replay_.Start(*noise, kStartTime, x.linNoiseT + 0.01); double t, dy; size_t s = 0;
+    while (replay_.Next(t, dy)) if (t >= t0 && t <= t1)
+    {
+      const double* dp = replay_.DpNow(); for (int a = 0; a < NPp; ++a) maxRel[a] = std::max(maxRel[a], std::fabs(dp[a]) / vtOut[a]);
+      while (s + 1 < replay_.tE.size() && replay_.tE[s] < t) ++s; for (int a = 0; a < NPp; ++a) { const double pv = replay_.pE[s * NPp + a]; pLo[a] = std::min(pLo[a], pv); pHi[a] = std::max(pHi[a], pv); }
+    }
+    return true;
+  }
   HitNoise baseNz_;   // base noise sequence of the noisy expansion point (HitTuning::linBaseNoisy)
   struct DetCache { bool valid = false; unsigned potVer = 0; double seconds = 0.0, sig = 0.0; std::vector<double> ts, ys; } det_;
   // The response to the noise of `noise` around the noise-free trajectory of the last RunLinDet().

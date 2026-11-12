@@ -27,6 +27,7 @@ public:
     if (pots) { potSet_.Assemble(pots); runner_.SetPot(potSet_.Ptrs()); } else runner_.ClearPot();
     runner_.Warm(tu_);
     std::vector<double> ts, ys; if (!runner_.RunLinDet(tu_, seconds, ts, ys)) return false;
+    if (tu_.replayCondTol > 0.0 && runner_.replay_.condTolUsed <= 0.0) return false;   // the reduced replay failed its self test: not ready (the exact replay is too expensive for the audio thread)
     base_.clear(); HostDecimator dec; dec.Init(fsHost); const double idle = runner_.idle(); double s; const size_t want = static_cast<size_t>(seconds * fsHost);
     for (size_t i = 0; i < ts.size(); ++i) { dec.Push(ts[i], ys[i] - idle); while (dec.Pop(s)) base_.push_back(static_cast<float>(s)); }
     while (dec.Pop(s)) base_.push_back(static_cast<float>(s)); if (base_.size() > want) base_.resize(want); base_.resize(want, 0.0f);
@@ -34,6 +35,7 @@ public:
   }
   bool Ready() const { return ready_; }
   size_t Epochs() const { return runner_.replay_.Epochs(); }
+  double RedErrDb() const { return runner_.replay_.redErrDb; } double RedTol() const { return runner_.replay_.condTolUsed; }   // work copy: result of the self test of the reduced form
   uint64_t Key() const { return key_; }
   double SampleRate() const { return fs_; }
   double Seconds() const { return seconds_; }
@@ -60,7 +62,7 @@ public:
       float r = 0.0f;
       if (h.replayOn)
       {
-        while (!h.dec.Pop(s)) { double t, dy; if (!runner_.replay_.Next(h.cur, t, dy)) { h.replayOn = false; break; } h.dec.Push(t, dy); s = 0.0; }
+        while (!h.dec.Pop(s)) { double t, dy; bool okn; LIVE_PROF_T(0, okn = runner_.replay_.Next(h.cur, t, dy)); if (!okn) { h.replayOn = false; break; } LIVE_PROF_T(1, h.dec.Push(t, dy)); s = 0.0; }
         if (h.replayOn) r = static_cast<float>(s);
       }
       out[w++] = base_[h.pos++] + r;
