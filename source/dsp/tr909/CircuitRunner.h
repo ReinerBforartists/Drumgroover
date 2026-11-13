@@ -67,6 +67,18 @@ public:
     return (*table)[i & 63u] + (g - std::floor(g)) * 0.003;
   }
   double fixedPreroll = -1.0;   // test hook: fixed idle time before the trigger (>= 0), otherwise Preroll(seed)
+  // Fine step after the trigger of an SD hit (audits/SD_COUPLED_NGSPICE_REFERENCE.md, addendum 6): the fixed step of 1 us (BDF2) falsifies the trigger edge event of the SD sheet (node sd_N_157: NGSpice 0.2098 V, 1 us 0.4599 V,
+  // 0.1 us 0.2081 V, 20 us after the trigger); from the trigger time t0 for kFineWidth the net runs with kFineDt, before and after with the step of the runner. Validated for SD only (0.02 us / 20 us since addendum 8: spike of the SD output at 5 us 0.0278 V against NGSpice 0.0282 V; control: the split alone changes nothing).
+  static constexpr double kFineDt = 2e-8, kFineWidth = 2e-5;
+  static bool RunHit(n909::PartNet& net, double t0, double tEnd, bool fineAfterTrigger, double fineDt = kFineDt, double fineWidth = kFineWidth)
+  {
+    if (!fineAfterTrigger || fineDt <= 0.0 || fineWidth <= 0.0) return net.run(tEnd);
+    const double dt0 = net.fixedDt;
+    bool ok = net.run(t0);   // windows end exactly at t0 and at t0 + width (run(tstop) clips the last window to tstop)
+    if (ok) { net.fixedDt = fineDt; for (auto& b : net.blocks) b->hCur = fineDt; ok = net.run(std::min(t0 + fineWidth, tEnd)); net.fixedDt = dt0; for (auto& b : net.blocks) b->hCur = dt0; }
+    if (ok) ok = net.run(tEnd);
+    return ok;
+  }
   bool silentNoise = false;   // test hook: the noise source stays at its idle level (compare with net909 runs that have no noise)
   static bool Supports(Tr909Voice v) { return v == Tr909Voice::Bd || v == Tr909Voice::Sd || v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht || v == Tr909Voice::Hc; }
 
@@ -181,7 +193,7 @@ private:
     // Test hook DGG_PART_OTHERS0=1: all blocks full (as before).
     { const int own = net.blockOfNodeName(lower + "_" + tag + "_OUT"), kb = net.blockOfNodeName("bd_BD_OUT"), ks = net.blockOfNodeName("sd_SD_OUT"), kn = net.blockOfNodeName("noise_N_712"); const bool tomHit = tag == "LT" || tag == "MT" || tag == "HT"; const bool off = std::getenv("DGG_PART_OTHERS0") != nullptr;
       for (size_t i = 0; i < net.blocks.size(); ++i) { const int bi = static_cast<int>(i); const bool keep = bi == own || (tag == "HC" && (bi == kb || bi == ks)) || (tomHit && bi == kn); net.blocks[i]->weak = !off && own >= 0 && !keep; net.blocks[i]->eventAlways = net.blocks[i]->weak; } }
-    const bool runOk = net.run(t0 + static_cast<double>(nOut) * ts + 2e-4); net.quietUntil = -1.0;
+    const bool runOk = RunHit(net, t0, t0 + static_cast<double>(nOut) * ts + 2e-4, v == Tr909Voice::Sd); net.quietUntil = -1.0;
     if (!runOk) { out.clear(); return false; }
     if (std::getenv("DGG_PART_STATS")) { fprintf(stderr, "PartNet: windows %ld passes %ld unconverged %ld hist", net.windows, net.passes, net.unconverged); for (int i = 1; i < 8; ++i) fprintf(stderr, " %d:%ld", i, net.itHist[i]); fprintf(stderr, " max mismatch %.3g\n", net.ifMaxMismatch); }
     const auto& pr = net.probes[0];
