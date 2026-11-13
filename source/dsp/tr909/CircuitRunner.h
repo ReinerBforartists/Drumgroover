@@ -70,12 +70,28 @@ public:
   // Fine step after the trigger of an SD hit (audits/SD_COUPLED_NGSPICE_REFERENCE.md, addendum 6): the fixed step of 1 us (BDF2) falsifies the trigger edge event of the SD sheet (node sd_N_157: NGSpice 0.2098 V, 1 us 0.4599 V,
   // 0.1 us 0.2081 V, 20 us after the trigger); from the trigger time t0 for kFineWidth the net runs with kFineDt, before and after with the step of the runner. Validated for SD only (0.02 us / 20 us since addendum 8: spike of the SD output at 5 us 0.0278 V against NGSpice 0.0282 V; control: the split alone changes nothing).
   static constexpr double kFineDt = 2e-8, kFineWidth = 2e-5;
-  static bool RunHit(n909::PartNet& net, double t0, double tEnd, bool fineAfterTrigger, double fineDt = kFineDt, double fineWidth = kFineWidth)
+  // Further ramps of the trigger source (addendum 11 / 12): the falling edge of pcmfast::HitTrigger (t0 + 2.01 ms ... 2.02 ms) is the same kind of event as the rising edge (the SD output jumps by 11 mV at 0.8 V / 126 mV at 4.064 V; error of the
+  // 1 us step in 2.01-2.04 ms: 332 / 1082 uV rms, with the fine step 14 / 64 uV). The ramps (segments with a non-zero slope) are found by sampling HitTrigger (no fixed times); each gets the window [ramp start, ramp start + 2 x ramp length], relative to t0.
+  static const std::vector<std::pair<double, double>>& TriggerRampWindows()
+  {
+    static const std::vector<std::pair<double, double>> w = [] {
+      std::vector<std::pair<double, double>> r; const double h = 0.25e-6, tmax = 10e-3, slopeMin = 1e3; bool in = false; double a = 0.0;
+      for (long i = 0; i * h < tmax; ++i) { const double t = -1e-6 + static_cast<double>(i) * h; const double s = (pcmfast::HitTrigger(t + h) - pcmfast::HitTrigger(t)) / h; const bool ramp = std::fabs(s) > slopeMin;
+        if (ramp && !in) { in = true; a = std::max(t, 0.0); } else if (!ramp && in) { in = false; r.emplace_back(std::round(a * 1e9) * 1e-9, std::round((a + 2.0 * (t - a)) * 1e9) * 1e-9); } }
+      return r; }();
+    return w;
+  }
+  // Runs the hit to tEnd. The first window is the rising edge [t0, t0 + fineWidth] (validated, addendum 9); with extraRamps every further ramp of the trigger that starts after it gets a window of the same fine step (addendum 12).
+  static bool RunHit(n909::PartNet& net, double t0, double tEnd, bool fineAfterTrigger, double fineDt = kFineDt, double fineWidth = kFineWidth, bool extraRamps = true)
   {
     if (!fineAfterTrigger || fineDt <= 0.0 || fineWidth <= 0.0) return net.run(tEnd);
     const double dt0 = net.fixedDt;
-    bool ok = net.run(t0);   // windows end exactly at t0 and at t0 + width (run(tstop) clips the last window to tstop)
-    if (ok) { net.fixedDt = fineDt; for (auto& b : net.blocks) b->hCur = fineDt; ok = net.run(std::min(t0 + fineWidth, tEnd)); net.fixedDt = dt0; for (auto& b : net.blocks) b->hCur = dt0; }
+    auto fineWindow = [&](double a, double b) {   // windows end exactly at a and b (run(tstop) clips the last window to tstop)
+      bool ok = true; if (a > net.T) { net.fixedDt = dt0; for (auto& bl : net.blocks) bl->hCur = dt0; ok = net.run(std::min(a, tEnd)); }
+      if (ok && a < tEnd) { net.fixedDt = fineDt; for (auto& bl : net.blocks) bl->hCur = fineDt; ok = net.run(std::min(b, tEnd)); }
+      net.fixedDt = dt0; for (auto& bl : net.blocks) bl->hCur = dt0; return ok; };
+    bool ok = fineWindow(t0, t0 + fineWidth);
+    if (extraRamps) for (const auto& w : TriggerRampWindows()) { if (!ok || t0 + w.first >= tEnd) break; if (w.first < fineWidth) continue; ok = fineWindow(t0 + w.first, t0 + w.second); }
     if (ok) ok = net.run(tEnd);
     return ok;
   }
@@ -192,8 +208,10 @@ private:
     // the block of the hit voice (toms: the toms block) always runs with the fixed step and the full relaxation. HC keeps the BD and SD blocks in the relaxation (their noise stages load the line).
     // Test hook DGG_PART_OTHERS0=1: all blocks full (as before).
     { const int own = net.blockOfNodeName(lower + "_" + tag + "_OUT"), kb = net.blockOfNodeName("bd_BD_OUT"), ks = net.blockOfNodeName("sd_SD_OUT"), kn = net.blockOfNodeName("noise_N_712"); const bool tomHit = tag == "LT" || tag == "MT" || tag == "HT"; const bool off = std::getenv("DGG_PART_OTHERS0") != nullptr;
-      for (size_t i = 0; i < net.blocks.size(); ++i) { const int bi = static_cast<int>(i); const bool keep = bi == own || (tag == "HC" && (bi == kb || bi == ks)) || (tomHit && bi == kn); net.blocks[i]->weak = !off && own >= 0 && !keep; net.blocks[i]->eventAlways = net.blocks[i]->weak; } }
-    const bool runOk = RunHit(net, t0, t0 + static_cast<double>(nOut) * ts + 2e-4, v == Tr909Voice::Sd); net.quietUntil = -1.0;
+      for (size_t i = 0; i < net.blocks.size(); ++i) { const int bi = static_cast<int>(i); const bool keep = bi == own || (tag == "HC" && (bi == kb || bi == ks)) || (tomHit && bi == kn); net.blocks[i]->weak = !off && own >= 0 && !keep; net.blocks[i]->eventAlways = net.blocks[i]->weak; }
+      // BD (addendum 14): event-controlled fine step around comparator flips in the blocks that run full (PartNet::fineEventDt, Net909Part.h); validated against NGSpice for BD up to 60 ms after the trigger. All other voices: off (the net is shared between voices, so it is set on every hit).
+      net.fineEventDt = (v == Tr909Voice::Bd) ? kFineDt : 0.0; for (auto& bp : net.blocks) bp->fineEvents = net.fineEventDt > 0.0 && !bp->weak; }
+    const bool runOk = RunHit(net, t0, t0 + static_cast<double>(nOut) * ts + 2e-4, v == Tr909Voice::Sd || v == Tr909Voice::Bd); net.quietUntil = -1.0;
     if (!runOk) { out.clear(); return false; }
     if (std::getenv("DGG_PART_STATS")) { fprintf(stderr, "PartNet: windows %ld passes %ld unconverged %ld hist", net.windows, net.passes, net.unconverged); for (int i = 1; i < 8; ++i) fprintf(stderr, " %d:%ld", i, net.itHist[i]); fprintf(stderr, " max mismatch %.3g\n", net.ifMaxMismatch); }
     const auto& pr = net.probes[0];

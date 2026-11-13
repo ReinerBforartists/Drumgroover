@@ -36,7 +36,7 @@ class PartNet {
     Wave wf, wfPrev;
     std::vector<double> ts; std::vector<std::vector<double>> pv;   // steps of the present pass: time, probe values
     std::vector<int> ifNode, ifIdx; std::vector<Wave> ifW;   // per secondary interface: node in this net (-1: not used), index of the VIF source (non-owner) / IFI current source (owner), waveform (owner: node voltage, other: current drawn)
-    std::vector<double> vdPrev, vdPrev2; bool eventAlways = false, weak = false;   // weak: weakly coupled to the NOISE line (toms block of a non-tom hit): runs once per window, no relaxation re-passes
+    std::vector<double> vdPrev, vdPrev2; bool eventAlways = false, weak = false, fineEvents = false;   // weak: weakly coupled to the NOISE line (toms block of a non-tom hit): runs once per window, no relaxation re-passes
      std::vector<signed char> sat; double holdUntil = -1.0, hLast = 0.0; std::vector<double> vdPrevS, vdPrev2S; std::vector<signed char> satS; double holdUntilS = -1.0, hLastS = 0.0;   // event-controlled stepping (quiet windows): comparator input differences of the last two steps, saturation, fine-step hold
   };
   // Secondary interface nodes (splitToms): nodes shared by blocks that are not the NOISE line. The owner block keeps the node and receives the loads of the other blocks as a current source; every other block
@@ -52,7 +52,7 @@ class PartNet {
   double H = 20e-6, rtol = 1e-3, atol = 1e-6, hMin = 1e-9, hMax = 1e-5, ifTol = 1e-7, ifRel = 1e-6, fixedDt = 0.0; int maxIt = 6;
   // Event-controlled stepping in quiet windows (no noise on the NOISE line: the idle run before a hit): the block steps with the fixed step around comparator flips (nearest predicted crossing of a saturated op-amp
   // input difference closer than eventMargin, or eventHold after a flip) and up to eventHMax between them; the full circuit is solved, only the step size follows the events. quietUntil < 0: off (noisy runs stay fixed).
-  double quietUntil = -1.0, eventHMax = 3e-6, eventMargin = 20e-6, eventHold = 12e-6, quietH = 60e-6;
+  double fineEventDt = 0.0;   /* > 0: blocks with fineEvents run their fixed-step windows with this step around predicted / just happened comparator flips (op-amp outputs in saturation: input difference extrapolated to its zero crossing within eventMargin, or eventHold after a flip) and with fixedDt otherwise; default off */ double quietUntil = -1.0, eventHMax = 3e-6, eventMargin = 20e-6, eventHold = 12e-6, quietH = 60e-6;
   double nwAtolV = 1e-6, nwAtolI = 1e-8; bool predictor = false, reassemble = false; double bypassTol = 0.0; int jacReuse = 0; bool prestamp = false, compactRec = false, partialLU = false;   // Newton tolerances and predictor start of the blocks (Net defaults: 1e-6 / 1e-8, off)
   // statistics
   long windows = 0, passes = 0, unconverged = 0; long itHist[8] = {0, 0, 0, 0, 0, 0, 0, 0};
@@ -286,6 +286,21 @@ class PartNet {
       while (t < t1 - 1e-13) {
         double tev = 1e9; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0) tev = std::min(tev, -d / r); else if (std::fabs(d) < 0.05) tev = 0.0; }
         double hh = (t < b.holdUntil || tev <= eventMargin) ? fixedDt : std::min(eventHMax, std::max(fixedDt, 0.5 * (tev - eventMargin)));
+        hh = std::min(hh, t1 - t);
+        if (!s.advance(t, hh)) { b.net.x = b.st.x; break; }
+        t += hh; b.hLast = hh; b.wf.t.push_back(t); b.wf.v.push_back(loadCurrent(b)); recIf(t);
+        for (size_t i = 0; i < NO; ++i) { b.vdPrev2[i] = b.vdPrev[i]; b.vdPrev[i] = vd(i); const signed char st = sgn3(s.V(s.op[i].out)); if (st != b.sat[i]) b.holdUntil = t + eventHold; b.sat[i] = st; }
+        b.ts.push_back(t); for (size_t k = 0; k < probes.size(); ++k) b.pv[k].push_back(probes[k].block >= 0 && blocks[probes[k].block].get() == &b ? s.V(probes[k].node) : 0.0);
+      }
+      b.hCur = fixedDt; return;
+    }
+    if (fixedDt > 0 && fineEventDt > 0.0 && b.fineEvents)   // fixed-step window with a fine step around comparator flips (the event state is kept across windows like in the quiet branch)
+    {
+      const size_t NO = s.op.size(); auto vd = [&](size_t i) { return s.V(s.op[i].inp) - s.V(s.op[i].inn); };
+      if (b.vdPrev.size() != NO || b.hLast <= 0.0) { b.vdPrev.resize(NO); b.vdPrev2.resize(NO); b.sat.resize(NO); for (size_t i = 0; i < NO; ++i) { b.vdPrev[i] = b.vdPrev2[i] = vd(i); b.sat[i] = sgn3(s.V(s.op[i].out)); } b.hLast = fixedDt; b.holdUntil = t0; }
+      while (t < t1 - 1e-13) {
+        double tev = 1e9; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0) tev = std::min(tev, -d / r); else if (std::fabs(d) < 0.05) tev = 0.0; }
+        double hh = (t < b.holdUntil || tev <= eventMargin) ? fineEventDt : fixedDt;
         hh = std::min(hh, t1 - t);
         if (!s.advance(t, hh)) { b.net.x = b.st.x; break; }
         t += hh; b.hLast = hh; b.wf.t.push_back(t); b.wf.v.push_back(loadCurrent(b)); recIf(t);
