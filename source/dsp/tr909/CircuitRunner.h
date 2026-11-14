@@ -70,7 +70,6 @@ public:
   // Fine step after the trigger of an SD hit (audits/SD_COUPLED_NGSPICE_REFERENCE.md, addendum 6): the fixed step of 1 us (BDF2) falsifies the trigger edge event of the SD sheet (node sd_N_157: NGSpice 0.2098 V, 1 us 0.4599 V,
   // 0.1 us 0.2081 V, 20 us after the trigger); from the trigger time t0 for kFineWidth the net runs with kFineDt, before and after with the step of the runner. Validated for SD only (0.02 us / 20 us since addendum 8: spike of the SD output at 5 us 0.0278 V against NGSpice 0.0282 V; control: the split alone changes nothing).
   static constexpr double kFineDt = 2e-8, kFineWidth = 2e-5;
-  static double HcStep(double dtRunner) { if (const char* e = std::getenv("DGG_PART_HCDT")) { const double x = std::atof(e); return x > 0.0 ? x : dtRunner; } return 1e-7; }
   // Further ramps of the trigger source (addendum 11 / 12): the falling edge of pcmfast::HitTrigger (t0 + 2.01 ms ... 2.02 ms) is the same kind of event as the rising edge (the SD output jumps by 11 mV at 0.8 V / 126 mV at 4.064 V; error of the
   // 1 us step in 2.01-2.04 ms: 332 / 1082 uV rms, with the fine step 14 / 64 uV). The ramps (segments with a non-zero slope) are found by sampling HitTrigger (no fixed times); each gets the window [ramp start, ramp start + 2 x ramp length], relative to t0.
   static const std::vector<std::pair<double, double>>& TriggerRampWindows()
@@ -201,8 +200,7 @@ private:
     if (!silentNoise) net.setSource("Vnz", [&noise, t0](double t) { return t < t0 ? 7.5 : noise.At(kNoiseAtTrigger + (t - t0)); });
     else net.setSourceDc("Vnz", 7.5);
     const double ts = 1.0 / fs; const size_t nOut = static_cast<size_t>(seconds * fs + 0.5);
-    // HC (addendum 18): fixed step 1e-7 s from 0.2 ms before the trigger (validated against NGSpice, both accents x 4 seeds: -55 ... -68 dB from 1 ms at 0.8 V, -38 ... -56 dB at 4.064 V; dt 1e-6 gave -42 ... -48 dB / -19 ... -33 dB); test hook DGG_PART_HCDT=<s> (0 = the runner step dt_)
-    net.fixedDt = (v == Tr909Voice::Hc) ? HcStep(dt_) : dt_; net.recordFrom = t0 - 5e-5;
+    net.fixedDt = dt_; net.recordFrom = t0 - 5e-5;
     // idle run before the trigger (no noise on the NOISE line): event-controlled step (fixed step around comparator flips, up to 3 us between; plan section "Schritt 2"); from 0.2 ms before the trigger on the validated fixed step, with the noise of the hit
     net.quietUntil = std::getenv("DGG_PART_QUIET0") ? -1.0 : t0 - 2e-4; net.eventHMax = 3e-6;
     net.maxIt = (tag == "HC" || tag == "LT" || tag == "MT" || tag == "HT" || std::getenv("DGG_PART_MAXIT6")) ? 6 : 2;   // relaxation passes per window: BD / SD converge in the second pass to -48 dB against the converged run; HC (nonlinear noise path) and the toms (secondary interfaces) run converged
