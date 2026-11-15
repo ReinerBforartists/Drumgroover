@@ -36,7 +36,7 @@ class PartNet {
     Wave wf, wfPrev;
     std::vector<double> ts; std::vector<std::vector<double>> pv;   // steps of the present pass: time, probe values
     std::vector<int> ifNode, ifIdx; std::vector<Wave> ifW;   // per secondary interface: node in this net (-1: not used), index of the VIF source (non-owner) / IFI current source (owner), waveform (owner: node voltage, other: current drawn)
-    std::vector<double> vdPrev, vdPrev2; bool eventAlways = false, weak = false, fineEvents = false;   // weak: weakly coupled to the NOISE line (toms block of a non-tom hit): runs once per window, no relaxation re-passes
+    std::vector<double> vdPrev, vdPrev2; bool eventAlways = false, weak = false, fineEvents = false; double hAd = 0.0; bool lastAd = false; long qFixed = 0, qAd = 0; long nHold = 0, nPred = 0, nStat = 0; std::vector<long> predBy, statBy; double qFixedT = 0.0, qAdT = 0.0;   // quiet-run step statistics   // weak: weakly coupled to the NOISE line (toms block of a non-tom hit): runs once per window, no relaxation re-passes
      std::vector<signed char> sat; double holdUntil = -1.0, hLast = 0.0; std::vector<double> vdPrevS, vdPrev2S; std::vector<signed char> satS; double holdUntilS = -1.0, hLastS = 0.0;   // event-controlled stepping (quiet windows): comparator input differences of the last two steps, saturation, fine-step hold
   };
   // Secondary interface nodes (splitToms): nodes shared by blocks that are not the NOISE line. The owner block keeps the node and receives the loads of the other blocks as a current source; every other block
@@ -52,6 +52,9 @@ class PartNet {
   double H = 20e-6, rtol = 1e-3, atol = 1e-6, hMin = 1e-9, hMax = 1e-5, ifTol = 1e-7, ifRel = 1e-6, fixedDt = 0.0; int maxIt = 6;
   // Event-controlled stepping in quiet windows (no noise on the NOISE line: the idle run before a hit): the block steps with the fixed step around comparator flips (nearest predicted crossing of a saturated op-amp
   // input difference closer than eventMargin, or eventHold after a flip) and up to eventHMax between them; the full circuit is solved, only the step size follows the events. quietUntil < 0: off (noisy runs stay fixed).
+  double qaRtol = 0.0, qaAtol = 1e-5, qaHmax = 1e-4;   // E-02: > 0: in the quiet run the steps between the comparator events are error-controlled (Net::advanceAdaptive) instead of eventHMax
+  double statR = 0.0;   // E-02: quiet run: a saturated op-amp with |input difference| < 50 mV counts as 'flip imminent' only if it moves faster than this (V/s); 0 = always (old rule)
+  bool freezeIdle = false;   // E-02: weak blocks are not stepped in the quiet (idle) run, see runBlock
   double fineEventDt = 0.0;   /* > 0: blocks with fineEvents run their fixed-step windows with this step around predicted / just happened comparator flips (op-amp outputs in saturation: input difference extrapolated to its zero crossing within eventMargin, or eventHold after a flip) and with fixedDt otherwise; default off */ double quietUntil = -1.0, eventHMax = 3e-6, eventMargin = 20e-6, eventHold = 12e-6, quietH = 60e-6;
   double nwAtolV = 1e-6, nwAtolI = 1e-8; bool predictor = false, reassemble = false; double bypassTol = 0.0; int jacReuse = 0; bool prestamp = false, compactRec = false, partialLU = false;   // Newton tolerances and predictor start of the blocks (Net defaults: 1e-6 / 1e-8, off)
   // statistics
@@ -243,6 +246,14 @@ class PartNet {
     T = 0.0; haveVEnd = false; gCarry = 0.0; return true;
   }
   void clearProbes() { probes.clear(); }
+  std::function<void(double)> afterWindow;   // E-02: called with the time reached after every window of run() (recording of the idle trajectory)
+  // E-02: replace all unknowns of one block (the oscillator phase moved); the charges follow from the new solution (as after a DC solve: first step is backward Euler from this state)
+  bool setBlockX(int bi, const std::vector<double>& x) {
+    if (bi < 0 || bi >= static_cast<int>(blocks.size())) return false; Net& s = blocks[static_cast<size_t>(bi)]->net; if (static_cast<int>(x.size()) != s.nUnk) return false;
+    Net::State st = s.saveState(); st.x = x; if (!s.restoreState(st)) return false;
+    s.dcMode = false; s.stepIndex = 0; s.assemble(0.0); s.q1 = s.qNow; s.q2 = s.qNow; s.hPrev = 0.0; s.xA.clear(); s.xB.clear(); s.hAB = 0.0;
+    Block& b = *blocks[static_cast<size_t>(bi)]; b.xA.clear(); b.xB.clear(); b.hAB = 0.0; b.hLast = 0.0; return true;
+  }
   std::function<bool()> abort;   // polled between windows; true stops the run (run() returns false)
   double recordFrom = -1.0;      // probe samples are kept from this time on (the idle phase before a hit is not recorded)
   // current the block draws from the NOISE line at its present state (the branch current of the interface source is the current into the source node: minus the load)
@@ -283,15 +294,28 @@ class PartNet {
       else s.vs[static_cast<size_t>(b.ifIdx[g])].f = [this, g](double t) { return ifaces[g].V.at(t); }; }
     recIf(t0);
     double t = t0; double h = b.hCur;
+    if (freezeIdle && b.weak && quietUntil > 0.0 && t1 <= quietUntil + 1e-12)   // E-02: the blocks of the voices that are not played are not stepped in the idle run before the trigger (their state stays at the stored state, load current held); their phases do not matter for the hit
+    { b.wf.t.push_back(t1); b.wf.v.push_back(b.wf.hold); recIf(t1); b.ts.push_back(t1); for (size_t k = 0; k < probes.size(); ++k) b.pv[k].push_back(0.0); b.hLast = 0.0; b.hCur = h; return; }
     const bool quiet = fixedDt > 0 && eventHMax > fixedDt && (b.eventAlways || (quietUntil > 0.0 && t1 <= quietUntil + 1e-12));
     if (quiet) {
       const size_t NO = s.op.size(); auto vd = [&](size_t i) { return s.V(s.op[i].inp) - s.V(s.op[i].inn); };
       if (b.vdPrev.size() != NO || b.hLast <= 0.0) { b.vdPrev.resize(NO); b.vdPrev2.resize(NO); b.sat.resize(NO); for (size_t i = 0; i < NO; ++i) { b.vdPrev[i] = b.vdPrev2[i] = vd(i); b.sat[i] = sgn3(s.V(s.op[i].out)); } b.hLast = fixedDt; b.holdUntil = t0 + eventHold; }
       while (t < t1 - 1e-13) {
-        double tev = 1e9; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0) tev = std::min(tev, -d / r); else if (std::fabs(d) < 0.05) tev = 0.0; }
-        double hh = (t < b.holdUntil || tev <= eventMargin) ? fixedDt : std::min(eventHMax, std::max(fixedDt, 0.5 * (tev - eventMargin)));
+        double tev = 1e9; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0) tev = std::min(tev, -d / r); else if (std::fabs(d) < 0.05 && std::fabs(r) >= statR) tev = 0.0; }
+        const bool nearEv = t < b.holdUntil || tev <= eventMargin;
+        if (std::getenv("DGG_PART_STATS")) { if (b.predBy.size() != NO) { b.predBy.assign(NO, 0); b.statBy.assign(NO, 0); }
+          if (t < b.holdUntil) ++b.nHold; else if (tev <= eventMargin) { ++b.nPred; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0 && -d / r <= eventMargin) ++b.predBy[i]; else if (!(r * d < 0.0) && std::fabs(d) < 0.05) ++b.statBy[i]; } } }
+        const bool idleQa = qaRtol > 0.0 && quietUntil > 0.0 && t1 <= quietUntil + 1e-12;   // error-controlled steps only in the idle run, not in the event-controlled blocks during the hit
+        double hh = nearEv ? fixedDt : std::min(idleQa ? qaHmax : eventHMax, std::max(fixedDt, 0.5 * (tev - eventMargin)));
         hh = std::min(hh, t1 - t);
-        if (!s.advance(t, hh)) { b.net.x = b.st.x; break; }
+        if (idleQa && !nearEv && hh > 2.0 * fixedDt)   // error-controlled step between the events (start after a fixed-step phase: new history, first step is not checked)
+        {
+          if (!b.lastAd) { s.xA = s.x; s.xB = s.x; s.hAB = 0.0; b.hAd = 2.0 * fixedDt; }
+          double hAcc = std::min(std::max(b.hAd, fixedDt), hh), hNext = hAcc;
+          if (!s.advanceAdaptive(t, hAcc, hNext, qaRtol, qaAtol, fixedDt, hh)) { b.net.x = b.st.x; break; }
+          hh = hAcc; b.hAd = hNext; b.lastAd = true; ++b.qAd; b.qAdT += hh;
+        }
+        else { b.lastAd = false; if (!s.advance(t, hh)) { b.net.x = b.st.x; break; } ++b.qFixed; b.qFixedT += hh; }
         t += hh; b.hLast = hh; b.wf.t.push_back(t); b.wf.v.push_back(loadCurrent(b)); recIf(t);
         for (size_t i = 0; i < NO; ++i) { b.vdPrev2[i] = b.vdPrev[i]; b.vdPrev[i] = vd(i); const signed char st = sgn3(s.V(s.op[i].out)); if (st != b.sat[i]) b.holdUntil = t + eventHold; b.sat[i] = st; }
         b.ts.push_back(t); for (size_t k = 0; k < probes.size(); ++k) b.pv[k].push_back(probes[k].block >= 0 && blocks[probes[k].block].get() == &b ? s.V(probes[k].node) : 0.0);
@@ -434,7 +458,7 @@ class PartNet {
     for (size_t g = 0; g < ifaces.size(); ++g) { Iface& f = ifaces[g]; f.iHold = 0.0;   // interface state at T: owner voltage, summed load current of the others
       for (size_t i = 0; i < blocks.size(); ++i) { Block& b = *blocks[i]; if (b.ifNode[g] < 0) continue; Net& n = b.net; if (static_cast<int>(i) == f.owner) f.vHold = n.V(b.ifNode[g]); else f.iHold += -n.x[static_cast<size_t>(n.nNodes - 1 + n.vs[static_cast<size_t>(b.ifIdx[g])].br)]; } }
     unsigned nw = 0;
-    while (T < tstop - 1e-13) { if (abort && ((++nw & 63u) == 0) && abort()) return false; const bool q = quietUntil > 0.0 && fixedDt > 0.0 && eventHMax > fixedDt && T + 2.0 * H <= quietUntil; const double t1 = std::min(T + (q ? quietH : H), q ? std::min(tstop, quietUntil) : tstop); if (!window(T, t1)) return false; }
+    while (T < tstop - 1e-13) { if (abort && ((++nw & 63u) == 0) && abort()) return false; const bool q = quietUntil > 0.0 && fixedDt > 0.0 && eventHMax > fixedDt && T + 2.0 * H <= quietUntil; const double t1 = std::min(T + (q ? quietH : H), q ? std::min(tstop, quietUntil) : tstop); if (!window(T, t1)) return false; if (afterWindow) afterWindow(T); }
     return true;
   }
 };
