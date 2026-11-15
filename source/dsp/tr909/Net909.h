@@ -33,8 +33,8 @@ struct Vsrc { std::string name; int p = 0, n = 0; double dc = 0; int br = 0; std
 struct Res { int a, b; double g; bool dyn = false; double r0 = 0, r1 = 0, t0 = 0, tr = 0; std::vector<double> pw; };   // pw: piecewise-linear resistance over time, pairs (t, R) (net element RW)   // dyn: resistance r0 before t0, ramping linearly to r1 over tr (net element RT)
 struct Cap { int a, b; double c; int q; };
 struct Isrc { std::string name; int p = 0, n = 0; double dc = 0; std::function<double(double)> f; };   // independent current source: the current I flows from node p through the source to node n (leaves p, enters n)
-struct Op5218 { int inp, inn, out, vcc, vee, n1; int qc; };
-struct Inv4069 { int in, out, vdd, vss; int qin, qout; };
+struct Op5218 { int inp, inn, out, vcc, vee, n1; int qc; bool st = false; };   // st: static (algebraic) op-amp: no C1 charge (E-04)
+struct Inv4069 { int in, out, vdd, vss; int qin, qout; bool st = false; };   // st: no pin capacitances (E-04)
 struct Cmp6912 { int inp, inn, out, vcc, vee; };
 struct Ota6110 { int inp, inn, ctrl, out, vcc, vee; int qc; };
 
@@ -42,6 +42,9 @@ class Net {
  public:
   struct InvFn { double an, ap, pp, vtn, vtp, lam, cs; };
   InvFn invFit = {0, 0, 0, 0, 0, 0, 0};
+  static double ParaScale(const char* key)   // test hook N909_PARA="bjt:0,dio:0,c1:0.1,inv:0" (E-04 / AUD R1): factor on BJT junction capacitances and TF, diode Cjo and Tt, op-amp C1 charge, inverter pin capacitances; unset = 1
+  { const char* e = std::getenv("N909_PARA"); if (!e) return 1.0; const std::string s(e), k = std::string(key) + ":"; size_t p = s.find(k); if (p == std::string::npos || (p > 0 && s[p - 1] != ',')) return 1.0; return std::atof(s.c_str() + p + k.size()); }
+  double paraBjt = ParaScale("bjt"), paraDio = ParaScale("dio"), paraC1 = ParaScale("c1"), paraInv = ParaScale("inv");
   std::vector<std::string> nodeName;
   std::vector<Isrc> isrc; std::vector<Res> res; std::vector<Cap> cap; std::vector<Diode> dio; std::vector<Bjt> bjt; std::vector<Vsrc> vs;
   std::vector<Op5218> op; std::vector<Inv4069> inv; std::vector<Cmp6912> cmp; std::vector<Ota6110> ota;
@@ -76,9 +79,9 @@ class Net {
         std::string pot, leg; int a, b; double rt, ex, v; is >> pot >> leg >> a >> b >> rt >> ex >> v;
         if (a != b) { res.push_back({a, b, 1.0 / v}); PotLeg pl; pl.res = (int)res.size() - 1; pl.pot = pot; pl.second = leg == "b"; pl.rt = rt; pl.ex = ex; pl.g0 = 1.0 / v; potLegs.push_back(pl); } }
       else if (k == "C") { int a, b; double v; is >> a >> b >> v; cap.push_back({a, b, v, newQ()}); }
-      else if (k == "D") { Diode d; is >> d.a >> d.c >> d.Is >> d.N >> d.Rs >> d.Cjo >> d.Vj >> d.M >> d.Tt >> d.Bv >> d.Ibv; d.q = newQ(); dio.push_back(d); }
+      else if (k == "D") { Diode d; is >> d.a >> d.c >> d.Is >> d.N >> d.Rs >> d.Cjo >> d.Vj >> d.M >> d.Tt >> d.Bv >> d.Ibv; d.Cjo *= paraDio; d.Tt *= paraDio; d.q = newQ(); dio.push_back(d); }
       else if (k == "Q") { Bjt q; std::string typ; is >> q.c >> q.b >> q.e >> typ; q.s = typ == "pnp" ? -1 : 1;
-        is >> q.IS >> q.BF >> q.NF >> q.VAF >> q.RB >> q.RC >> q.CJC >> q.VJC >> q.MJC >> q.CJE >> q.VJE >> q.MJE >> q.NE >> q.ISE >> q.IKF >> q.TF; if (!(is >> q.BR)) q.BR = 1; addBjt(q); }
+        is >> q.IS >> q.BF >> q.NF >> q.VAF >> q.RB >> q.RC >> q.CJC >> q.VJC >> q.MJC >> q.CJE >> q.VJE >> q.MJE >> q.NE >> q.ISE >> q.IKF >> q.TF; if (!(is >> q.BR)) q.BR = 1; q.CJC *= paraBjt; q.CJE *= paraBjt; q.TF *= paraBjt; addBjt(q); }
       else if (k == "VD" || k == "V") { Vsrc v; is >> v.name >> v.p >> v.n >> v.dc; vs.push_back(v); }
       else if (k == "I") { Isrc v; is >> v.name >> v.p >> v.n >> v.dc; isrc.push_back(v); }   // I <name> <p> <n> <dc>
       else if (k == "VP") { Vsrc v; double v0, v1, d, r, fl, w, per; is >> v.name >> v.p >> v.n >> v0 >> v1 >> d >> r >> fl >> w >> per;
@@ -100,6 +103,12 @@ class Net {
       else if (k == "XBA6110") { Ota6110 m; is >> m.inp >> m.inn >> m.ctrl >> m.out >> m.vcc >> m.vee;
         Bjt q; q.c = q.b = m.ctrl; q.e = m.vee; q.IS = 35.1e-15; q.BF = 222.31; q.NF = 1; q.VAF = 315; q.RB = 9.86; q.RC = 0.68; q.CJC = 6.4e-12; q.VJC = .75; q.MJC = .33;
         q.CJE = 20e-12; q.VJE = .75; q.MJE = .33; q.NE = 1.319; q.ISE = 6.63e-15; q.IKF = 0.130; q.TF = 0.5564e-9; m.qc = (int)bjt.size(); addBjt(q); ota.push_back(m); }
+    }
+    {   // E-04: static op-amps / inverters by name of their output node (list in the environment, "all" = every instance; default none)
+      auto inList = [](const char* env, const std::string& nm) { if (!env) return false; const std::string s(env); if (s == "all") return true; size_t p = 0; while (p <= s.size()) { size_t e = s.find(',', p); if (e == std::string::npos) e = s.size(); if (s.compare(p, e - p, nm) == 0 && e - p == nm.size()) return true; p = e + 1; } return false; };
+      const char* so = std::getenv("N909_STATOP"); const char* si = std::getenv("N909_STATINV");
+      for (auto& m : op) m.st = inList(so, nodeName[(size_t)m.out]);
+      for (auto& m : inv) m.st = inList(si, nodeName[(size_t)m.out]);
     }
     int branch = 0; for (auto& v : vs) v.br = branch++;
     nUnk = nNodes - 1 + branch;
@@ -427,7 +436,7 @@ class Net {
     // current injected into n1: ig  => current leaving n1 = -ig
     if (!pruneNl) { int k[2] = {m.inp, m.inn}; double g[2] = {-dig * (1 + 0.5 / CMRR), -dig * (-1 + 0.5 / CMRR)}; nlCurrent(m.n1, 0, -ig, 2, k, g); }
     ad(m.n1, m.n1, 1.0 / R1);
-    chargeStamp(m.n1, 0, m.qc, C1 * V(m.n1), C1);
+    if (!m.st) chargeStamp(m.n1, 0, m.qc, paraC1 * C1 * V(m.n1), paraC1 * C1);   // paraC1: test hook, only the charge (GM, R1, IMAX keep the C1 of the model)
     // clamp diodes: n1 -> (VCC - HEAD), (VEE + HEAD) -> n1
     for (int hi = 0; hi < (pruneLin || pruneNl ? 0 : 2); ++hi) {
       double Vt_ = hi ? V(m.n1) - V(m.vcc) + HEAD : V(m.vee) + HEAD - V(m.n1); double i, g; dioLim(Vt_, 1e-20, 1, 1.0, 1e30, 1e-3, vdState[(const void*)((char*)&m + hi)], i, g);
@@ -469,8 +478,8 @@ class Net {
     nlCurrent(m.out, m.vss, in0, 4, nodes, gn);          // out -> vss
     nlCurrent(m.vdd, m.out, ip0, 4, nodes, gp);          // vdd -> out
     }
-    chargeStamp(m.in, m.vss, m.qin, 10e-12 * (V(m.in) - V(m.vss)), 10e-12);
-    chargeStamp(m.out, m.vss, m.qout, 5e-12 * (V(m.out) - V(m.vss)), 5e-12);
+    if (!m.st) { chargeStamp(m.in, m.vss, m.qin, paraInv * 10e-12 * (V(m.in) - V(m.vss)), paraInv * 10e-12);
+    chargeStamp(m.out, m.vss, m.qout, paraInv * 5e-12 * (V(m.out) - V(m.vss)), paraInv * 5e-12); }
     if (bjtLinearOnly) return;
     for (int hi = 0; hi < 2; ++hi) {        // clamp diodes in->vdd, vss->in (Is 1e-14, Rs 10)
       double Vt_ = hi ? V(m.in) - V(m.vdd) : V(m.vss) - V(m.in); auto key = (const void*)((char*)&m + hi); double i, g; dioLim(Vt_, 1e-14, 1, 10.0, 1e30, 1e-3, vdState[key], i, g);
