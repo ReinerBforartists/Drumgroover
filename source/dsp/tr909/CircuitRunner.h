@@ -102,7 +102,8 @@ public:
   // by a fraction of the period given by the noise seed (low-discrepancy sequence over the phases of the sheet: independent phases) or by a time (timeShift >= 0, validation), instead of idling for Preroll(seed).
   // The sheet's ramp parameters and the state map are measured per pot state from a 0.3 s idle run of the sheet's block (cached, SheetPhase::fit). BD: sheet 0 (1 oscillator); SD: 1 (2); LT / MT / HT: 2 / 3 / 4 (3 each);
   // HC: the BD and SD sheets (their noise stages stay in the relaxation of an HC hit).
-  bool phaseMode = false;   // DGG_PART_PHASE=1 in Render: use ApplyPhase instead of Preroll
+  // Phases of the oscillators from the automaton (Net909Phase.h): only with DGG_PART_PHASE=1 (not validated completely, E-02 open); default: idle run with Preroll(seed).
+  bool UsePhase() const { if (const char* e = std::getenv("DGG_PART_PHASE")) return std::atoi(e) != 0; return false; }   // 2026-11-15: back to the Preroll idle run until the E-02 criteria are met (DETAILS 10.23, open list)
   static const std::vector<n909::OscPair>& SheetPairs(int which)
   {
     static const std::vector<n909::OscPair> bd = {{"bd_N_60", "bd_N_59"}}, sd = {{"sd_N_115", "sd_R263"}, {"sd_N_106", "sd_N_101"}}, lt = {{"lt_N_177", "lt_N_181"}, {"lt_N_197", "lt_N_201"}, {"lt_N_187", "lt_N_191"}},
@@ -115,17 +116,19 @@ public:
   {
     n909::PartNet& net = *net_; const Tr909Voice sv = VoiceOfSheet(which); if (!SetPots(sv, ownParams)) return false;
     const std::vector<double>* table = nullptr; if (!net.restore(StateFor(sv, ownParams, table))) return false;
-    if (!sp.setup(net, SheetPairs(which))) return false;
+    if (!sp.setup(net, SheetPairs(which))) return false; sp.wantOrbit = (which == 1) && std::getenv("DGG_PART_NOORBIT") == nullptr;   // SD: the two oscillators are coupled and locked (22:15): orbit mode
     for (const char* t : {"BD", "SD", "LT", "MT", "HT", "HC", "RM"}) net.setSourceDc(std::string("VTRIG_") + t, 0.0);
     net.setSourceDc("Vnz", 7.5); for (const char* t : {"BD", "SD", "LT", "MT", "HT", "HC", "RM"}) net.setSourceDc(std::string("VACCENT_") + t, 2.4);
     for (size_t i = 0; i < net.blocks.size(); ++i) { net.blocks[i]->weak = static_cast<int>(i) != sp.block; net.blocks[i]->eventAlways = net.blocks[i]->weak; for (bool* f : {&net.blocks[i]->fineEvents}) *f = false; }
-    net.freezeIdle = true; net.fineEventDt = 0.0; net.fixedDt = dt_; net.eventHMax = 3e-6; net.statR = 1.0; net.qaRtol = 1e-3; net.qaAtol = 1e-4; net.qaHmax = 1e-4; net.maxIt = 2;
+    net.freezeIdle = true; net.fineEventDt = 0.0; net.fixedDt = dt_ * (std::getenv("DGG_PART_PHASEDT") ? std::atof(std::getenv("DGG_PART_PHASEDT")) : 0.1); net.eventHMax = 3e-6; net.statR = 1.0; net.qaRtol = 1e-3; net.qaAtol = 1e-4; net.qaHmax = 1e-4; net.maxIt = 2;   // DGG_PART_PHASEDT: factor on the base step of the calibration run (edges)
     net.quietUntil = 1e3; const double qh = net.quietH; net.quietH = kPhaseSample; net.clearProbes(); net.recordFrom = 1e9;
     sp.rt.clear(); sp.rx.clear(); const int blk = sp.block; const double tSkip = 0.01;
     net.afterWindow = [&](double t) { if (t < tSkip) return; sp.rt.push_back(t); const auto& xv = net.blocks[static_cast<size_t>(blk)]->net.x; sp.rx.insert(sp.rx.end(), xv.begin(), xv.end()); };
-    const bool ok = net.run(kPhaseCalSeconds); net.afterWindow = nullptr; net.quietUntil = -1.0; net.quietH = qh; net.freezeIdle = false;
+    const bool ok = net.run(kPhaseCalSeconds); net.afterWindow = nullptr; net.quietUntil = -1.0; net.quietH = qh; net.freezeIdle = false; net.fixedDt = dt_;
     if (std::getenv("DGG_PART_PHASELOG")) fprintf(stderr, "sheet %d calibration: run %s, %zu samples\n", which, ok ? "ok" : "FAILED", sp.rt.size());
-    return ok && sp.fit();
+    const bool fitted = ok && sp.fit();
+    if (std::getenv("DGG_PART_PHASELOG") && fitted) if (sp.orbit) fprintf(stderr, "   orbit: period %.4f ms, %zu samples\n", 1e3 * sp.TL, sp.NL); for (const auto& o : sp.osc) fprintf(stderr, "   osc: xlo %.4f xhi %.4f su %.2f sd %.2f f %.4f Hz\n", o.xlo, o.xhi, o.su, o.sd, 1.0 / o.period());
+    return fitted;
   }
   bool ApplyPhase(Tr909Voice v, uint64_t params, uint64_t seed, double timeShift = -1.0)
   {
@@ -143,8 +146,17 @@ public:
     for (n909::SheetPhase* p : sp) {
       std::vector<double> dts(p->osc.size());
       for (size_t i = 0; i < p->osc.size(); ++i, ++kk) { if (timeShift >= 0.0) dts[i] = timeShift; else { const double r = 0.5 + static_cast<double>(seed) * alpha[kk % 3]; dts[i] = (r - std::floor(r)) * p->osc[i].period(); } }
-      std::vector<double> x0 = net.blocks[static_cast<size_t>(p->block)]->net.x, xn; p->moveState(x0, dts, xn);
+      std::vector<double> x0 = net.blocks[static_cast<size_t>(p->block)]->net.x, xn;
+      if (const char* xsEnv = std::getenv("DGG_PART_PHASEXS")) {   // validation: triangle values and comparator signs "x1,s1,x2,s2,..." of the sheet (from an NGSpice trace)
+        std::vector<double> xt, st; { std::string t = xsEnv; size_t a = 0; std::vector<double> v; while (a < t.size()) { size_t b = t.find(',', a); if (b == std::string::npos) b = t.size(); v.push_back(std::atof(t.substr(a, b - a).c_str())); a = b + 1; } for (size_t q = 0; q + 1 < v.size(); q += 2) { xt.push_back(v[q]); st.push_back(v[q + 1]); } }
+        if (xt.size() != p->osc.size()) return false;
+        if (p->orbit) p->orbitState(static_cast<double>(p->orbitNearest(xt, st)) * p->dtS, xn); else p->moveTo(x0, xt, st, xn);
+      } else
+      if (p->orbit) { if (timeShift >= 0.0) p->orbitState(p->orbitPosition(x0) + timeShift, xn); else { const double r = 0.5 + static_cast<double>(seed) * alpha[(kk - static_cast<int>(p->osc.size())) % 3]; p->orbitState((r - std::floor(r)) * p->TL, xn); } }   // seed: absolute position on the orbit
+      else if (timeShift >= 0.0) p->moveState(x0, dts, xn);
+      else p->moveAbsolute(x0, dts, xn);   // seed: absolute phases (time after the lower turning point), independent of the phase of the stored state
       if (!net.setBlockX(p->block, xn)) return false;
+      if (const char* pd = std::getenv("DGG_PART_PHASEDUMP")) { FILE* df = fopen(pd, "a"); if (df) { const n909::Net& bn = net.blocks[static_cast<size_t>(p->block)]->net; for (int ni = 1; ni < bn.nNodes; ++ni) fprintf(df, "%s %.9g %.9g\n", bn.nodeName[static_cast<size_t>(ni)].c_str(), x0[static_cast<size_t>(ni - 1)], bn.x[static_cast<size_t>(ni - 1)]); fclose(df); } }   // test hook: node values of the block before / after the phase move
     }
     return true;
   }
@@ -202,10 +214,13 @@ private:
     for (const char* t : {"BD", "SD", "LT", "MT", "HT", "HC", "RM"}) net.setSourceDc(std::string("VACCENT_") + t, 2.4);   // the accent of the stored idle state
     net.clearProbes(); net.fixedDt = 2e-6;
     bool probesOk = true; for (int k = 0; k < kOscillators; ++k) probesOk = net.addProbe(OscNodes()[k]) && probesOk;
-    net.recordFrom = kSettle - 0.25;   // the last 0.25 s of the idle run give the oscillator frequencies of this pot state
+    const double settleSec = std::getenv("DGG_PART_SETTLE") ? std::atof(std::getenv("DGG_PART_SETTLE")) : kSettle;   // test hook: length of the settle run (default kSettle)
+    net.recordFrom = settleSec - 0.25;   // the last 0.25 s of the idle run give the oscillator frequencies of this pot state
     if (std::getenv("DGG_PART_SETTLEEV") != nullptr && std::atoi(std::getenv("DGG_PART_SETTLEEV")) != 0)   // test hook (E-02): the settle run with the event-controlled, error-controlled steps of the idle run before the trigger (all blocks, no resting blocks: the twelve oscillator frequencies are needed)
     { net.quietUntil = kSettle + 1.0; const int se = std::atoi(std::getenv("DGG_PART_SETTLEEV")); net.eventHMax = (se == 4) ? 1e-5 : 3e-6; net.statR = (se == 3) ? 0.0 : 1.0; net.qaRtol = (se == 2 || se == 4) ? 0.0 : 1e-3; net.qaAtol = 1e-4; net.qaHmax = 1e-4; net.freezeIdle = false; for (auto& bp : net.blocks) { bp->eventAlways = true; bp->hLast = 0.0; } }
-    const bool ok = net.run(kSettle); net.quietUntil = -1.0; net.fixedDt = dt_;
+    FILE* slog = nullptr; if (const char* sl = std::getenv("DGG_PART_SETTLELOG")) { slog = fopen(sl, "w"); const int sb = net.blockOfNodeName(std::string(Tag(v) == std::string("BD") ? "bd" : Tag(v) == std::string("SD") ? "sd" : Tag(v) == std::string("LT") ? "lt" : Tag(v) == std::string("MT") ? "mt" : "ht") + "_" + Tag(v) + "_OUT");   // test hook: own block, all unknowns every 5 ms of the settle run
+      if (slog && sb >= 0) { static double nextLog = 0.0; nextLog = 0.0; { const n909::Net& bn = net.blocks[static_cast<size_t>(sb)]->net; fprintf(slog, "# names"); for (int ni = 1; ni < bn.nNodes; ++ni) fprintf(slog, " %s", bn.nodeName[static_cast<size_t>(ni)].c_str()); fprintf(slog, "\n"); } net.afterWindow = [&net, sb, slog](double t) { if (t + 1e-12 < nextLog) return; nextLog += 5e-3; const auto& xv = net.blocks[static_cast<size_t>(sb)]->net.x; fprintf(slog, "%.6f", t); for (double q : xv) fprintf(slog, " %.7g", q); fprintf(slog, "\n"); }; } }
+    const bool ok = net.run(settleSec); net.quietUntil = -1.0; net.fixedDt = dt_; if (slog) { fclose(slog); net.afterWindow = nullptr; }
     if (settled_.size() >= 8) settled_.erase(settled_.begin());
     if (!ok) { net.clearProbes(); return nominal_; }   // aborted: the caller sees the abort in the hit itself
     Settled st; st.snap = net.snapshot();
@@ -247,7 +262,7 @@ private:
     if (!SetPots(v, params)) return false;
     const std::vector<double>* table = nullptr;
     if (!net.restore(StateFor(v, params, table))) return false;
-    const bool usePhase = phaseMode || (std::getenv("DGG_PART_PHASE") != nullptr && std::atoi(std::getenv("DGG_PART_PHASE")) != 0);   // E-02: phases from the oscillator automaton instead of the idle Preroll
+    const bool usePhase = UsePhase();   // E-02: phases from the oscillator automaton instead of the idle Preroll
     if (usePhase && !ApplyPhase(v, params, seed, std::getenv("DGG_PART_PHASETIME") ? std::atof(std::getenv("DGG_PART_PHASETIME")) : -1.0)) return false;
     const std::string tag = Tag(v), lower = tag == "BD" ? "bd" : tag == "SD" ? "sd" : tag == "LT" ? "lt" : tag == "MT" ? "mt" : tag == "HT" ? "ht" : "hc";
     net.clearProbes(); if (!net.addProbe(lower + "_" + tag + "_OUT")) return false;
