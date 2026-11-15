@@ -29,7 +29,7 @@ struct Bjt {
   int qbe = -1, qbc = -1; double vbeLast = 0, vbcLast = 0;
   bool capSet = false; double cbe0 = 0, cbc0 = 0;   // junction capacitances at the first transient evaluation (N909_PRUNE=lincap)
 };
-struct Vsrc { std::string name; int p = 0, n = 0; double dc = 0; int br = 0; std::function<double(double)> f; };
+struct Vsrc { std::string name; int p = 0, n = 0; double dc = 0; int br = 0; std::function<double(double)> f; double rs = 0.0; bool thv = false; };   // thv: the branch row has its diagonal in the pattern; rs: series resistance (Thevenin source: V(p) - V(n) = f(t) + rs * I_branch, the branch current leaves p through the source)
 struct Res { int a, b; double g; bool dyn = false; double r0 = 0, r1 = 0, t0 = 0, tr = 0; std::vector<double> pw; };   // pw: piecewise-linear resistance over time, pairs (t, R) (net element RW)   // dyn: resistance r0 before t0, ramping linearly to r1 over tr (net element RT)
 struct Cap { int a, b; double c; int q; };
 struct Isrc { std::string name; int p = 0, n = 0; double dc = 0; std::function<double(double)> f; };   // independent current source: the current I flows from node p through the source to node n (leaves p, enters n)
@@ -117,6 +117,7 @@ class Net {
   }
   void addBjt(Bjt q) { q.bi = q.RB > 0 ? newNode("bi") : q.b; q.ci = q.RC > 0 ? newNode("ci") : q.c; q.qbe = newQ(); q.qbc = newQ(); bjt.push_back(q); }
   int nodeIndex(const std::string& nm) const { for (size_t i = 0; i < nodeName.size(); ++i) if (nodeName[i] == nm) return (int)i; return -1; }
+  void setSrcRs(size_t i, double rs) { if (vs[i].rs != rs) { vs[i].rs = rs; luValid = false; linAValid = false; } }   // series resistance of a Thevenin source (needs thv); the stored factorisation no longer fits
   Vsrc* source(const std::string& nm) { for (auto& v : vs) if (v.name == nm) return &v; return nullptr; }
   // Circuit state for continuing a run (free-running oscillators and slow RC states are part of the circuit): unknowns, charge history of the integrator, step history.
   struct State { std::vector<double> x, q1, q2; int stepIndex = 0; double hPrev = 0; };
@@ -395,10 +396,11 @@ class Net {
       int br = nn + v.br; double val = v.f ? v.f(tNow) : v.dc * (rampT > 0 ? std::min(1.0, tNow / rampT) : srcScale);
       if (v.p > 0) { touch((size_t)(v.p - 1) * nUnk + br); touch((size_t)br * nUnk + (v.p - 1)); A[(size_t)(v.p - 1) * nUnk + br] += 1; A[(size_t)br * nUnk + (v.p - 1)] += 1; }
       if (v.n > 0) { touch((size_t)(v.n - 1) * nUnk + br); touch((size_t)br * nUnk + (v.n - 1)); A[(size_t)(v.n - 1) * nUnk + br] -= 1; A[(size_t)br * nUnk + (v.n - 1)] -= 1; }
+      if (v.thv) { touch((size_t)br * nUnk + br); A[(size_t)br * nUnk + br] -= v.rs; }
       B[br] += val;
     }
 #ifdef N909_PROFILE
-    tpP = std::chrono::steady_clock::now();
+    tpP =std::chrono::steady_clock::now();
 #endif
     if (bypassTol > 0.0) for (size_t i = 0; i < op.size(); ++i) { Op5218& m = op[i]; const int nd[6] = {m.inp, m.inn, m.out, m.vcc, m.vee, m.n1}; withBypass(recOp[i], nd, 6, [&] { stamp5218(m); }); }
     else for (auto& m : op) stamp5218(m);

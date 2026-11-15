@@ -162,7 +162,7 @@ class PartNet {
       std::vector<int> ifLocal(ifaces.size(), -1); for (size_t g = 0; g < ifaces.size(); ++g) if (used.count(ifId[g])) { ifLocal[g] = nid[ifId[g]]; if (ifaces[g].owner == b) os << "I IFI" << g << " " << ifLocal[g] << " 0 0\n"; else os << "VD VIF" << g << " " << ifLocal[g] << " 0 7.5\n"; }
       auto blk = std::make_unique<Block>(); blk->text = os.str(); if (!blk->net.loadText(os.str())) { if (err) *err = "block load failed"; return false; }
       blk->nodes = (int)nodes.size(); blk->capIdx = capI[b]; blk->dioIdx = dioI[b]; blk->bjtIdx = bjtI[b]; blk->opIdx = opI[b]; blk->invIdx = invI[b];
-      for (size_t i = 0; i < blk->net.vs.size(); ++i) if (blk->net.vs[i].name == "VNIF") blk->ifSrc = (int)i;
+      for (size_t i = 0; i < blk->net.vs.size(); ++i) if (blk->net.vs[i].name == "VNIF") { blk->ifSrc = (int)i; blk->net.vs[i].thv = nzInside > 0; }
       blk->ifNode = ifLocal; blk->ifIdx.assign(ifaces.size(), -1); blk->ifW.assign(ifaces.size(), Wave());
       for (size_t g = 0; g < ifaces.size(); ++g) if (ifLocal[g] >= 0) { if (ifaces[g].owner == b) { for (size_t i = 0; i < blk->net.isrc.size(); ++i) if (blk->net.isrc[i].name == "IFI" + std::to_string(g)) blk->ifIdx[g] = (int)i; } else for (size_t i = 0; i < blk->net.vs.size(); ++i) if (blk->net.vs[i].name == "VIF" + std::to_string(g)) blk->ifIdx[g] = (int)i; }
       blk->name = sheetOf(nodes.size() > 1 ? nodes[1] : 0) + "+" + std::to_string(blk->nodes);
@@ -263,13 +263,17 @@ class PartNet {
   }
   double noiseVoltage(double t, double iSum) const { return (theveninAt(t) - iSum) / gTot; }
   // NOISE voltage waveform of the present pass: analytic (Thevenin source minus the loads held at their value at the window start) in the first pass, then the table of the previous pass's update.
+  // NOISE line inside the blocks of the hit (nzInside: 0 off, 1 interfaces iterated, 2 one pass per block set, two for several blocks; set before build): the blocks that touch the NOISE line and are not weak get their interface source as a Thevenin source with the series resistance 1 / gTot of the master and the
+  // loads of the weak blocks (currents of their single pass) as a known current: the line voltage then follows from the block's own Newton solve, no relaxation pass over the line is needed. All other windows run as before.
+  int nzInside = 0; Block* inB = nullptr; Wave iOth; long insideWindows = 0;
+  std::vector<Block*> insideBlocks() { std::vector<Block*> r; for (auto& b : blocks) if (!b->weak && b->ifSrc >= 0) r.push_back(b.get()); if (r.size() > 1 && nzInside != 2) r.clear(); return r; }   // blocks that touch the NOISE line and are not weak (mode 1: only a single one; other blocks that run more than once, e.g. the tom, do not touch the line)
   Wave vUse; bool vAnalytic = true; double iHoldSum = 0.0;
   double gCarry = 0.0, vEnd = 0.0; bool haveVEnd = false;   // load conductance seen at the NOISE line and the NOISE voltage at the end of the previous window: they start the first pass of the next window (the loads follow the noise)
   double vAt(double t) const { return vAnalytic ? (haveVEnd ? (theveninAt(t) - iHoldSum + gCarry * vEnd) / (gTot + gCarry) : (theveninAt(t) - iHoldSum) / gTot) : vUse.at(t); }
   // advance every block over [t0, t1] with the NOISE voltage of the present pass
   void runBlock(Block& b, double t0, double t1) {
     Net& s = b.net;
-    if (b.ifSrc >= 0) s.vs[b.ifSrc].f = [this](double t) { return vAt(t); };
+    if (b.ifSrc >= 0) { if (inB == &b) s.vs[b.ifSrc].f = [this](double t) { return (theveninAt(t) - iOth.at(t)) / gTot; }; else s.vs[b.ifSrc].f = [this](double t) { return vAt(t); }; }   // inB: the NOISE line is solved inside this block (Thevenin source with series resistance 1 / gTot, the loads of the other blocks as a known current)
     b.ts.clear(); b.wf.t.clear(); b.wf.v.clear(); b.pv.assign(probes.size(), {});
     b.wf.t.push_back(t0); b.wf.v.push_back(b.wf.hold);   // I at the window start (the state's)
     // secondary interfaces: the owner draws the summed load current of the other blocks (source IFI) and records its node voltage; the others follow the owner's voltage (source VIF) and record the current they draw
@@ -330,8 +334,57 @@ class PartNet {
   // one macro window; returns false when a block fails. Waveform relaxation on the NOISE voltage V(t): the blocks draw the currents I(V); V = (Th - I) / gTot. Plain iteration (first pass) has the loop gain
   // Rno x (load conductance), which is no longer small while a hit drives the noise into the transistors of the voices; from the second pass on a secant estimate G(t) = dI / dV of the loads (from the two last
   // passes, clamped to passive values) is put into the update: V_new (gTot + G) = Th - I + G V_used (Newton on the interface waveform).
+  // Window with the NOISE line inside the blocks that touch it and are not weak (nzInside > 0; mode 1: iterate the interfaces, only one such block; mode 2: one pass for one such block, two passes for several). Weak blocks run once with the predicted line voltage (as pass 1 of the relaxation);
+  // each inside block then solves the line itself: its interface source is a Thevenin source with the series resistance 1 / gTot of the master and the load currents of all other blocks (latest waveforms; the blocks that have not run yet in this window at their held value) as a known current.
+  // Mode 1 needs a further pass only for an interface that a non-weak block takes part in (h owns TOM_NOISE: the toms read its voltage, their load current goes back into h); mode 2 runs every block once (the interface loads are held at the value of the window start), with several inside blocks twice.
+  bool windowInside(double t0, double t1, const std::vector<Block*>& ins) {
+    const int nb = (int)blocks.size(); Block& h = *ins[0]; int hi = -1; for (int i = 0; i < nb; ++i) if (blocks[static_cast<size_t>(i)].get() == &h) hi = i;
+    auto isIns = [&](const Block* b) { return std::find(ins.begin(), ins.end(), b) != ins.end(); };
+    for (auto& b : blocks) { saveWindowStart(*b); if (b->ifSrc >= 0) b->net.setSrcRs(static_cast<size_t>(b->ifSrc), isIns(b.get()) ? 1.0 / gTot : 0.0); }
+    prepareThevenin(t0, t1);
+    iHoldSum = 0.0; for (auto& b : blocks) iHoldSum += b->wf.hold; vAnalytic = true; vUse = Wave();
+    for (Iface& f : ifaces) { f.V = Wave(); f.V.hold = f.vHold; f.I = Wave(); f.I.hold = f.iHold; }
+    std::vector<char> rel(ifaces.size(), 0); bool anyRel = false, hOwns = false;
+    for (size_t g = 0; g < ifaces.size(); ++g) { for (int i = 0; i < nb; ++i) if (!blocks[static_cast<size_t>(i)]->weak && blocks[static_cast<size_t>(i)]->ifNode[g] >= 0) rel[g] = 1; if (rel[g]) anyRel = true; if (ifaces[g].owner == hi) hOwns = true; }
+    auto onIf = [&](int i) { for (size_t g = 0; g < ifaces.size(); ++g) if (blocks[static_cast<size_t>(i)]->ifNode[g] >= 0) return true; return false; };
+    std::vector<int> order; const int firstB = ifaces.empty() ? -1 : ifaces[0].owner;
+    for (int i = 0; i < nb; ++i) if (blocks[static_cast<size_t>(i)].get() != &h && blocks[static_cast<size_t>(i)]->weak && !onIf(i)) order.push_back(i);   // weak blocks without interface: their currents are known before the inside blocks run
+    if (hOwns) order.push_back(hi);
+    if (firstB >= 0 && firstB != hi) order.push_back(firstB);
+    for (int i = 0; i < nb; ++i) if (std::find(order.begin(), order.end(), i) == order.end() && i != hi) order.push_back(i);
+    if (!hOwns) order.push_back(hi);
+    int it = 0; bool conv = false; Wave iOthUsed; 
+    auto buildOth = [&](const Block& self) { Wave w; double hold = 0.0; std::vector<double> tg;   // sum of the load currents of the other blocks: waveforms of this window where they ran, else their value at the window start
+      for (auto& b : blocks) if (b.get() != &self) { hold += b->wf.hold; for (double t : b->wf.t) if (t >= t0 - 1e-15) tg.push_back(t); }
+      std::sort(tg.begin(), tg.end()); tg.erase(std::unique(tg.begin(), tg.end(), [](double a, double b2) { return b2 - a < 1e-15; }), tg.end());
+      w.hold = hold; if (!tg.empty()) { w.t = tg; w.v.assign(tg.size(), 0.0); for (size_t k = 0; k < tg.size(); ++k) { double s = 0.0; for (auto& b : blocks) if (b.get() != &self) s += b->wf.at(tg[k]); w.v[k] = s; } } return w; };
+    for (; it < maxIt; ++it) {
+      double vMis = 0.0;
+      for (int i : order) { Block& b = *blocks[static_cast<size_t>(i)]; if (it > 0 && b.weak) continue; if (it > 0) restoreWindowStart(b); const bool in = isIns(&b); if (in) { iOth = buildOth(b); if (&b == &h) iOthUsed = iOth; inB = &b; } else inB = nullptr; runBlock(b, t0, t1);
+        for (size_t g = 0; g < ifaces.size(); ++g) if (ifaces[g].owner == i && b.ifNode[g] >= 0) { const Wave& nw = b.ifW[g]; if (!b.weak) { double lo = 1e30, hi2 = -1e30, mv = 0.0; for (size_t k = 0; k < nw.t.size(); ++k) { lo = std::min(lo, nw.v[k]); hi2 = std::max(hi2, nw.v[k]); mv = std::max(mv, std::fabs(nw.v[k] - ifaces[g].V.at(nw.t[k]))); } vMis = std::max(vMis, mv - ifTolV - ifRelV * (hi2 - lo)); } ifaces[g].V = nw; } }
+      ++passes;
+      std::vector<double> tg; for (auto& b : blocks) tg.insert(tg.end(), b->wf.t.begin(), b->wf.t.end());
+      std::sort(tg.begin(), tg.end()); tg.erase(std::unique(tg.begin(), tg.end(), [](double a, double b) { return b - a < 1e-15; }), tg.end());
+      bool ifOk = vMis <= 0.0;
+      for (size_t g = 0; g < ifaces.size(); ++g) { Iface& f = ifaces[g]; Wave In; In.t = tg; In.v.assign(tg.size(), 0.0); double mI = 0.0, sI = 0.0;
+        for (size_t k = 0; k < tg.size(); ++k) { double sum = 0.0; for (int i = 0; i < nb; ++i) if (i != f.owner && blocks[static_cast<size_t>(i)]->ifNode[g] >= 0) sum += blocks[static_cast<size_t>(i)]->ifW[g].at(tg[k]); In.v[k] = sum; mI = std::max(mI, std::fabs(sum - f.I.at(tg[k]))); sI = std::max(sI, std::fabs(sum)); }
+        if (rel[g] && mI > ifTolI + ifRelI * sI) ifOk = false; f.I = In; }
+      if (nzInside == 2 ? (ins.size() == 1 || it >= 1) : (!anyRel || ifOk)) { conv = true; ++it; break; }   // mode 2: one pass for a single inside block, two passes for several (they see each other's current of the first pass)
+    }
+    inB = nullptr;
+    if (!conv) ++unconverged;
+    ++windows; ++insideWindows; ++itHist[std::min(it, 7)];
+    // line voltage at the steps of h and the load conductance seen at the line (secant over the window): they start the prediction of the weak blocks in the next window
+    { const Wave& w = h.wf; double sdi = 0.0, sdv = 0.0, vPrev = 0.0, iPrev = 0.0; for (size_t k = 0; k < w.t.size(); ++k) { const double itot = iOthUsed.at(w.t[k]) + w.v[k]; const double v = (theveninAt(w.t[k]) - itot) / gTot; if (k > 0) { sdi += (itot - iPrev) * (v - vPrev); sdv += (v - vPrev) * (v - vPrev); } vPrev = v; iPrev = itot; if (k + 1 == w.t.size()) { vEnd = v; haveVEnd = true; } }
+      if (sdv > 1e-18) gCarry = std::min(std::max(sdi / sdv, 0.0), 1.0); }
+    for (size_t k = 0; k < probes.size(); ++k) { Probe& p = probes[k]; Block& b = *blocks[static_cast<size_t>(p.block)]; if (p.t.empty() && t0 >= recordFrom) { p.t.push_back(t0); p.v.push_back(b.st.x.empty() ? 0.0 : (p.node > 0 ? b.st.x[static_cast<size_t>(p.node - 1)] : 0.0)); } for (size_t j = 0; j < b.ts.size(); ++j) { if (b.ts[j] < recordFrom) continue; p.t.push_back(b.ts[j]); p.v.push_back(b.pv[k][j]); } }
+    for (auto& b : blocks) b->wf.hold = b->wf.v.back();
+    for (size_t g = 0; g < ifaces.size(); ++g) { Iface& f = ifaces[g]; if (!f.V.v.empty()) f.vHold = f.V.v.back(); if (!f.I.v.empty()) f.iHold = f.I.v.back(); }
+    T = t1; return true;
+  }
   bool window(double t0, double t1) {
     const int nb = (int)blocks.size();
+    if (nzInside) { const std::vector<Block*> ins = insideBlocks(); if (!ins.empty()) return windowInside(t0, t1, ins); inB = nullptr; for (auto& b : blocks) if (b->ifSrc >= 0) b->net.setSrcRs(static_cast<size_t>(b->ifSrc), 0.0); }
     for (auto& b : blocks) saveWindowStart(*b);
     prepareThevenin(t0, t1);
     iHoldSum = 0.0; for (auto& b : blocks) iHoldSum += b->wf.hold; vAnalytic = true; vUse = Wave();

@@ -173,6 +173,7 @@ private:
     std::string text; for (int i = 0; i < kTr909CircuitNetLineCount; ++i) { text += kTr909CircuitNetLines[i]; text += '\n'; }
     net_ = std::make_unique<n909::PartNet>(); net_->fixedDt = dt_; net_->H = 20e-6;   // fixed step of the validated runs; relaxation window 20 us, NOISE tolerance 1e-7 V
     net_->splitToms = std::getenv("DGG_PART_NOSPLIT") == nullptr;   // toms block split into LT / HT / MT + noise sheet blocks (Net909Part.h, secondary interfaces TOM_NOISE, TO_NOISE_LT, TO_NOISE_HT); DGG_PART_NOSPLIT=1: one toms block
+    net_->nzInside = std::getenv("DGG_PART_NZIN") ? std::atoi(std::getenv("DGG_PART_NZIN")) : 2;   // the NOISE line is solved inside the blocks of the hit (PartNet::nzInside, set before build, plan E-03): 2 = one pass per block set (two for several blocks); test hook DGG_PART_NZIN=0 relaxation as before, 1 = interfaces iterated
     if (!net_->build(text)) { net_.reset(); return false; }
     n909::Net::State st;
     st.x.assign(kTr909CircuitIdleState, kTr909CircuitIdleState + kTr909CircuitStateX);
