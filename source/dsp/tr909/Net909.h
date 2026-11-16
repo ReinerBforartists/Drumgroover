@@ -422,6 +422,29 @@ class Net {
 #endif
   }
 
+  // E-03: linearisation of the circuit at the present state (Newton Jacobian split by its step dependence): with stepIndex 0 (backward Euler) A(dt) = G + C / dt for every charge element, so two
+  // assemblies at dt1 and dt2 give the conductance Jacobian G and the capacitance Jacobian C (dense nUnk x nUnk, row = equation, column = unknown; the source rows carry the branch equations).
+  // The state, the step history and the devices' bypass records are not changed (bypass is off during the call).
+  bool linearize(std::vector<double>& Gm, std::vector<double>& Cm, double tNow) {
+    const double sdt = dt, sbp = bypassTol, shp = hPrev; const int ssi = stepIndex; const bool sdc = dcMode, spre = prestamp, spl = partialLU;
+    dcMode = false; stepIndex = 0; bypassTol = 0.0; prestamp = false; partialLU = false; luValid = false; linAValid = false;
+    const double d1 = 1e-6, d2 = 2e-6; dt = d1; assemble(tNow); const std::vector<double> A1 = A; dt = d2; assemble(tNow); const std::vector<double> A2 = A;
+    const double k = 1.0 / d1 - 1.0 / d2; const size_t n = A1.size(); Gm.resize(n); Cm.resize(n);
+    for (size_t i = 0; i < n; ++i) { Cm[i] = (A1[i] - A2[i]) / k; Gm[i] = A1[i] - Cm[i] / d1; }
+    dt = sdt; bypassTol = sbp; hPrev = shp; stepIndex = ssi; dcMode = sdc; prestamp = spre; partialLU = spl; luValid = false; linAValid = false; linBDirty = true;
+    return true;
+  }
+
+  // E-03: current that the elements (all but the source branches) draw from `node` at the present state, from the DC equations (KCL residual with the branch current of the source at that node set to zero):
+  // the load a source at that node sees, for a block that was loaded from a stored state and not stepped (its branch currents are not part of the stored state).
+  double staticNodeCurrent(int node, int brRow, double tNow) {
+    const bool sdc = dcMode, spre = prestamp, spl = partialLU; const double sbp = bypassTol, xb = x[static_cast<size_t>(brRow)];
+    dcMode = true; bypassTol = 0.0; prestamp = false; partialLU = false; luValid = false; linAValid = false; x[static_cast<size_t>(brRow)] = 0.0; assemble(tNow);
+    double r = -B[static_cast<size_t>(node - 1)]; for (int j = 0; j < nUnk; ++j) r += A[static_cast<size_t>(node - 1) * nUnk + j] * x[static_cast<size_t>(j)];
+    x[static_cast<size_t>(brRow)] = xb; dcMode = sdc; prestamp = spre; partialLU = spl; bypassTol = sbp; luValid = false; linAValid = false; linBDirty = true;
+    return r;
+  }
+
   // ---- macro models ----
   Diode clampD(double Is, double Rs) { Diode d; d.Is = Is; d.N = 1; d.Rs = Rs; return d; }
   std::map<const void*, double> vdState;
@@ -784,10 +807,13 @@ class Net {
     bool a = advance(t, h / 2, depth + 1); if (!a) return false;
     stepIndex = 0; return advance(t + h / 2, h / 2, depth + 1);
   }
+  std::function<void(double, double)> stepPre, stepPost;   // E-03: called before every Newton attempt of a step (time at the start, step size; also for the halves of a subdivided step) and after the step was accepted (time at the end, step size): coupled linear port models (Net909Modal.h) set their Norton equivalent and advance their state
   bool step(double tNow) {   // advance to time tNow (uses dt)
     std::vector<double> xs = x;
+    if (stepPre) stepPre(tNow - dt, dt);
     if (!newton(tNow)) { x = xs; return false; }
     q2 = q1; linBDirty = true; if (reassembleCharges) assemble(tNow); q1 = qNow; ++stepIndex; hPrev = dt;  // qNow of the converged solution (assemble evaluated charges at x); without the extra assembly qNow is the one of the last Newton iteration (evaluated one update before the converged x)
+    if (stepPost) stepPost(tNow, dt);
     return true;
   }
 };

@@ -12,13 +12,13 @@ namespace dgg {
 class Tr909BakeRunner : public Tr909ModelRunner
 {
 public:
-  explicit Tr909BakeRunner(std::function<void(const std::string&)> log = nullptr) : circuit_(1e-6, []() { return BakeAborted(); }), log_(std::move(log)) {}
+  explicit Tr909BakeRunner(std::function<void(const std::string&)> log = nullptr) : circuit_(1e-6, []() { return BakeAborted(); }), circuitTom_(1e-6, []() { return BakeAborted(); }, true), log_(std::move(log)) {}
 
   bool Run(const Tr909RunRequest& req, std::vector<float>& out) override
   {
     if (Tr909CircuitRunner::Supports(req.voice))
     {
-      if (req.noise == Tr909NoisePath::Reference5us) return circuit_.Run(req, out);
+      if (req.noise == Tr909NoisePath::Reference5us) return (Tr909CircuitRunner::SplitNoiseVoice(req.voice) ? circuitTom_ : circuit_).Run(req, out);   // toms: network with the noise sheet split off (E-03 phase 2); BD / SD / HC: the network of before
       if (log_ && !logged_) { logged_ = true; log_("909 bake: voice " + std::to_string(static_cast<int>(req.voice)) + " requested with a noise path the circuit does not render: not baked"); }
       out.clear(); return false;
     }
@@ -26,7 +26,7 @@ public:
   }
 
 private:
-  Tr909CircuitRunner circuit_; Tr909PcmModelRunner pcm_; std::function<void(const std::string&)> log_; bool logged_ = false;
+  Tr909CircuitRunner circuit_, circuitTom_; Tr909PcmModelRunner pcm_; std::function<void(const std::string&)> log_; bool logged_ = false;
 };
 
 }  // namespace dgg
