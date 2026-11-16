@@ -36,7 +36,7 @@ class PartNet {
     Wave wf, wfPrev;
     std::vector<double> ts; std::vector<std::vector<double>> pv;   // steps of the present pass: time, probe values
     std::vector<int> ifNode, ifIdx; std::vector<Wave> ifW;   // per secondary interface: node in this net (-1: not used), index of the VIF source (non-owner) / IFI current source (owner), waveform (owner: node voltage, other: current drawn)
-    std::vector<double> vdPrev, vdPrev2; bool eventAlways = false, weak = false, fineEvents = false; double hAd = 0.0; bool lastAd = false; long qFixed = 0, qAd = 0; long nHold = 0, nPred = 0, nStat = 0; std::vector<long> predBy, statBy; double qFixedT = 0.0, qAdT = 0.0;   // quiet-run step statistics   // weak: weakly coupled to the NOISE line (toms block of a non-tom hit): runs once per window, no relaxation re-passes
+    std::vector<double> vdPrev, vdPrev2; bool eventAlways = false, weak = false, fineEvents = false; std::vector<char> fineMask; double hAd = 0.0; bool lastAd = false; long qFixed = 0, qAd = 0; long nHold = 0, nPred = 0, nStat = 0; std::vector<long> predBy, statBy; double qFixedT = 0.0, qAdT = 0.0;   // quiet-run step statistics   // weak: weakly coupled to the NOISE line (toms block of a non-tom hit): runs once per window, no relaxation re-passes
      std::vector<signed char> sat; double holdUntil = -1.0, hLast = 0.0; std::vector<double> vdPrevS, vdPrev2S; std::vector<signed char> satS; double holdUntilS = -1.0, hLastS = 0.0;   // event-controlled stepping (quiet windows): comparator input differences of the last two steps, saturation, fine-step hold
   };
   // Secondary interface nodes (splitToms): nodes shared by blocks that are not the NOISE line. The owner block keeps the node and receives the loads of the other blocks as a current source; every other block
@@ -55,6 +55,8 @@ class PartNet {
   double qaRtol = 0.0, qaAtol = 1e-5, qaHmax = 1e-4;   // E-02: > 0: in the quiet run the steps between the comparator events are error-controlled (Net::advanceAdaptive) instead of eventHMax
   double statR = 0.0;   // E-02: quiet run: a saturated op-amp with |input difference| < 50 mV counts as 'flip imminent' only if it moves faster than this (V/s); 0 = always (old rule)
   bool freezeIdle = false;   // E-02: weak blocks are not stepped in the quiet (idle) run, see runBlock
+  std::set<std::string> fineNodes;   // E-02: non-empty: only the op-amps whose output node is listed count as comparator flips of the fine-event step (the oscillator comparators; the saturating op-amps of the noise stages would otherwise keep it on)
+  double fineMargin = -1.0, fineHold = -1.0;   // E-02: look-ahead margin and hold time of the fine-event step (< 0: eventMargin / eventHold)
   double fineEventDt = 0.0;   /* > 0: blocks with fineEvents run their fixed-step windows with this step around predicted / just happened comparator flips (op-amp outputs in saturation: input difference extrapolated to its zero crossing within eventMargin, or eventHold after a flip) and with fixedDt otherwise; default off */ double quietUntil = -1.0, eventHMax = 3e-6, eventMargin = 20e-6, eventHold = 12e-6, quietH = 60e-6;
   double nwAtolV = 1e-6, nwAtolI = 1e-8; bool predictor = false, reassemble = false; double bypassTol = 0.0; int jacReuse = 0; bool prestamp = false, compactRec = false, partialLU = false;   // Newton tolerances and predictor start of the blocks (Net defaults: 1e-6 / 1e-8, off)
   // statistics
@@ -326,13 +328,15 @@ class PartNet {
     {
       const size_t NO = s.op.size(); auto vd = [&](size_t i) { return s.V(s.op[i].inp) - s.V(s.op[i].inn); };
       if (b.vdPrev.size() != NO || b.hLast <= 0.0) { b.vdPrev.resize(NO); b.vdPrev2.resize(NO); b.sat.resize(NO); for (size_t i = 0; i < NO; ++i) { b.vdPrev[i] = b.vdPrev2[i] = vd(i); b.sat[i] = sgn3(s.V(s.op[i].out)); } b.hLast = fixedDt; b.holdUntil = t0; }
+      if (fineNodes.empty()) b.fineMask.clear(); else if (b.fineMask.size() != NO) { b.fineMask.assign(NO, 0); for (size_t i = 0; i < NO; ++i) b.fineMask[i] = fineNodes.count(s.nodeName[static_cast<size_t>(s.op[i].out)]) ? 1 : 0; }
+      const bool masked = !b.fineMask.empty();
       while (t < t1 - 1e-13) {
-        double tev = 1e9; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0) tev = std::min(tev, -d / r); else if (std::fabs(d) < 0.05) tev = 0.0; }
-        double hh = (t < b.holdUntil || tev <= eventMargin) ? fineEventDt : fixedDt;
+        double tev = 1e9; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0 && (!masked || b.fineMask[i])) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0) tev = std::min(tev, -d / r); else if (std::fabs(d) < 0.05 && (!masked || std::fabs(r) >= statR)) tev = 0.0; }   // masked: a stationary saturated op-amp (accent stage) is no flip candidate (statR as in the idle run)
+        double hh = (t < b.holdUntil || tev <= (fineMargin >= 0.0 ? fineMargin : eventMargin)) ? fineEventDt : fixedDt;
         hh = std::min(hh, t1 - t);
         if (!s.advance(t, hh)) { b.net.x = b.st.x; break; }
         t += hh; b.hLast = hh; b.wf.t.push_back(t); b.wf.v.push_back(loadCurrent(b)); recIf(t);
-        for (size_t i = 0; i < NO; ++i) { b.vdPrev2[i] = b.vdPrev[i]; b.vdPrev[i] = vd(i); const signed char st = sgn3(s.V(s.op[i].out)); if (st != b.sat[i]) b.holdUntil = t + eventHold; b.sat[i] = st; }
+        for (size_t i = 0; i < NO; ++i) { b.vdPrev2[i] = b.vdPrev[i]; b.vdPrev[i] = vd(i); const signed char st = sgn3(s.V(s.op[i].out)); if (st != b.sat[i] && (!masked || b.fineMask[i])) b.holdUntil = t + (fineHold >= 0.0 ? fineHold : eventHold); b.sat[i] = st; }
         b.ts.push_back(t); for (size_t k = 0; k < probes.size(); ++k) b.pv[k].push_back(probes[k].block >= 0 && blocks[probes[k].block].get() == &b ? s.V(probes[k].node) : 0.0);
       }
       b.hCur = fixedDt; return;

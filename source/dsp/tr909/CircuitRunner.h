@@ -102,8 +102,8 @@ public:
   // by a fraction of the period given by the noise seed (low-discrepancy sequence over the phases of the sheet: independent phases) or by a time (timeShift >= 0, validation), instead of idling for Preroll(seed).
   // The sheet's ramp parameters and the state map are measured per pot state from a 0.3 s idle run of the sheet's block (cached, SheetPhase::fit). BD: sheet 0 (1 oscillator); SD: 1 (2); LT / MT / HT: 2 / 3 / 4 (3 each);
   // HC: the BD and SD sheets (their noise stages stay in the relaxation of an HC hit).
-  // Phases of the oscillators from the automaton (Net909Phase.h): only with DGG_PART_PHASE=1 (not validated completely, E-02 open); default: idle run with Preroll(seed).
-  bool UsePhase() const { if (const char* e = std::getenv("DGG_PART_PHASE")) return std::atoi(e) != 0; return false; }   // 2026-11-15: back to the Preroll idle run until the E-02 criteria are met (DETAILS 10.23, open list)
+  // Phases of the oscillators from the automaton (Net909Phase.h): standard since 2026-11-16 (DETAILS 10.28); DGG_PART_PHASE=0 / DGG_PART_PREROLL=1 / CT_PREROLL: idle run with Preroll(seed).
+  bool UsePhase() const { if (const char* e = std::getenv("DGG_PART_PHASE")) return std::atoi(e) != 0; return std::getenv("DGG_PART_PREROLL") == nullptr && fixedPreroll < 0.0; }   // 2026-11-16: standard again (DETAILS 10.28); DGG_PART_PHASE=0 / DGG_PART_PREROLL=1 / fixedPreroll (CT_PREROLL) = the idle run with Preroll(seed)
   static const std::vector<n909::OscPair>& SheetPairs(int which)
   {
     static const std::vector<n909::OscPair> bd = {{"bd_N_60", "bd_N_59"}}, sd = {{"sd_N_115", "sd_R263"}, {"sd_N_106", "sd_N_101"}}, lt = {{"lt_N_177", "lt_N_181"}, {"lt_N_197", "lt_N_201"}, {"lt_N_187", "lt_N_191"}},
@@ -213,8 +213,8 @@ private:
     net.setSourceDc("Vnz", 7.5);
     for (const char* t : {"BD", "SD", "LT", "MT", "HT", "HC", "RM"}) net.setSourceDc(std::string("VACCENT_") + t, 2.4);   // the accent of the stored idle state
     net.clearProbes(); net.fixedDt = 2e-6;
-    bool probesOk = true; for (int k = 0; k < kOscillators; ++k) probesOk = net.addProbe(OscNodes()[k]) && probesOk;
-    const double settleSec = std::getenv("DGG_PART_SETTLE") ? std::atof(std::getenv("DGG_PART_SETTLE")) : kSettle;   // test hook: length of the settle run (default kSettle)
+    bool probesOk = !UsePhase(); if (probesOk) for (int k = 0; k < kOscillators; ++k) probesOk = net.addProbe(OscNodes()[k]) && probesOk;   // the Preroll table (oscillator frequencies of the pot state) is only needed without the automaton (E-02: its phases come from SheetPhase)
+    const double settleSec = std::getenv("DGG_PART_SETTLE") ? std::atof(std::getenv("DGG_PART_SETTLE")) : (UsePhase() ? kSettlePhase : kSettle);   // test hook: length of the settle run (default kSettle; with the oscillator automaton kSettlePhase: the slow pot-network nodes are settled after 50 ms, hits equal to the 0.5 s run to -44...-78 dB, DETAILS 10.24)
     net.recordFrom = settleSec - 0.25;   // the last 0.25 s of the idle run give the oscillator frequencies of this pot state
     if (std::getenv("DGG_PART_SETTLEEV") != nullptr && std::atoi(std::getenv("DGG_PART_SETTLEEV")) != 0)   // test hook (E-02): the settle run with the event-controlled, error-controlled steps of the idle run before the trigger (all blocks, no resting blocks: the twelve oscillator frequencies are needed)
     { net.quietUntil = kSettle + 1.0; const int se = std::atoi(std::getenv("DGG_PART_SETTLEEV")); net.eventHMax = (se == 4) ? 1e-5 : 3e-6; net.statR = (se == 3) ? 0.0 : 1.0; net.qaRtol = (se == 2 || se == 4) ? 0.0 : 1e-3; net.qaAtol = 1e-4; net.qaHmax = 1e-4; net.freezeIdle = false; for (auto& bp : net.blocks) { bp->eventAlways = true; bp->hLast = 0.0; } }
@@ -290,7 +290,8 @@ private:
     { const int own = net.blockOfNodeName(lower + "_" + tag + "_OUT"), kb = net.blockOfNodeName("bd_BD_OUT"), ks = net.blockOfNodeName("sd_SD_OUT"), kn = net.blockOfNodeName("noise_N_712"); const bool tomHit = tag == "LT" || tag == "MT" || tag == "HT"; const bool off = std::getenv("DGG_PART_OTHERS0") != nullptr;
       for (size_t i = 0; i < net.blocks.size(); ++i) { const int bi = static_cast<int>(i); const bool keep = bi == own || (tag == "HC" && (bi == kb || bi == ks)) || (tomHit && bi == kn); net.blocks[i]->weak = !off && own >= 0 && !keep; net.blocks[i]->eventAlways = net.blocks[i]->weak; }
       // BD (addendum 14): event-controlled fine step around comparator flips in the blocks that run full (PartNet::fineEventDt, Net909Part.h); validated against NGSpice for BD up to 60 ms after the trigger. All other voices: off (the net is shared between voices, so it is set on every hit).
-      net.fineEventDt = (v == Tr909Voice::Bd) ? kFineDt : 0.0; for (auto& bp : net.blocks) bp->fineEvents = net.fineEventDt > 0.0 && !bp->weak; }
+      net.fineEventDt = (v == Tr909Voice::Bd || v == Tr909Voice::Sd || v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht) ? kFineDt : 0.0; if (const char* fe = std::getenv("DGG_PART_FINEEV")) net.fineEventDt = std::atof(fe); net.fineNodes.clear(); if (const char* fm = std::getenv("DGG_PART_FINEMARGIN")) net.fineMargin = std::atof(fm); if (const char* fh = std::getenv("DGG_PART_FINEHOLD")) net.fineHold = std::atof(fh); if (v != Tr909Voice::Bd && !std::getenv("DGG_PART_FINEALL")) for (int k = 0; k < kOscillators; ++k) net.fineNodes.insert(OscNodes()[k]); if (v != Tr909Voice::Bd && !std::getenv("DGG_PART_FINEALL")) for (const char* an : {"sd_N_154", "lt_N_229", "mt_N_364", "ht_N_765"}) net.fineNodes.insert(an);   // and the accent stages (their level change at the trigger shifts the oscillator phase)   // E-02 (DETAILS 10.26 / 10.27): the oscillator voices run the fine step around the comparator flips (oscillator comparators and accent stage, PartNet::fineNodes, statR rule): hit half periods against NGSpice -1e-4...-8e-4 -> <= 2e-4, phase-impulse outliers MT k = 4 -26 -> -53 dB; hit time +25...+43 %; DGG_PART_FINEEV=0 = old (only BD)
+      for (auto& bp : net.blocks) bp->fineEvents = net.fineEventDt > 0.0 && !bp->weak; }
     net.freezeIdle = std::getenv("DGG_PART_FREEZE") ? std::atoi(std::getenv("DGG_PART_FREEZE")) != 0 : !idleOld;   // test hook (E-02): the blocks of the other voices rest during the idle run before the trigger
     const bool runOk = RunHit(net, t0, t0 + static_cast<double>(nOut) * ts + 2e-4, v == Tr909Voice::Sd || v == Tr909Voice::Bd); net.quietUntil = -1.0;
     if (!runOk) { out.clear(); return false; }
@@ -307,7 +308,7 @@ private:
   }
   static constexpr double kTriggerDelay = 0.05;   // minimum idle before the trigger: the accent (a held level in the sequencer) and the pot states settle as in the NGSpice decks (50 ms)
   static constexpr double kNoiseAtTrigger = 0.05;   // the noise sequence of a hit is read from 50 ms on when the trigger arrives
-  static constexpr double kSettle = 0.5;
+  static constexpr double kSettle = 0.5, kSettlePhase = 0.05;
   std::map<uint64_t, Settled> settled_;
   double dt_; std::function<bool()> abort_;
   std::unique_ptr<n909::PartNet> net_; n909::PartNet::Snapshot nominal_; bool ready_ = false;
