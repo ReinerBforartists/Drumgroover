@@ -26,7 +26,7 @@ namespace dgg {
 namespace tomfast {
 
 
-class TR808TomFast
+class TomFast808
 {
 public:
   static constexpr double kFs = 48000.0, kFineFs = 6144000.0;

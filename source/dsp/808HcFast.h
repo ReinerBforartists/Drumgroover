@@ -214,14 +214,14 @@ inline double LevelFraction(double pos)   // taper A of VR17
 }
 }  // namespace detail
 
-class TR808HcFast
+class HcFast808
 {
 public:
   static constexpr double kFs = detail::kFs;                                   // internal rate of the model
   static constexpr double kClapThresholdVolt = 1.85, kMaracasThresholdVolt = 1.72;   // accent threshold of the sheet (engine: silent below)
   static constexpr double kTm3 = 0.60;                                         // trimmer TM3 (C.P. OFFSET), the position of the deck
 
-  TR808HcFast()
+  HcFast808()
   {
     using namespace detail;
     // Pre: n204/wn = (-1.2563e-5 s^3 - 0.2585 s^2) / (1.312146e-3 s^3 + 8.143875 s^2 + 88960 s + 9.25e7), from the netlist (U21B network, C136 / R372 / R382)

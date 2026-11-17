@@ -116,14 +116,14 @@ struct Cursor
 };
 }  // namespace detail
 
-class TR808RmFast
+class RmFast808
 {
 public:
   static constexpr double kFs = 48000.0;
   static constexpr int kRatio = tab::kHiRatio;
   static constexpr int kFineSub = 4;   // sub-steps per 3.84 MHz table interval in the first output sample (backward Euler on the op-amp pole: 4 keeps the error below 2 mV at every level)
 
-  TR808RmFast() { mOutLo.Setup(1.0 / kFs); mOutHi.Setup(1.0 / (kFs * kRatio)); mOutFine.Setup(1.0 / (kFs * kRatio * tab::kFineRatio)); mOutFineS.Setup(1.0 / (kFs * kRatio * tab::kFineRatio * kFineSub)); SetLevel(0.5); }
+  RmFast808() { mOutLo.Setup(1.0 / kFs); mOutHi.Setup(1.0 / (kFs * kRatio)); mOutFine.Setup(1.0 / (kFs * kRatio * tab::kFineRatio)); mOutFineS.Setup(1.0 / (kFs * kRatio * tab::kFineRatio * kFineSub)); SetLevel(0.5); }
 
   // Level pot VR16 (rotation position 0..1, taper A)
   void SetLevel(double level01) { mR16 = std::fmax(100e3 * detail::Taper(std::clamp(level01, 0.0, 1.0)), 1.0); }

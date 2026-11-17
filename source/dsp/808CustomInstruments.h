@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Reiner Prokein
 #pragma once
-// The TR-808 custom instruments: High Conga, Claves, Hand Clap, Maracas, Cowbell, PC-2. Each runs on its 808 circuit voice (the kind names the
+// The 808 custom instruments: High Conga, Claves, Hand Clap, Maracas, Cowbell, PC-2. Each runs on its 808 circuit voice (the kind names the
 // pool the host plays it on). Their knobs reuse the kit table's schemas where the circuit sheet is the same (808InstrumentTable.h).
 #include "CustomInstruments.h"
 #include "808InstrumentTable.h"
@@ -34,22 +34,22 @@ inline nlohmann::json Custom808EngineJson(const char* kind, nlohmann::json extra
   return extra;
 }
 
-inline constexpr CustomInstrumentDef kCustomHighConga808 = {"highConga808", "High Conga 808", "TR-808", CustomKind::Conga, 2, MixerChannel::Custom,
+inline constexpr CustomInstrumentDef kCustomHighConga808 = {"highConga808", "High Conga 808", "808", CustomKind::Conga, 2, MixerChannel::Custom,
   kTomControls, (int)(sizeof(kTomControls) / sizeof(ControlDef)), kCongaDefaults, (int)(sizeof(kCongaDefaults) / sizeof(DefaultValue)),
   [] { return Custom808EngineJson("Tom", { {"sheet", 2}, {"conga", true}, {"articulation", "Center"} }); }};
-inline constexpr CustomInstrumentDef kCustomClaves808 = {"claves808", "Claves 808", "TR-808", CustomKind::Claves, 0, MixerChannel::Custom,
+inline constexpr CustomInstrumentDef kCustomClaves808 = {"claves808", "Claves 808", "808", CustomKind::Claves, 0, MixerChannel::Custom,
   kSnareRmControls, (int)(sizeof(kSnareRmControls) / sizeof(ControlDef)), kClavesDefaults, (int)(sizeof(kClavesDefaults) / sizeof(DefaultValue)),
   [] { return Custom808EngineJson("RmClaves", { {"claves", true} }); }};
-inline constexpr CustomInstrumentDef kCustomHandClap808 = {"handClap808", "Hand Clap 808", "TR-808", CustomKind::HandClap, 0, MixerChannel::Custom,
+inline constexpr CustomInstrumentDef kCustomHandClap808 = {"handClap808", "Hand Clap 808", "808", CustomKind::HandClap, 0, MixerChannel::Custom,
   kSnareRmControls, (int)(sizeof(kSnareRmControls) / sizeof(ControlDef)), kHcDefaults, (int)(sizeof(kHcDefaults) / sizeof(DefaultValue)),
   [] { return Custom808EngineJson("HcClap", { {"clap", true} }); }};
-inline constexpr CustomInstrumentDef kCustomMaracas808 = {"maracas808", "Maracas 808", "TR-808", CustomKind::Maracas, 0, MixerChannel::Custom,
+inline constexpr CustomInstrumentDef kCustomMaracas808 = {"maracas808", "Maracas 808", "808", CustomKind::Maracas, 0, MixerChannel::Custom,
   kSnareRmControls, (int)(sizeof(kSnareRmControls) / sizeof(ControlDef)), kMaracasDefaults, (int)(sizeof(kMaracasDefaults) / sizeof(DefaultValue)),
   [] { return Custom808EngineJson("HcMaracas", { {"clap", false} }); }};
-inline constexpr CustomInstrumentDef kCustomCowbell808 = {"cowbell808", "Cowbell 808", "TR-808", CustomKind::Cowbell, 0, MixerChannel::Custom,
+inline constexpr CustomInstrumentDef kCustomCowbell808 = {"cowbell808", "Cowbell 808", "808", CustomKind::Cowbell, 0, MixerChannel::Custom,
   kSnareRmControls, (int)(sizeof(kSnareRmControls) / sizeof(ControlDef)), kCbDefaults, (int)(sizeof(kCbDefaults) / sizeof(DefaultValue)),
   [] { return Custom808EngineJson("Cowbell"); }};
-inline constexpr CustomInstrumentDef kCustomPc2808 = {"pc2808", "PC-2 808", "TR-808", CustomKind::Pc2, 0, MixerChannel::Custom,
+inline constexpr CustomInstrumentDef kCustomPc2808 = {"pc2808", "PC-2 808", "808", CustomKind::Pc2, 0, MixerChannel::Custom,
   kPc2Controls, (int)(sizeof(kPc2Controls) / sizeof(ControlDef)), kPc2Defaults, (int)(sizeof(kPc2Defaults) / sizeof(DefaultValue)),
   [] { return Custom808EngineJson("Pc2"); }};
 

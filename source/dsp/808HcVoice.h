@@ -21,7 +21,7 @@
 
 namespace dgg {
 
-class TR808HcVoice final : public DrumVoice
+class HcVoice808 final : public DrumVoice
 {
 public:
   // Which position of SW12 this instance is (set once per pool): true = Hand Clap (throw O), false = Maracas (throw S).
@@ -43,7 +43,7 @@ public:
   void SetSampleRate(double sr) override
   {
     DrumVoice::SetSampleRate(sr);
-    mHostRatio = hcfast::TR808HcFast::kFs / sr;
+    mHostRatio = hcfast::HcFast808::kFs / sr;
   }
 
   void SetAccent(double accent01) override { mAccent = std::clamp(accent01, 0.0, 1.0); }
@@ -63,8 +63,8 @@ public:
     mRate = std::clamp(pitchRatio, 0.25, 4.0) * mHostRatio;
     mDirect = std::fabs(mRate - 1.0) < 1e-12;
     mFrac = 0.0; mSamples = 0; mQuiet = 0; mInWin = 0; mWinSq = 0.0;
-    mWinSamples = std::max(1L, (long)(kRmsWindowSec * hcfast::TR808HcFast::kFs)); mHoldSamples = (long)(kHitSilenceHoldSec * hcfast::TR808HcFast::kFs);
-    mMinSamples = (long)(kHitMinSeconds * hcfast::TR808HcFast::kFs); mMaxSamples = (long)(kHitMaxSeconds * hcfast::TR808HcFast::kFs);
+    mWinSamples = std::max(1L, (long)(kRmsWindowSec * hcfast::HcFast808::kFs)); mHoldSamples = (long)(kHitSilenceHoldSec * hcfast::HcFast808::kFs);
+    mMinSamples = (long)(kHitMinSeconds * hcfast::HcFast808::kFs); mMaxSamples = (long)(kHitMaxSeconds * hcfast::HcFast808::kFs);
     mActive = true;
     if (!mDirect) { mY[0] = 0.0; mY[1] = NextModel(); mY[2] = NextModel(); mY[3] = NextModel(); }   // history of the cubic interpolation: the first output sample is the first model sample
   }
@@ -115,7 +115,7 @@ private:
   static inline std::atomic<uint32_t> gVoiceCounter{1};
 
   double mVelGain = 1.0, mAccent = 0.0;
-  hcfast::TR808HcFast mModel;
+  hcfast::HcFast808 mModel;
   bool mActive = false, mDirect = true;
   double mHostRatio = 1.0, mRate = 1.0, mFrac = 0.0, mWinSq = 0.0, mLast = 0.0, mY[4] = {};
   long mSamples = 0, mQuiet = 0, mInWin = 0, mWinSamples = 480, mHoldSamples = 1440, mMinSamples = 2880, mMaxSamples = 144000;

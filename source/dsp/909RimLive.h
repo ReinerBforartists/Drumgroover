@@ -18,18 +18,18 @@
 
 namespace dgg {
 
-class Tr909RimLiveVoice : public DrumVoice
+class RimLiveVoice909 : public DrumVoice
 {
 public:
   using Host = rmfast::FullLevelHost<RmFullLevels>;
   // Accent from the velocity alone (the MIDI path of the Nava firmware: velocity = DAC code), spread over the codes 25 (0.8 V) .. 127 (4.064 V), the range the model is validated for.
   static constexpr int kMinAccentCode = 25;
-  static int AccentCodeForVelocity(double velocity01) { return std::clamp(static_cast<int>(std::lround(kMinAccentCode + std::clamp(velocity01, 0.0, 1.0) * (kTr909MaxAccentCode - kMinAccentCode))), kMinAccentCode, kTr909MaxAccentCode); }
+  static int AccentCodeForVelocity(double velocity01) { return std::clamp(static_cast<int>(std::lround(kMinAccentCode + std::clamp(velocity01, 0.0, 1.0) * (kMaxAccentCode909 - kMinAccentCode))), kMinAccentCode, kMaxAccentCode909); }
 
-  Tr909RimLiveVoice() = default;
-  Tr909RimLiveVoice(const Tr909RimLiveVoice&) = delete;
-  Tr909RimLiveVoice& operator=(const Tr909RimLiveVoice&) = delete;
-  ~Tr909RimLiveVoice() override { if (mThread.joinable()) mThread.join(); delete mCur.load(); }
+  RimLiveVoice909() = default;
+  RimLiveVoice909(const RimLiveVoice909&) = delete;
+  RimLiveVoice909& operator=(const RimLiveVoice909&) = delete;
+  ~RimLiveVoice909() override { if (mThread.joinable()) mThread.join(); delete mCur.load(); }
 
   // Builds the host for the current sample rate on a worker thread when there is none for it yet; returns at once. Call again after a change of the sample rate.
   void Prepare()
@@ -48,7 +48,7 @@ public:
   {
     Host* h = HostIfReady();
     if (!h) { ++mMisses; return; }
-    h->SetAccent(Tr909AccentVolts(AccentCodeForVelocity(velocity01)));
+    h->SetAccent(AccentVolts909(AccentCodeForVelocity(velocity01)));
     ApplyLevel(h);
     h->Trigger();
   }
@@ -66,7 +66,7 @@ public:
       {
         const int n = std::min(kChunk, nFrames - pos);
         h->Render(buf, n);
-        for (int i = 0; i < n; ++i) out[pos + i] += kTr909VoltToSample * outputGain * static_cast<double>(buf[i]);
+        for (int i = 0; i < n; ++i) out[pos + i] += kVoltToSample909 * outputGain * static_cast<double>(buf[i]);
       }
       return;
     }
@@ -77,7 +77,7 @@ public:
     for (int i = 0; i < nFrames; ++i)
     {
       const double t = mFrac, y0 = mW[0], y1 = mW[1], y2 = mW[2], y3 = mW[3];
-      out[i] += kTr909VoltToSample * outputGain * (y1 + 0.5 * t * (y2 - y0 + t * (2.0 * y0 - 5.0 * y1 + 4.0 * y2 - y3 + t * (3.0 * (y1 - y2) + y3 - y0))));
+      out[i] += kVoltToSample909 * outputGain * (y1 + 0.5 * t * (y2 - y0 + t * (2.0 * y0 - 5.0 * y1 + 4.0 * y2 - y3 + t * (3.0 * (y1 - y2) + y3 - y0))));
       mFrac += rate;
       while (mFrac >= 1.0) { mFrac -= 1.0; mW[0] = mW[1]; mW[1] = mW[2]; mW[2] = mW[3]; mW[3] = next(); }
     }

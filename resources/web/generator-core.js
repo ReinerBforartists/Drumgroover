@@ -413,7 +413,7 @@ async function generateSequence(regenGenerated = true) {
 // =========================================
 // ACCENT LANE
 // =========================================
-// The Accent lane is a marker list stored like a track (block.data.accent, one marker per position, like the ACCENT row of the TR-808
+// The Accent lane is a marker list stored like a track (block.data.accent, one marker per position, like the ACCENT row of the 808
 // sequencer). Every instrument that plays at a marker's position plays accented; the Accent amount of the Drum Engine says how much that
 // differs from a normal hit.
 const ACCENT_MATCH_TOL = 0.02;   // beats: a note counts as being on a marker when it lies this close to it

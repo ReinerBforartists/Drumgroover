@@ -7,7 +7,7 @@
 
 namespace dgg {
 
-struct Tr909NoiseStream
+struct NoiseStream909
 {
   static uint64_t& Sample() { static uint64_t s = 0; return s; }   // sample position of the trigger being handled
   static void SetTriggerSample(uint64_t s) { Sample() = s; }

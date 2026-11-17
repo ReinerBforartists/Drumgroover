@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Reiner Prokein
 #pragma once
-// TR808RideVoice -- the engine of the Ride and Cymbal/Crash instruments. A hit is played from the variant pool (808VariantPoolCache.h) when a baked
+// RideVoice808 -- the engine of the Ride and Cymbal/Crash instruments. A hit is played from the variant pool (808VariantPoolCache.h) when a baked
 // set exists; otherwise (and always while baking) it is synthesised live with the fast model of 808CyFast.h: metal bank and
 // BP1/BP2 as exact modes, the rest of the circuit as one reduced-Newton network.
 //
@@ -22,7 +22,7 @@
 
 namespace dgg {
 
-class TR808RideVoice final : public DrumVoice
+class RideVoice808 final : public DrumVoice
 {
 public:
   enum class Articulation { BowTip, BowShank, BellTip, BellShank, Edge, Mute, Crash };
@@ -60,11 +60,11 @@ public:
   // voice instances do not start at the same oscillator phase. Call after SetSampleRate(), before Trigger().
   void WarmupFreeRunningOscillatorsForBake(double seconds) { mFastBankWarmupSec += seconds; }
 
-  // Variant pool key. pitchRatio is part of it (see 808VariantPools.h::TR808VariantKey128), and so is the articulation: every articulation gets its
+  // Variant pool key. pitchRatio is part of it (see 808VariantPools.h::VariantKey128808), and so is the articulation: every articulation gets its
   // own baked set.
-  static dgg::TR808VariantKey128 MakeVariantPoolKey(int art, double decay01, double tone01, double levelKnob01, double pitchRatio, double sampleRateHz, int accentStep = 0)
+  static dgg::VariantKey128808 MakeVariantPoolKey(int art, double decay01, double tone01, double levelKnob01, double pitchRatio, double sampleRateHz, int accentStep = 0)
   {
-    dgg::TR808VariantKey128 key;
+    dgg::VariantKey128808 key;
     uint64_t lo = (uint64_t)(art & 0xF);
     lo = (lo << 12) | QuantizeVariantKnob01(decay01);
     lo = (lo << 12) | QuantizeVariantKnob01(tone01);
@@ -78,7 +78,7 @@ public:
   // The quantized settings a key stands for -- the exact inverse of MakeVariantPoolKey(). A bake renders these (not the raw knob values),
   // so a cached set is a pure function of its key.
   struct VariantPoolParams { int art; double decay, tone, level, pitch, sampleRateHz; int accentStep; };
-  static VariantPoolParams DecodeVariantPoolKey(const dgg::TR808VariantKey128& key)
+  static VariantPoolParams DecodeVariantPoolKey(const dgg::VariantKey128808& key)
   {
     VariantPoolParams p;
     p.pitch = dgg::DequantizeVariant(key.lo & 0xFFF);
@@ -93,7 +93,7 @@ public:
 
   // Cache file base name for a key, e.g. "Ride_BowTip_decay65_tone15_level60_pitch100_sr44100" (knobs in hundredths).
   // Crash is the cymbal; every other articulation is Ride.
-  static std::string VariantPoolBaseName(const dgg::TR808VariantKey128& key)
+  static std::string VariantPoolBaseName(const dgg::VariantKey128808& key)
   {
     static const char* kArtNames[7] = { "Ride_BowTip", "Ride_BowShank", "Ride_BellTip", "Ride_BellShank", "Ride_Edge", "Ride_Mute", "Cymbal_Crash" };
     const VariantPoolParams p = DecodeVariantPoolKey(key);
@@ -144,8 +144,8 @@ public:
     const int accentStep = dgg::QuantizeAccentStep(mAccent);   // 0 = a normal hit
     if (diagUseVariantPool)
     {
-      const dgg::TR808VariantKey128 variantKey = MakeVariantPoolKey(static_cast<int>(art), decayKnob01, toneKnob, levelKnob, pitchRatio, mSampleRate, accentStep);
-      mCachePlayback = dgg::TR808RideVariantPool::Instance().GetRandomIndexed(variantKey, mDebugVariantPoolIndex, &mDebugVariantPoolSize);
+      const dgg::VariantKey128808 variantKey = MakeVariantPoolKey(static_cast<int>(art), decayKnob01, toneKnob, levelKnob, pitchRatio, mSampleRate, accentStep);
+      mCachePlayback = dgg::RideVariantPool808::Instance().GetRandomIndexed(variantKey, mDebugVariantPoolIndex, &mDebugVariantPoolSize);
     }
     // A miss on a plugin voice is reported (the plugin bakes the key: the normal set at once, an accented set on demand); this hit is synthesised live with the fast model below.
     // While a set is only partly baked, GetRandomIndexed() plays one of the variants that exist.

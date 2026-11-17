@@ -21,7 +21,7 @@
 
 namespace dgg {
 
-class TR808Pc2Voice final : public DrumVoice
+class Pc2Voice808 final : public DrumVoice
 {
 public:
   // Knob positions 0..1 as the UI shows them (provisional working defaults, see 808InstrumentTable.h).
@@ -58,7 +58,7 @@ public:
     const int vel = Velocity127(velocity01);
     if (vel <= 0 || mSampleRate <= 0.0) return;
     mVelGain = (double)vel / 127.0;
-    pc2fast::TR808Pc2Fast::Knobs k;
+    pc2fast::Pc2Fast808::Knobs k;
     k.vr1 = std::clamp(levelKnob, 0.0, 1.0); k.vr2 = std::clamp(lfoRateKnob, 0.0, 1.0); k.vr3 = std::clamp(lfoDepthKnob, 0.0, 1.0); k.vr18 = std::clamp(pitchKnob, 0.0, 1.0);
     k.vr19 = std::clamp(decayKnob, 0.0, 1.0); k.vr20 = std::clamp(sweepKnob, 0.0, 1.0); k.tm5 = kTrimmerTm5; k.sw2 = lfoWaveKnob > 0.5 ? 1 : 0; k.sw3 = vcoWaveKnob > 0.5 ? 1 : 0;
     mModel.SetKnobs(k);
@@ -91,7 +91,7 @@ public:
 private:
   static inline std::atomic<uint32_t> gVoiceCounter{1};
   double mVelGain = 1.0, mAccent = 0.0;
-  pc2fast::TR808Pc2Fast mModel;
+  pc2fast::Pc2Fast808 mModel;
   bool mActive = false;
   double mWinSq = 0.0; uint64_t mSeed = 0;
   long mSamples = 0, mQuiet = 0, mInWin = 0, mWinSamples = 480, mHoldSamples = 1440, mMinSamples = 2880, mMaxSamples = 144000;

@@ -16,7 +16,7 @@
 #include <unordered_map>
 #include <vector>
 
-// Background worker pool that renders and persists new TR808*VariantPool entries (see 808VariantPoolCache.h).
+// Background worker pool that renders and persists new Kit808*VariantPool entries (see 808VariantPoolCache.h).
 // Never runs on the audio thread: rendering a variant is a full circuit simulation.
 //
 // One job renders the variants of one (instrument, parameter-key) combination on one persistent voice that is
@@ -26,10 +26,10 @@
 namespace dgg
 {
 
-class TR808VariantPoolBaker
+class VariantPoolBaker808
 {
 public:
-  static TR808VariantPoolBaker& Instance() { static TR808VariantPoolBaker inst; return inst; }
+  static VariantPoolBaker808& Instance() { static VariantPoolBaker808 inst; return inst; }
 
   // active/done/total/label: the jobs running right now. pendingJobs: jobs enqueued and not finished (running or waiting). unitsDone/unitsPlanned:
   // the sounds (variants) of the current work session, planned when their jobs are queued (PlanUnits) and counted when they are baked
@@ -162,7 +162,7 @@ private:
   struct Job { std::string label; std::function<void(const ProgressFn&)> fn; };
   struct JobState { std::string label; int done = 0; int total = 0; };
 
-  TR808VariantPoolBaker()
+  VariantPoolBaker808()
   {
     // Leave a couple of cores for the audio thread/host/UI. The workers run
     // below normal priority (see WorkerLoop), so the UI stays responsive
@@ -174,7 +174,7 @@ private:
   // Process-wide singleton. Normally Shutdown() has already joined the workers; any thread left over (a job that
   // did not finish in time) must be detached here, because a joinable std::thread destroyed with its vector calls
   // std::terminate.
-  ~TR808VariantPoolBaker() { for (auto& t : mThreads) if (t.joinable()) t.detach(); }
+  ~VariantPoolBaker808() { for (auto& t : mThreads) if (t.joinable()) t.detach(); }
 
   // Caller holds mQueueMutex.
   void StartWorkersLocked()

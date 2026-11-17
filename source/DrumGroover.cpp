@@ -220,8 +220,9 @@ std::filesystem::path GetSettingsPath()
 
 // Mixer presets: one JSON file per preset in %APPDATA%\DrumGroover\MixerPresets\<engine>\ ({"name": ..., "mixer": <mixer state>}).
 std::string MixerPresetEngineName(int engineMode) { return engineMode == static_cast<int>(EngineMode::LoFi) ? "lofi" : "808"; }   // the 909 mode shares the 808 mixer presets
-const char* EngineModeName(int engineMode) { return engineMode == static_cast<int>(EngineMode::LoFi) ? "lofi" : engineMode == static_cast<int>(EngineMode::Tr909) ? "tr909" : "internal"; }
-int EngineModeFromName(const std::string& name) { return name == "lofi" ? static_cast<int>(EngineMode::LoFi) : name == "tr909" ? static_cast<int>(EngineMode::Tr909) : static_cast<int>(EngineMode::Internal); }
+const char* EngineModeName(int engineMode) { return engineMode == static_cast<int>(EngineMode::LoFi) ? "lofi" : engineMode == static_cast<int>(EngineMode::Kit909) ? "909" : "internal"; }
+// "tr909" is the legacy id of the 909 mode in saved states
+int EngineModeFromName(const std::string& name) { return name == "lofi" ? static_cast<int>(EngineMode::LoFi) : name == "909" || name == "tr909" ? static_cast<int>(EngineMode::Kit909) : static_cast<int>(EngineMode::Internal); }
 
 std::filesystem::path GetMixerPresetDir(const std::string& engine)
 {
@@ -678,7 +679,7 @@ std::atomic<bool> gFirstRunBake{false};
 std::atomic<int> gDefaultEnqueueRunning{0};
 
 // Voice parameter setters.
-void SetKickVoiceParam(dgg::TR808KickVoice& v, const std::string& p, double val)
+void SetKickVoiceParam(dgg::KickVoice808& v, const std::string& p, double val)
 {
   if (p == "decayKnob01")      v.decayKnob01 = val;
   else if (p == "toneKnob")    v.toneKnob = val;
@@ -686,12 +687,12 @@ void SetKickVoiceParam(dgg::TR808KickVoice& v, const std::string& p, double val)
   else if (p == "pitchRatio")  v.pitchRatio = val;  // digital BD transpose, shared convention with Ride/HiHat/Cymbal
 }
 
-nlohmann::json KickVoiceParamsToJson(const dgg::TR808KickVoice& v)
+nlohmann::json KickVoiceParamsToJson(const dgg::KickVoice808& v)
 {
   return { {"decayKnob01", v.decayKnob01}, {"toneKnob", v.toneKnob}, {"levelKnob", v.levelKnob}, {"pitchRatio", v.pitchRatio} };
 }
 
-void SetSnareVoiceParam(dgg::TR808SnareVoice& v, const std::string& p, double val)
+void SetSnareVoiceParam(dgg::SnareVoice808& v, const std::string& p, double val)
 {
   if (p == "toneKnob")         v.toneKnob = val;
   else if (p == "snappyKnob")  v.snappyKnob = val;
@@ -699,7 +700,7 @@ void SetSnareVoiceParam(dgg::TR808SnareVoice& v, const std::string& p, double va
   else if (p == "pitchRatio")  v.pitchRatio = val;  // digital SD transpose, shared convention with Kick/Ride/HiHat/Cymbal
 }
 
-nlohmann::json SnareVoiceParamsToJson(const dgg::TR808SnareVoice& v)
+nlohmann::json SnareVoiceParamsToJson(const dgg::SnareVoice808& v)
 {
   return { {"toneKnob", v.toneKnob}, {"snappyKnob", v.snappyKnob}, {"levelKnob", v.levelKnob}, {"pitchRatio", v.pitchRatio} };
 }
@@ -727,48 +728,48 @@ nlohmann::json HiHatVoiceParamsToJson(const dgg::HiHat808Voice& v)
   };
 }
 
-void SetTomVoiceParam(dgg::TR808TomVoice& v, const std::string& p, double val)
+void SetTomVoiceParam(dgg::TomVoice808& v, const std::string& p, double val)
 {
   if (p == "tuningKnob")          v.tuningKnob = val;
   else if (p == "levelKnob")      v.levelKnob = val;
   else if (p == "pitchRatio")     v.pitchRatio = val;
 }
 
-nlohmann::json RmVoiceParamsToJson(const dgg::TR808RmVoice& v)
+nlohmann::json RmVoiceParamsToJson(const dgg::RmVoice808& v)
 {
   return { {"levelKnob", v.levelKnob}, {"pitchRatio", v.pitchRatio} };
 }
-void SetRmVoiceParam(dgg::TR808RmVoice& v, const std::string& p, double val)
+void SetRmVoiceParam(dgg::RmVoice808& v, const std::string& p, double val)
 {
   if (p == "levelKnob")           v.levelKnob = val;
   else if (p == "pitchRatio")     v.pitchRatio = val;
 }
-nlohmann::json HcVoiceParamsToJson(const dgg::TR808HcVoice& v)
+nlohmann::json HcVoiceParamsToJson(const dgg::HcVoice808& v)
 {
   return { {"levelKnob", v.levelKnob}, {"pitchRatio", v.pitchRatio} };
 }
-void SetHcVoiceParam(dgg::TR808HcVoice& v, const std::string& p, double val)
+void SetHcVoiceParam(dgg::HcVoice808& v, const std::string& p, double val)
 {
   if (p == "levelKnob")           v.levelKnob = val;
   else if (p == "pitchRatio")     v.pitchRatio = val;
 }
 bool IsHcKind(dgg::CustomKind k) { return k == dgg::CustomKind::HandClap || k == dgg::CustomKind::Maracas; }
-nlohmann::json CbVoiceParamsToJson(const dgg::TR808CbVoice& v)
+nlohmann::json CbVoiceParamsToJson(const dgg::CbVoice808& v)
 {
   return { {"levelKnob", v.levelKnob}, {"pitchRatio", v.pitchRatio} };
 }
-void SetCbVoiceParam(dgg::TR808CbVoice& v, const std::string& p, double val)
+void SetCbVoiceParam(dgg::CbVoice808& v, const std::string& p, double val)
 {
   if (p == "levelKnob")           v.levelKnob = val;
   else if (p == "pitchRatio")     v.pitchRatio = val;
 }
 bool IsCbKind(dgg::CustomKind k) { return k == dgg::CustomKind::Cowbell; }
-nlohmann::json Pc2VoiceParamsToJson(const dgg::TR808Pc2Voice& v)
+nlohmann::json Pc2VoiceParamsToJson(const dgg::Pc2Voice808& v)
 {
   return { {"levelKnob", v.levelKnob}, {"lfoRateKnob", v.lfoRateKnob}, {"lfoDepthKnob", v.lfoDepthKnob}, {"pitchKnob", v.pitchKnob},
            {"decayKnob", v.decayKnob}, {"sweepKnob", v.sweepKnob}, {"lfoWaveKnob", v.lfoWaveKnob}, {"vcoWaveKnob", v.vcoWaveKnob} };
 }
-void SetPc2VoiceParam(dgg::TR808Pc2Voice& v, const std::string& p, double val)
+void SetPc2VoiceParam(dgg::Pc2Voice808& v, const std::string& p, double val)
 {
   if (p == "levelKnob")           v.levelKnob = val;
   else if (p == "lfoRateKnob")    v.lfoRateKnob = val;
@@ -780,60 +781,60 @@ void SetPc2VoiceParam(dgg::TR808Pc2Voice& v, const std::string& p, double val)
   else if (p == "vcoWaveKnob")    v.vcoWaveKnob = val;
 }
 bool IsPc2Kind(dgg::CustomKind k) { return k == dgg::CustomKind::Pc2; }
-nlohmann::json Tr909CustomParamsToJson(const dgg::Tr909CachedVoice& v)
+nlohmann::json CustomParamsToJson909(const dgg::CachedVoice909& v)
 {
   nlohmann::json j = { {"pitchRatio", v.pitchRatio} };
   double p[8] = {}; v.PotValues(p);
   switch (v.voice())
   {
-    case dgg::Tr909Voice::Lt: case dgg::Tr909Voice::Mt: case dgg::Tr909Voice::Ht: j["tune909"] = p[0]; j["decay909"] = p[1]; j["level909"] = p[2]; break;
-    case dgg::Tr909Voice::Bd: j["tune909"] = p[0]; j["attack909"] = p[1]; j["level909"] = p[2]; j["decay909"] = p[3]; break;
-    case dgg::Tr909Voice::Sd: j["tune909"] = p[0]; j["tone909"] = p[1]; j["level909"] = p[2]; j["snappy909"] = p[3]; break;
-    case dgg::Tr909Voice::Hc: j["level909"] = p[0]; break;
-    case dgg::Tr909Voice::Hh: case dgg::Tr909Voice::Ho: j["level909"] = p[0]; j["decay909"] = p[1]; break;
+    case dgg::Voice909::Lt: case dgg::Voice909::Mt: case dgg::Voice909::Ht: j["tune909"] = p[0]; j["decay909"] = p[1]; j["level909"] = p[2]; break;
+    case dgg::Voice909::Bd: j["tune909"] = p[0]; j["attack909"] = p[1]; j["level909"] = p[2]; j["decay909"] = p[3]; break;
+    case dgg::Voice909::Sd: j["tune909"] = p[0]; j["tone909"] = p[1]; j["level909"] = p[2]; j["snappy909"] = p[3]; break;
+    case dgg::Voice909::Hc: j["level909"] = p[0]; break;
+    case dgg::Voice909::Hh: case dgg::Voice909::Ho: j["level909"] = p[0]; j["decay909"] = p[1]; break;
     default: break;
   }
   return j;
 }
-void SetTr909CustomParam(dgg::Tr909CachedVoice& v, const std::string& p, double val)
+void SetCustomParam909(dgg::CachedVoice909& v, const std::string& p, double val)
 {
   if (v.SetPot(p, val)) return;   // a circuit pot: part of the set key
   if (p == "pitchRatio") v.pitchRatio = val;
 }
 // Editing state of the 909 circuit pots: while a knob is being moved, a hit that finds no baked set triggers the one preview sample of its voice (Enqueue909Preview); the release bakes the cache sets (HandleCommitVoiceParam).
-std::atomic<bool>& gTr909Dragging = dgg::Tr909KnobEditing();   // shared with Tr909CachedVoice::Trigger: while true, hits play the temporary sample, not a cache set
-std::atomic<int64_t> gTr909EditMs{0};
+std::atomic<bool>& gDragging909 = dgg::KnobEditing909();   // shared with CachedVoice909::Trigger: while true, hits play the temporary sample, not a cache set
+std::atomic<int64_t> gEditMs909{0};
 int64_t NowMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
-void Mark909Edit() { gTr909EditMs.store(NowMs(), std::memory_order_relaxed); gTr909Dragging.store(true, std::memory_order_relaxed); }
-bool Tr909DragActive()
+void Mark909Edit() { gEditMs909.store(NowMs(), std::memory_order_relaxed); gDragging909.store(true, std::memory_order_relaxed); }
+bool DragActive909()
 {
   constexpr int64_t kDragWatchdogMs = 3000;   // no knob edit for this long: the release was lost, the drag is over
-  if (!gTr909Dragging.load(std::memory_order_relaxed)) return false;
-  if (NowMs() - gTr909EditMs.load(std::memory_order_relaxed) < kDragWatchdogMs) return true;
-  gTr909Dragging.store(false, std::memory_order_relaxed); return false;
+  if (!gDragging909.load(std::memory_order_relaxed)) return false;
+  if (NowMs() - gEditMs909.load(std::memory_order_relaxed) < kDragWatchdogMs) return true;
+  gDragging909.store(false, std::memory_order_relaxed); return false;
 }
-void Enqueue909Preview(const dgg::Tr909SetKey& key);   // defined with the other bake queues below
-void Release909Preview(dgg::Tr909Voice voice);
+void Enqueue909Preview(const dgg::SetKey909& key);   // defined with the other bake queues below
+void Release909Preview(dgg::Voice909 voice);
 void Clear909PreviewFiles();
-void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete, bool rebakeAll = false);
-void Set909RimParam(dgg::Tr909RimLiveVoice& v, const std::string& p, double val)
+void Enqueue909Set(const dgg::SetKey909& key, int target, bool loadIfComplete, bool rebakeAll = false);
+void Set909RimParam(dgg::RimLiveVoice909& v, const std::string& p, double val)
 {
   if (p == "levelKnob") v.levelKnob = val;
   else if (p == "pitchRatio") v.pitchRatio = val;
 }
-nlohmann::json TomVoiceParamsToJson(const dgg::TR808TomVoice& v)
+nlohmann::json TomVoiceParamsToJson(const dgg::TomVoice808& v)
 {
   return { {"tuningKnob", v.tuningKnob}, {"levelKnob", v.levelKnob}, {"pitchRatio", v.pitchRatio} };
 }
 
 // The same operations by voice type, for code that walks the instrument table over pools of different voice kinds.
-void SetParamOn(dgg::TR808SnareVoice& v, const std::string& p, double val) { SetSnareVoiceParam(v, p, val); }
-void SetParamOn(dgg::TR808RmVoice& v, const std::string& p, double val) { SetRmVoiceParam(v, p, val); }
-void SetParamOn(dgg::TR808HcVoice& v, const std::string& p, double val) { SetHcVoiceParam(v, p, val); }
-void SetParamOn(dgg::TR808CbVoice& v, const std::string& p, double val) { SetCbVoiceParam(v, p, val); }
-void SetParamOn(dgg::TR808Pc2Voice& v, const std::string& p, double val) { SetPc2VoiceParam(v, p, val); }
-nlohmann::json ParamsJsonOf(const dgg::TR808SnareVoice& v) { return SnareVoiceParamsToJson(v); }
-nlohmann::json ParamsJsonOf(const dgg::TR808RmVoice& v) { return RmVoiceParamsToJson(v); }
+void SetParamOn(dgg::SnareVoice808& v, const std::string& p, double val) { SetSnareVoiceParam(v, p, val); }
+void SetParamOn(dgg::RmVoice808& v, const std::string& p, double val) { SetRmVoiceParam(v, p, val); }
+void SetParamOn(dgg::HcVoice808& v, const std::string& p, double val) { SetHcVoiceParam(v, p, val); }
+void SetParamOn(dgg::CbVoice808& v, const std::string& p, double val) { SetCbVoiceParam(v, p, val); }
+void SetParamOn(dgg::Pc2Voice808& v, const std::string& p, double val) { SetPc2VoiceParam(v, p, val); }
+nlohmann::json ParamsJsonOf(const dgg::SnareVoice808& v) { return SnareVoiceParamsToJson(v); }
+nlohmann::json ParamsJsonOf(const dgg::RmVoice808& v) { return RmVoiceParamsToJson(v); }
 // The four knobs of the factory-default set of a Ride/HiHat/Cymbal row (kind 0 = ride, 1 = hihat, 2 = cymbal, as dgg::FactoryDefaultEntry).
 dgg::FactoryDefaultEntry FactoryEntryOf(const dgg::InstrumentDef& d)
 {
@@ -843,21 +844,21 @@ dgg::FactoryDefaultEntry FactoryEntryOf(const dgg::InstrumentDef& d)
 }
 void SetParamOn(dgg::HiHat808Voice& v, const std::string& p, double val) { SetHiHatVoiceParam(v, p, val); }
 nlohmann::json ParamsJsonOf(const dgg::HiHat808Voice& v) { return HiHatVoiceParamsToJson(v); }
-void SetParamOn(dgg::TR808KickVoice& v, const std::string& p, double val) { SetKickVoiceParam(v, p, val); }
-nlohmann::json ParamsJsonOf(const dgg::TR808KickVoice& v) { return KickVoiceParamsToJson(v); }
-void SetParamOn(dgg::TR808TomVoice& v, const std::string& p, double val) { SetTomVoiceParam(v, p, val); }
-nlohmann::json ParamsJsonOf(const dgg::TR808TomVoice& v) { return TomVoiceParamsToJson(v); }
-dgg::TR808TomVoice::Articulation TomArticulationOf(const char* name)
+void SetParamOn(dgg::KickVoice808& v, const std::string& p, double val) { SetKickVoiceParam(v, p, val); }
+nlohmann::json ParamsJsonOf(const dgg::KickVoice808& v) { return KickVoiceParamsToJson(v); }
+void SetParamOn(dgg::TomVoice808& v, const std::string& p, double val) { SetTomVoiceParam(v, p, val); }
+nlohmann::json ParamsJsonOf(const dgg::TomVoice808& v) { return TomVoiceParamsToJson(v); }
+dgg::TomVoice808::Articulation TomArticulationOf(const char* name)
 {
-  if (dgg::StrEq(name, "RimShot")) return dgg::TR808TomVoice::Articulation::RimShot;
-  if (dgg::StrEq(name, "RimOnly")) return dgg::TR808TomVoice::Articulation::RimOnly;
-  return dgg::TR808TomVoice::Articulation::Center;
+  if (dgg::StrEq(name, "RimShot")) return dgg::TomVoice808::Articulation::RimShot;
+  if (dgg::StrEq(name, "RimOnly")) return dgg::TomVoice808::Articulation::RimOnly;
+  return dgg::TomVoice808::Articulation::Center;
 }
 
-// Cymbal plays through TR808RideVoice (see dsp/808RideVoice.h
+// Cymbal plays through RideVoice808 (see dsp/808RideVoice.h
 // Articulation::Crash) -- callers use SetRideVoiceParam/RideVoiceParamsToJson.
 
-void SetRideVoiceParam(dgg::TR808RideVoice& v, const std::string& p, double val)
+void SetRideVoiceParam(dgg::RideVoice808& v, const std::string& p, double val)
 {
   if (p == "toneKnob")            v.toneKnob = val;
   else if (p == "levelKnob")      v.levelKnob = val;
@@ -869,7 +870,7 @@ void SetRideVoiceParam(dgg::TR808RideVoice& v, const std::string& p, double val)
   else if (p == "level")          v.level = val;
 }
 
-nlohmann::json RideVoiceParamsToJson(const dgg::TR808RideVoice& v)
+nlohmann::json RideVoiceParamsToJson(const dgg::RideVoice808& v)
 {
   return {
     {"toneKnob", v.toneKnob}, {"levelKnob", v.levelKnob}, {"decayKnob01", v.decayKnob01},
@@ -1041,7 +1042,7 @@ std::atomic<int> gLiveInstances{0};
 DrumGroover::~DrumGroover()
 {
   if (gLiveInstances.fetch_sub(1) == 1)
-    dgg::TR808VariantPoolBaker::Instance().Shutdown();
+    dgg::VariantPoolBaker808::Instance().Shutdown();
 }
 
 DrumGroover::DrumGroover(const InstanceInfo& info)
@@ -1111,7 +1112,7 @@ DrumGroover::DrumGroover(const InstanceInfo& info)
       for (int i = 0; i < d.numDefaults; ++i) SetParamOn(v, d.defaults[i].key, d.defaults[i].value);
   });
   for (int i = 0; i < dgg::kNumInstruments; ++i)   // the live 909 Rim Shot of a row starts with the row's defaults (Level and Pitch are the knobs it shares with the 808 rim shot)
-    if (dgg::Tr909RimLiveForInstrument(dgg::kInstruments[i]))
+    if (dgg::RimLiveForInstrument909(dgg::kInstruments[i]))
       for (auto& v : m909RimPools[dgg::kInstruments[i].poolSlot].Voices())
         for (int j = 0; j < dgg::kInstruments[i].numDefaults; ++j) Set909RimParam(v, dgg::kInstruments[i].defaults[j].key, dgg::kInstruments[i].defaults[j].value);
 
@@ -1133,9 +1134,9 @@ DrumGroover::DrumGroover(const InstanceInfo& info)
       for (auto& v : mCustomRmPools[k].Voices()) v.claves = row.kind == dgg::CustomKind::Claves;
       for (auto& v : mCustomHcPools[k].Voices()) v.clap = row.kind == dgg::CustomKind::HandClap;
       // the circuit's start values: the instrument's defaults, on the pool of its kind (a 909 instrument has no circuit knobs)
-      if (row.kind == dgg::CustomKind::Tr909)
-        for (int i = 0; i < row.numDefaults; ++i) for (auto& v : m909CustomPools[k].Voices()) SetTr909CustomParam(v, row.defaults[i].key, row.defaults[i].value);
-      for (int i = 0; i < row.numDefaults && row.kind != dgg::CustomKind::Tr909; ++i)
+      if (row.kind == dgg::CustomKind::Kit909)
+        for (int i = 0; i < row.numDefaults; ++i) for (auto& v : m909CustomPools[k].Voices()) SetCustomParam909(v, row.defaults[i].key, row.defaults[i].value);
+      for (int i = 0; i < row.numDefaults && row.kind != dgg::CustomKind::Kit909; ++i)
       {
         if (row.kind == dgg::CustomKind::Conga) { for (auto& v : mCustomPools[k].Voices()) SetParamOn(v, row.defaults[i].key, row.defaults[i].value); }
         else if (IsHcKind(row.kind)) { for (auto& v : mCustomHcPools[k].Voices()) SetParamOn(v, row.defaults[i].key, row.defaults[i].value); }
@@ -1185,8 +1186,8 @@ DrumGroover::DrumGroover(const InstanceInfo& info)
   // Variant-pool target size (HandleSetCacheVariantCount): the persisted project value or the default.
   {
     const int n = mCacheVariantCount.load(std::memory_order_relaxed);
-    dgg::TR808RideVariantPool::Instance().SetTargetVariantCount(n);
-    dgg::TR808HiHatVariantPool::Instance().SetTargetVariantCount(n);
+    dgg::RideVariantPool808::Instance().SetTargetVariantCount(n);
+    dgg::HiHatVariantPool808::Instance().SetTargetVariantCount(n);
   }
 
   // Initialize articulation gains to unity.
@@ -1417,7 +1418,7 @@ void DrumGroover::OnIdle()
   // like the meters above rather than pushed from the worker thread, so
   // the UI thread only ever reads SendBridgeMessage from OnIdle.
   {
-    const auto snap = dgg::TR808VariantPoolBaker::Instance().GetSnapshot();
+    const auto snap = dgg::VariantPoolBaker808::Instance().GetSnapshot();
     PollApplyJob();
     DrainCacheMisses();
     // The first-run flag is latched in OnWebContentLoaded and must stay until the bake has actually finished; clearing it on a
@@ -1528,10 +1529,10 @@ void DrumGroover::OnWebContentLoaded()
   std::string missingSet;
   {
     const int target909 = mCacheVariantCount.load(std::memory_order_relaxed);
-    for (const dgg::Tr909SetKey& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(GetSampleRate()))))
+    for (const dgg::SetKey909& k : dgg::FactoryDefaultKeys909(static_cast<int>(std::lround(GetSampleRate()))))
     {
-      const std::string base = dgg::Tr909SetBaseName(k);
-      for (int v = 1; v <= dgg::Tr909VariantTarget(k.voice, target909) && missingSet.empty(); ++v)
+      const std::string base = dgg::SetBaseName909(k);
+      for (int v = 1; v <= dgg::VariantTarget909(k.voice, target909) && missingSet.empty(); ++v)
         if (!VariantFileValid(VariantFilePath(base, v))) missingSet = base + " v" + std::to_string(v);
       if (!missingSet.empty()) break;
     }
@@ -1543,7 +1544,7 @@ void DrumGroover::OnWebContentLoaded()
     + (missingSet.empty() ? "" : "; 909 default set incomplete: " + missingSet));
 
   // Before the instance id: the UI's dggOnReady callbacks run on the id and may already need the table.
-  { nlohmann::json table = dgg::InstrumentTableWithCustomsToJson(); dgg::AddTr909Controls(table); SendBridgeMessage("instrumentTable", table); }
+  { nlohmann::json table = dgg::InstrumentTableWithCustomsToJson(); dgg::AddControls909(table); SendBridgeMessage("instrumentTable", table); }
   SendBridgeMessage("instanceId", { {"id", mInstanceId} });
 
   PushEngineAndProjectStateToUI();
@@ -1625,8 +1626,8 @@ nlohmann::json DrumGroover::BuildVoiceParamsJson() const
   });
   for (int k = 0; k < dgg::kNumCustomInstruments; k++)
   {
-    if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909)
-      for (auto& v : m909CustomPools[k].Voices()) { voiceParams["custom:" + std::to_string(k)] = Tr909CustomParamsToJson(v); break; }
+    if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Kit909)
+      for (auto& v : m909CustomPools[k].Voices()) { voiceParams["custom:" + std::to_string(k)] = CustomParamsToJson909(v); break; }
     else if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Conga)
       for (auto& v : mCustomPools[k].Voices()) { voiceParams["custom:" + std::to_string(k)] = TomVoiceParamsToJson(v); break; }
     else if (IsHcKind(dgg::CustomInstrument(k).kind))
@@ -2929,7 +2930,7 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
   DGG_Log("HandleSetVoiceParam: family='" + family + "' param='" + param + "' index=" + std::to_string(index) + " value=" + std::to_string(value));
 
   mVoiceParamsConfigured.store(true, std::memory_order_relaxed);
-  if (dgg::Tr909CachedVoice::IsPotName(param) && (family == "kick" || family == "snare" || family == "tom" || family == "custom" || family == "cymbal" || family == "ride" || family == "hihat") && mEngineMode.load(std::memory_order_relaxed) == static_cast<int>(EngineMode::Tr909)) Mark909Edit();
+  if (dgg::CachedVoice909::IsPotName(param) && (family == "kick" || family == "snare" || family == "tom" || family == "custom" || family == "cymbal" || family == "ride" || family == "hihat") && mEngineMode.load(std::memory_order_relaxed) == static_cast<int>(EngineMode::Kit909)) Mark909Edit();
   if (family == "ride" || family == "hihat" || family == "cymbal")
   {
     mParamEditMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
@@ -2942,8 +2943,8 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
     ForEachKickPool([&](const dgg::InstrumentDef& d, auto& pool) {
       if (d.paramIndex != target) return;
       for (auto& v : pool.Voices()) SetParamOn(v, param, value);
-      dgg::Tr909Voice v909;
-      if (dgg::Tr909VoiceForInstrument(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetTr909CustomParam(v, param, value);   // the 909 kick of the row follows the card
+      dgg::Voice909 v909;
+      if (dgg::VoiceForInstrument909(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetCustomParam909(v, param, value);   // the 909 kick of the row follows the card
     });
   }
   else if (family == "snare")
@@ -2952,9 +2953,9 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
     ForEachSnarePool([&](const dgg::InstrumentDef& d, auto& pool) {
       if (d.paramIndex != target) return;
       for (auto& v : pool.Voices()) SetParamOn(v, param, value);
-      dgg::Tr909Voice v909;
-      if (dgg::Tr909VoiceForInstrument(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetTr909CustomParam(v, param, value);   // the 909 snare of the row follows the card
-      if (dgg::Tr909RimLiveForInstrument(d)) for (auto& v : m909RimPools[d.poolSlot].Voices()) Set909RimParam(v, param, value);   // the 909 Rim Shot of the row follows the card
+      dgg::Voice909 v909;
+      if (dgg::VoiceForInstrument909(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetCustomParam909(v, param, value);   // the 909 snare of the row follows the card
+      if (dgg::RimLiveForInstrument909(d)) for (auto& v : m909RimPools[d.poolSlot].Voices()) Set909RimParam(v, param, value);   // the 909 Rim Shot of the row follows the card
     });
   }
   else if (family == "hihat")
@@ -2963,8 +2964,8 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
     ForEachHiHatPool([&](const dgg::InstrumentDef& d, auto& pool) {
       if (d.paramIndex != target) return;
       for (auto& v : pool.Voices()) SetParamOn(v, param, value);
-      dgg::Tr909Voice v909;
-      if (dgg::Tr909VoiceForInstrument(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetTr909CustomParam(v, param, value);   // the 909 hi-hat of the row follows the card (Level, Decay)
+      dgg::Voice909 v909;
+      if (dgg::VoiceForInstrument909(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetCustomParam909(v, param, value);   // the 909 hi-hat of the row follows the card (Level, Decay)
     });
   }
   else if (family == "tom")
@@ -2972,8 +2973,8 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
     ForEachTomPool([&](const dgg::InstrumentDef& d, auto& pool) {
       if (index >= 0 && index != d.paramIndex) return;
       for (auto& v : pool.Voices()) SetParamOn(v, param, value);
-      dgg::Tr909Voice v909;
-      if (dgg::Tr909VoiceForInstrument(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetTr909CustomParam(v, param, value);   // the 909 tom of the row follows the card (Level, Tuning, Pitch)
+      dgg::Voice909 v909;
+      if (dgg::VoiceForInstrument909(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetCustomParam909(v, param, value);   // the 909 tom of the row follows the card (Level, Tuning, Pitch)
     });
   }
   else if (family == "custom")
@@ -2981,7 +2982,7 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
     for (int k = 0; k < dgg::kNumCustomInstruments; k++)
     {
       if (index >= 0 && index != k) continue;
-      if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909) { for (auto& v : m909CustomPools[k].Voices()) SetTr909CustomParam(v, param, value); continue; }
+      if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Kit909) { for (auto& v : m909CustomPools[k].Voices()) SetCustomParam909(v, param, value); continue; }
       if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Conga) { for (auto& v : mCustomPools[k].Voices()) SetTomVoiceParam(v, param, value); }
       else if (IsHcKind(dgg::CustomInstrument(k).kind)) { for (auto& v : mCustomHcPools[k].Voices()) SetHcVoiceParam(v, param, value); }
       else if (IsCbKind(dgg::CustomInstrument(k).kind)) { for (auto& v : mCustomCbPools[k].Voices()) SetCbVoiceParam(v, param, value); }
@@ -2994,8 +2995,8 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
     const int idx = (index >= 0 && index < (int)mCymbalPools.size()) ? index : 0;
     for (auto& v : mCymbalPools[idx].Voices()) SetRideVoiceParam(v, param, value);
     ForEachCymbalPool([&](const dgg::InstrumentDef& d, auto&) {   // the 909 Crash of the row follows the card (Level)
-      dgg::Tr909Voice v909;
-      if ((index < 0 || d.paramIndex == index) && dgg::Tr909VoiceForInstrument(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetTr909CustomParam(v, param, value);
+      dgg::Voice909 v909;
+      if ((index < 0 || d.paramIndex == index) && dgg::VoiceForInstrument909(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetCustomParam909(v, param, value);
     });
   }
   else if (family == "ride")
@@ -3003,8 +3004,8 @@ void DrumGroover::HandleSetVoiceParam(const nlohmann::json& payload)
     const int idx = (index >= 0 && index < (int)mRidePools.size()) ? index : 0;
     for (auto& v : mRidePools[idx].Voices()) SetRideVoiceParam(v, param, value);
     ForEachRidePool([&](const dgg::InstrumentDef& d, auto&) {   // the 909 Ride of the row follows the card (Level)
-      dgg::Tr909Voice v909;
-      if ((index < 0 || d.paramIndex == index) && dgg::Tr909VoiceForInstrument(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetTr909CustomParam(v, param, value);
+      dgg::Voice909 v909;
+      if ((index < 0 || d.paramIndex == index) && dgg::VoiceForInstrument909(d, v909)) for (auto& v : m909Pools[&d - dgg::kInstruments].Voices()) SetCustomParam909(v, param, value);
     });
   }
   else
@@ -3028,22 +3029,22 @@ void DrumGroover::HandleCommitVoiceParam(const nlohmann::json& payload)
   if (family == "kick" || family == "snare" || family == "tom" || family == "custom" || family == "cymbal" || family == "ride" || family == "hihat")
   {
     // The release of a 909 circuit pot: the preview file goes (the preview sample stays active until the next drag replaces it), the cache sets of the final pot state of the voice(s) of the card are baked.
-    gTr909Dragging.store(false, std::memory_order_relaxed);
-    auto bakeVoice = [&](dgg::VoicePool<dgg::Tr909CachedVoice, 4>& pool)
+    gDragging909.store(false, std::memory_order_relaxed);
+    auto bakeVoice = [&](dgg::VoicePool<dgg::CachedVoice909, 4>& pool)
     {
       if (pool.Voices().empty()) return;
-      const dgg::Tr909CachedVoice& v0 = pool.Voices()[0];
+      const dgg::CachedVoice909& v0 = pool.Voices()[0];
       if (v0.Params() != 0) return;   // a pot state set with a knob is not baked into the cache: its temporary sample (memory) stays and serves the following hits
       Release909Preview(v0.voice());
-      for (const dgg::Tr909SetKey& k : dgg::Tr909KeysForParams(v0.voice(), v0.Params(), static_cast<int>(std::lround(GetSampleRate()))))
+      for (const dgg::SetKey909& k : dgg::KeysForParams909(v0.voice(), v0.Params(), static_cast<int>(std::lround(GetSampleRate()))))
         Enqueue909Set(k, mCacheVariantCount.load(std::memory_order_relaxed), /*loadIfComplete=*/true);
     };
-    if (mEngineMode.load(std::memory_order_relaxed) == static_cast<int>(EngineMode::Tr909))
+    if (mEngineMode.load(std::memory_order_relaxed) == static_cast<int>(EngineMode::Kit909))
     {
-      if (family == "custom") { for (int k = 0; k < dgg::kNumCustomInstruments; ++k) if ((index < 0 || index == k) && dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909) bakeVoice(m909CustomPools[k]); }
+      if (family == "custom") { for (int k = 0; k < dgg::kNumCustomInstruments; ++k) if ((index < 0 || index == k) && dgg::CustomInstrument(k).kind == dgg::CustomKind::Kit909) bakeVoice(m909CustomPools[k]); }
       else
       {
-        auto row = [&](const dgg::InstrumentDef& d, auto&) { dgg::Tr909Voice v909; if ((index < 0 || index == d.paramIndex) && dgg::Tr909VoiceForInstrument(d, v909)) bakeVoice(m909Pools[&d - dgg::kInstruments]); };
+        auto row = [&](const dgg::InstrumentDef& d, auto&) { dgg::Voice909 v909; if ((index < 0 || index == d.paramIndex) && dgg::VoiceForInstrument909(d, v909)) bakeVoice(m909Pools[&d - dgg::kInstruments]); };
         if (family == "kick") ForEachKickPool(row); else if (family == "snare") ForEachSnarePool(row); else if (family == "cymbal") ForEachCymbalPool(row); else if (family == "ride") ForEachRidePool(row); else if (family == "hihat") ForEachHiHatPool(row); else ForEachTomPool(row);
       }
     }
@@ -3080,8 +3081,8 @@ void DrumGroover::HandleSetCacheVariantCount(const nlohmann::json& payload)
 {
   const int value = std::clamp(payload.value("value", 7), 1, 20);
   mCacheVariantCount.store(value, std::memory_order_relaxed);
-  dgg::TR808RideVariantPool::Instance().SetTargetVariantCount(value);
-  dgg::TR808HiHatVariantPool::Instance().SetTargetVariantCount(value);
+  dgg::RideVariantPool808::Instance().SetTargetVariantCount(value);
+  dgg::HiHatVariantPool808::Instance().SetTargetVariantCount(value);
   SendBridgeMessage("cacheVariantCount", { {"value", value} });
 }
 
@@ -3129,15 +3130,15 @@ void DrumGroover::HandleClearCache(const nlohmann::json& payload)
     // The in-memory pools don't record which resident variant belongs to a
     // default set, so they are dropped as a whole and refilled by the
     // re-enqueue below (default sets come straight back from disk).
-    dgg::TR808RideVariantPool::Instance().ClearForTest();
-    dgg::TR808HiHatVariantPool::Instance().ClearForTest();
-    dgg::Tr909VariantPool::Instance().ClearForTest();
+    dgg::RideVariantPool808::Instance().ClearForTest();
+    dgg::HiHatVariantPool808::Instance().ClearForTest();
+    dgg::VariantPool909::Instance().ClearForTest();
     const uintmax_t freed = deleteSets(false);
 
     for (int i = 0; i < dgg::CountInstruments("ride"); i++)  EnqueueRideVariantBake(i);
     for (int i = 0; i < dgg::CountInstruments("hihat"); i++)  EnqueueHiHatVariantBake(i);
     for (int i = 0; i < dgg::CountInstruments("cymbal"); i++) EnqueueCrashVariantBake(i);
-    Enqueue909FactoryDefaults(GetSampleRate(), mCacheVariantCount.load(std::memory_order_relaxed), dgg::TR808VariantPoolBaker::Instance().CancelGeneration());
+    Enqueue909FactoryDefaults(GetSampleRate(), mCacheVariantCount.load(std::memory_order_relaxed), dgg::VariantPoolBaker808::Instance().CancelGeneration());
 
     DGG_Log("HandleClearCache[cache]: freed " + std::to_string(freed) + " bytes");
     SendBridgeMessage("cacheCleared", { {"tier", "cache"}, {"bytesFreed", (double)freed} });
@@ -3275,7 +3276,7 @@ void ReleaseAllSlots()
 // loadIfComplete: also load the set's files into the pool when nothing is missing (a set that is only on disk
 // would miss and stay silent). rebakeAll: bake all variants again with a random extra warmup and replace the set.
 template <typename Pool>
-void EnqueueMissingVariants(const char* label, Pool& pool, const dgg::TR808VariantKey128& key, const std::string& baseName,
+void EnqueueMissingVariants(const char* label, Pool& pool, const dgg::VariantKey128808& key, const std::string& baseName,
                             int target, bool loadIfComplete, std::function<std::vector<float>(double)> render,
                             bool rebakeAll = false, int immediateVariants = 2)
 {
@@ -3304,15 +3305,15 @@ void EnqueueMissingVariants(const char* label, Pool& pool, const dgg::TR808Varia
 
 
   const int total = (int)missing.size();
-  dgg::TR808VariantPoolBaker::Instance().PlanUnits(total);
-  const int immediate = std::max(1, std::min(total, std::max(immediateVariants, dgg::TR808VariantPoolBaker::Instance().FreeThreads())));
+  dgg::VariantPoolBaker808::Instance().PlanUnits(total);
+  const int immediate = std::max(1, std::min(total, std::max(immediateVariants, dgg::VariantPoolBaker808::Instance().FreeThreads())));
   auto remainingImmediate = std::make_shared<std::atomic<int>>(immediate);
   Pool* poolPtr = &pool;
   const std::string labelStr = label;
-  const uint64_t cancelGen = dgg::TR808VariantPoolBaker::Instance().CancelGeneration();
+  const uint64_t cancelGen = dgg::VariantPoolBaker808::Instance().CancelGeneration();
 
   auto bakeSlot = [=](int slot) {
-    return [=](const dgg::TR808VariantPoolBaker::ProgressFn& report) {
+    return [=](const dgg::VariantPoolBaker808::ProgressFn& report) {
       const int k = missing[slot];
       MarkSlotStarted(baseName, k);
       const dgg::BakeScope bakeScope(abortGen);
@@ -3323,7 +3324,7 @@ void EnqueueMissingVariants(const char* label, Pool& pool, const dgg::TR808Varia
       const bool aborted = dgg::BakeAborted();   // Pause / Close since this job was queued: nothing half-finished is stored
       if (aborted) tap.clear();
       const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-      dgg::TR808VariantPoolBaker::Instance().RecordBake(ms);
+      dgg::VariantPoolBaker808::Instance().RecordBake(ms);
       const auto path = VariantFilePath(baseName, k);
       if ((rebakeAll || !VariantFileValid(path)) && !tap.empty())
       {
@@ -3334,7 +3335,7 @@ void EnqueueMissingVariants(const char* label, Pool& pool, const dgg::TR808Varia
         + std::to_string(tap.size()) + " samples, warmup=" + std::to_string(warmupSec) + "s" + (aborted ? ", stopped, not stored" : "") + ")");
       if (aborted) DggAppLog("808 bake " + baseName + " v" + std::to_string(k) + ": stopped (Pause or Close, not stored) after " + std::to_string(static_cast<int>(ms)) + " ms");
       report(1, 1);
-      dgg::TR808VariantPoolBaker::Instance().FinishUnits(aborted ? 0 : 1);
+      dgg::VariantPoolBaker808::Instance().FinishUnits(aborted ? 0 : 1);
       UnmarkSlotInFlight(baseName, k, abortGen);
     };
   };
@@ -3342,25 +3343,25 @@ void EnqueueMissingVariants(const char* label, Pool& pool, const dgg::TR808Varia
   for (int s = 0; s < immediate; s++)
   {
     auto job = bakeSlot(s);
-    dgg::TR808VariantPoolBaker::Instance().Enqueue(labelStr,
-      [=](const dgg::TR808VariantPoolBaker::ProgressFn& report) {
+    dgg::VariantPoolBaker808::Instance().Enqueue(labelStr,
+      [=](const dgg::VariantPoolBaker808::ProgressFn& report) {
         job(report);
-        if (remainingImmediate->fetch_sub(1) == 1 && dgg::TR808VariantPoolBaker::Instance().CancelGeneration() == cancelGen)
+        if (remainingImmediate->fetch_sub(1) == 1 && dgg::VariantPoolBaker808::Instance().CancelGeneration() == cancelGen)
           for (int j = immediate; j < total; j++)
-            dgg::TR808VariantPoolBaker::Instance().Enqueue(labelStr, bakeSlot(j));
+            dgg::VariantPoolBaker808::Instance().Enqueue(labelStr, bakeSlot(j));
       });
   }
 }
 
-// Ride and Cymbal share TR808RideVoice (Crash/Mute are articulations of
+// Ride and Cymbal share RideVoice808 (Crash/Mute are articulations of
 // it) and therefore one key space and one pool.
-void EnqueueRideSet(const char* label, const dgg::TR808VariantKey128& key, int target, bool loadIfComplete, bool rebakeAll = false)
+void EnqueueRideSet(const char* label, const dgg::VariantKey128808& key, int target, bool loadIfComplete, bool rebakeAll = false)
 {
   if (gCacheOffRide.load(std::memory_order_relaxed)) return;
-  const std::string baseName = dgg::TR808RideVoice::VariantPoolBaseName(key);
+  const std::string baseName = dgg::RideVoice808::VariantPoolBaseName(key);
   auto render = [key](double warmupSec) {
-    const auto p = dgg::TR808RideVoice::DecodeVariantPoolKey(key);
-    dgg::TR808RideVoice bakeVoice;
+    const auto p = dgg::RideVoice808::DecodeVariantPoolKey(key);
+    dgg::RideVoice808 bakeVoice;
     bakeVoice.SetSampleRate(p.sampleRateHz);
     bakeVoice.WarmupFreeRunningOscillatorsForBake(warmupSec);
     bakeVoice.decayKnob01 = p.decay; bakeVoice.toneKnob = p.tone; bakeVoice.levelKnob = p.level;
@@ -3370,7 +3371,7 @@ void EnqueueRideSet(const char* label, const dgg::TR808VariantKey128& key, int t
     std::vector<float> tap;
     std::vector<double> scratch(4096);
     bakeVoice.tapVariantBake = &tap;
-    bakeVoice.Trigger(1.0, static_cast<dgg::TR808RideVoice::Articulation>(p.art));
+    bakeVoice.Trigger(1.0, static_cast<dgg::RideVoice808::Articulation>(p.art));
     while (bakeVoice.IsActive())
     {
       if (dgg::BakeAborted()) { tap.clear(); break; }   // Pause / Close: stop between two blocks of 4096 samples
@@ -3380,10 +3381,10 @@ void EnqueueRideSet(const char* label, const dgg::TR808VariantKey128& key, int t
     bakeVoice.tapVariantBake = nullptr;
     return tap;
   };
-  EnqueueMissingVariants(label, dgg::TR808RideVariantPool::Instance(), key, baseName, target, loadIfComplete, render, rebakeAll);
+  EnqueueMissingVariants(label, dgg::RideVariantPool808::Instance(), key, baseName, target, loadIfComplete, render, rebakeAll);
 }
 
-void EnqueueHiHatSet(const dgg::TR808VariantKey128& key, int target, bool loadIfComplete, bool rebakeAll = false)
+void EnqueueHiHatSet(const dgg::VariantKey128808& key, int target, bool loadIfComplete, bool rebakeAll = false)
 {
   if (gCacheOffHiHat.load(std::memory_order_relaxed)) return;
   const std::string baseName = dgg::HiHat808Voice::VariantPoolBaseName(key);
@@ -3410,33 +3411,33 @@ void EnqueueHiHatSet(const dgg::TR808VariantKey128& key, int target, bool loadIf
     bakeVoice.tapVariantBake = nullptr;
     return tap;
   };
-  EnqueueMissingVariants("hihat", dgg::TR808HiHatVariantPool::Instance(), key, baseName, target, loadIfComplete, render, rebakeAll);
+  EnqueueMissingVariants("hihat", dgg::HiHatVariantPool808::Instance(), key, baseName, target, loadIfComplete, render, rebakeAll);
 }
 
 // TR-909 fast voices: the variants of a set are separate bake jobs like the 808 sets. Variant k is rendered with the noise seed k (909BakeHost.h),
 // so a bake can be repeated and the variants of a set differ only in the noise. A set whose accent is not validated is never baked. Each baker
 // thread keeps its own model runner, so the propagators of a model are built once per thread.
-void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete, bool rebakeAll)
+void Enqueue909Set(const dgg::SetKey909& key, int target, bool loadIfComplete, bool rebakeAll)
 {
-  dgg::Tr909AccentRun runs[2];
-  if (dgg::Tr909AccentRuns(key.voice, key.accentCode, runs) == 0)
+  dgg::AccentRun909 runs[2];
+  if (dgg::AccentRuns909(key.voice, key.accentCode, runs) == 0)
   {
-    DGG_Log("Enqueue909Set: " + dgg::Tr909SetBaseName(key) + " not validated, not baked");
+    DGG_Log("Enqueue909Set: " + dgg::SetBaseName909(key) + " not validated, not baked");
     return;
   }
-  const std::string baseName = dgg::Tr909SetBaseName(key);
-  dgg::Tr909VariantPool& pool = dgg::Tr909VariantPool::Instance();
+  const std::string baseName = dgg::SetBaseName909(key);
+  dgg::VariantPool909& pool = dgg::VariantPool909::Instance();
   pool.SetTargetVariantCount(target);
   const unsigned abortGen = dgg::BakeAbortCounter().load();   // jobs queued here die with the next Pause / Close
   std::vector<int> missing;
   if (rebakeAll)
   {
-    for (int k = 1; k <= dgg::Tr909VariantTarget(key.voice, target); k++) missing.push_back(k);
+    for (int k = 1; k <= dgg::VariantTarget909(key.voice, target); k++) missing.push_back(k);
     pool.ClearKey(key);
   }
   else
   {
-    missing = MissingVariantSlots(baseName, dgg::Tr909VariantTarget(key.voice, target));
+    missing = MissingVariantSlots(baseName, dgg::VariantTarget909(key.voice, target));
     if (missing.empty() && !loadIfComplete) return;
     LoadExistingVariantsIntoPool(pool, key, baseName);
   }
@@ -3447,10 +3448,10 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
   DGG_Log("EnqueueVariantBake: " + baseName + " missing=" + std::to_string(missing.size()) + "/" + std::to_string(target));
 
   const int total = (int)missing.size();
-  dgg::TR808VariantPoolBaker::Instance().PlanUnits(total);
-  // Variants are baked in groups when the runner of the voice offers a group engine (909BakeHost.h Tr909BakeVariantGroup); one or two left over are baked singly (a group of
+  dgg::VariantPoolBaker808::Instance().PlanUnits(total);
+  // Variants are baked in groups when the runner of the voice offers a group engine (909BakeHost.h BakeVariantGroup909); one or two left over are baked singly (a group of
   // fewer than three hits is not faster than the single hits). The units of the progress display stay the variants.
-  const int groupSize = dgg::Tr909BakeRunner().GroupSize(key.voice);   // the circuit engine and the PCM models render single hits
+  const int groupSize = dgg::BakeRunner909().GroupSize(key.voice);   // the circuit engine and the PCM models render single hits
   std::vector<std::vector<int>> groups;
   for (size_t i = 0; i < missing.size();)
   {
@@ -3458,40 +3459,40 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
     groups.emplace_back(missing.begin() + i, missing.begin() + i + take); i += take;
   }
   const int jobs = (int)groups.size();
-  const int immediate = std::max(1, std::min(jobs, std::max(2, dgg::TR808VariantPoolBaker::Instance().FreeThreads())));
+  const int immediate = std::max(1, std::min(jobs, std::max(2, dgg::VariantPoolBaker808::Instance().FreeThreads())));
   auto remainingImmediate = std::make_shared<std::atomic<int>>(immediate);
-  const uint64_t cancelGen = dgg::TR808VariantPoolBaker::Instance().CancelGeneration();
+  const uint64_t cancelGen = dgg::VariantPoolBaker808::Instance().CancelGeneration();
 
   auto bakeSlot = [=](int slot) {
-    return [=](const dgg::TR808VariantPoolBaker::ProgressFn& report) {
+    return [=](const dgg::VariantPoolBaker808::ProgressFn& report) {
       const std::vector<int>& ks = groups[slot]; const int cnt = (int)ks.size();
       for (int k : ks) MarkSlotStarted(baseName, k);
       const dgg::BakeScope bakeScope(abortGen);   // Pause and Close raise the counter: a hit being rendered then stops and is not stored
-      thread_local dgg::Tr909BakeRunner runner([](const std::string& m) { DGG_Log(m); });   // the complete circuit (Net909) renders the hit; the PCM voices have their own models
-      std::vector<float> taps[4]; dgg::Tr909BakeResult results[4];
+      thread_local dgg::BakeRunner909 runner([](const std::string& m) { DGG_Log(m); });   // the complete circuit (Net909) renders the hit; the PCM voices have their own models
+      std::vector<float> taps[4]; dgg::BakeResult909 results[4];
       const auto t0 = std::chrono::steady_clock::now();
-      if (dgg::BakeAborted()) { for (int i = 0; i < cnt; ++i) results[i] = dgg::Tr909BakeResult::RunFailed; }
-      else if (cnt == 1) results[0] = dgg::Tr909BakeVariant(key, ks[0], runner, taps[0]);
-      else dgg::Tr909BakeVariantGroup(key, ks.data(), cnt, runner, taps, results);
+      if (dgg::BakeAborted()) { for (int i = 0; i < cnt; ++i) results[i] = dgg::BakeResult909::RunFailed; }
+      else if (cnt == 1) results[0] = dgg::BakeVariant909(key, ks[0], runner, taps[0]);
+      else dgg::BakeVariantGroup909(key, ks.data(), cnt, runner, taps, results);
       const double msAll = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(), ms = msAll / cnt;
       const bool aborted = dgg::BakeAborted();
       for (int i = 0; i < cnt; ++i)
       {
-        const int k = ks[i]; const dgg::Tr909BakeResult res = results[i]; std::vector<float>& tap = taps[i];
-        dgg::TR808VariantPoolBaker::Instance().RecordBake(ms);
+        const int k = ks[i]; const dgg::BakeResult909 res = results[i]; std::vector<float>& tap = taps[i];
+        dgg::VariantPoolBaker808::Instance().RecordBake(ms);
         const auto path = VariantFilePath(baseName, k);
-        if (!aborted && res == dgg::Tr909BakeResult::Ok && (rebakeAll || !VariantFileValid(path)) && !tap.empty())
+        if (!aborted && res == dgg::BakeResult909::Ok && (rebakeAll || !VariantFileValid(path)) && !tap.empty())
         {
-          if (SaveVariantToDisk(path, tap)) dgg::Tr909VariantPool::Instance().AddVariant(key, std::vector<float>(tap));
+          if (SaveVariantToDisk(path, tap)) dgg::VariantPool909::Instance().AddVariant(key, std::vector<float>(tap));
           EvictCacheIfOverBudget();
         }
         DGG_Log("BakeTiming: " + baseName + " v" + std::to_string(k) + " took " + std::to_string(ms) + "ms ("
           + std::to_string(tap.size()) + " samples, result=" + std::to_string(static_cast<int>(res)) + (cnt > 1 ? ", group of " + std::to_string(cnt) : std::string()) + ")");
-        DggAppLog("909 bake " + baseName + " v" + std::to_string(k) + ": " + (aborted ? "stopped (Pause or Close, not stored)" : res == dgg::Tr909BakeResult::Ok ? "Ok" : res == dgg::Tr909BakeResult::AccentNotValidated ? "AccentNotValidated" : "RunFailed")
+        DggAppLog("909 bake " + baseName + " v" + std::to_string(k) + ": " + (aborted ? "stopped (Pause or Close, not stored)" : res == dgg::BakeResult909::Ok ? "Ok" : res == dgg::BakeResult909::AccentNotValidated ? "AccentNotValidated" : "RunFailed")
           + ", " + std::to_string(tap.size()) + " samples, " + std::to_string(static_cast<int>(ms)) + " ms" + (cnt > 1 ? " (group of " + std::to_string(cnt) + ")" : std::string()));
       }
       report(cnt, cnt);
-      dgg::TR808VariantPoolBaker::Instance().FinishUnits(aborted ? 0 : cnt);
+      dgg::VariantPoolBaker808::Instance().FinishUnits(aborted ? 0 : cnt);
       for (int k : ks) UnmarkSlotInFlight(baseName, k, abortGen);
     };
   };
@@ -3499,23 +3500,23 @@ void Enqueue909Set(const dgg::Tr909SetKey& key, int target, bool loadIfComplete,
   for (int s = 0; s < immediate; s++)
   {
     auto job = bakeSlot(s);
-    dgg::TR808VariantPoolBaker::Instance().Enqueue("tr909",
-      [=](const dgg::TR808VariantPoolBaker::ProgressFn& report) {
+    dgg::VariantPoolBaker808::Instance().Enqueue("909",
+      [=](const dgg::VariantPoolBaker808::ProgressFn& report) {
         job(report);
-        if (remainingImmediate->fetch_sub(1) == 1 && dgg::TR808VariantPoolBaker::Instance().CancelGeneration() == cancelGen)
+        if (remainingImmediate->fetch_sub(1) == 1 && dgg::VariantPoolBaker808::Instance().CancelGeneration() == cancelGen)
           for (int j = immediate; j < jobs; j++)
-            dgg::TR808VariantPoolBaker::Instance().Enqueue("tr909", bakeSlot(j));
+            dgg::VariantPoolBaker808::Instance().Enqueue("909", bakeSlot(j));
       });
   }
 }
-// The preview sample of a knob drag (Tr909PreviewSample, not part of the cache): one per voice, one hit of the pot state the knob is at, baked in the background and also kept in "909tmp_<Voice>_v1.f32"; the next position of the knob
+// The preview sample of a knob drag (PreviewSample909, not part of the cache): one per voice, one hit of the pot state the knob is at, baked in the background and also kept in "909tmp_<Voice>_v1.f32"; the next position of the knob
 // replaces it. It is independent of the cache sets: the release removes the file, the sample stays active until the next drag replaces it.
 std::mutex gPreview909Mutex;
-uint64_t gPreview909Params[static_cast<int>(dgg::Tr909Voice::kCount)] = {};
-bool gPreview909Has[static_cast<int>(dgg::Tr909Voice::kCount)] = {};
-bool gPreview909Released[static_cast<int>(dgg::Tr909Voice::kCount)] = {};
-std::string Preview909BaseName(dgg::Tr909Voice v) { return std::string("909tmp_") + dgg::Tr909VoiceName(v); }
-void Release909Preview(dgg::Tr909Voice voice)
+uint64_t gPreview909Params[static_cast<int>(dgg::Voice909::kCount)] = {};
+bool gPreview909Has[static_cast<int>(dgg::Voice909::kCount)] = {};
+bool gPreview909Released[static_cast<int>(dgg::Voice909::kCount)] = {};
+std::string Preview909BaseName(dgg::Voice909 v) { return std::string("909tmp_") + dgg::VoiceName909(v); }
+void Release909Preview(dgg::Voice909 voice)
 {
   std::lock_guard<std::mutex> lock(gPreview909Mutex); const int v = static_cast<int>(voice);
   if (!gPreview909Has[v]) return;
@@ -3525,13 +3526,13 @@ void Release909Preview(dgg::Tr909Voice voice)
 void Clear909PreviewFiles()   // leftovers of an earlier session
 {
   std::error_code ec;
-  for (int v = 0; v < static_cast<int>(dgg::Tr909Voice::kCount); ++v) std::filesystem::remove(VariantFilePath(Preview909BaseName(static_cast<dgg::Tr909Voice>(v)), 1), ec);
+  for (int v = 0; v < static_cast<int>(dgg::Voice909::kCount); ++v) std::filesystem::remove(VariantFilePath(Preview909BaseName(static_cast<dgg::Voice909>(v)), 1), ec);
 }
 // The pot state of a miss while a knob is moved: bakes the preview sample of that pot state (the velocity of this hit) unless it exists or is being baked.
-void Enqueue909Preview(const dgg::Tr909SetKey& key)
+void Enqueue909Preview(const dgg::SetKey909& key)
 {
-  dgg::Tr909AccentRun runs[2];
-  if (dgg::Tr909AccentRuns(key.voice, key.accentCode, runs) == 0) return;
+  dgg::AccentRun909 runs[2];
+  if (dgg::AccentRuns909(key.voice, key.accentCode, runs) == 0) return;
   const int v = static_cast<int>(key.voice);
   {
     std::lock_guard<std::mutex> lock(gPreview909Mutex);
@@ -3540,25 +3541,25 @@ void Enqueue909Preview(const dgg::Tr909SetKey& key)
     gPreview909Params[v] = key.params; gPreview909Has[v] = true; gPreview909Released[v] = false;
   }
   const unsigned abortGen = dgg::BakeAbortCounter().load();
-  dgg::TR808VariantPoolBaker::Instance().Enqueue("tr909", [=](const dgg::TR808VariantPoolBaker::ProgressFn& report) {
+  dgg::VariantPoolBaker808::Instance().Enqueue("909", [=](const dgg::VariantPoolBaker808::ProgressFn& report) {
     {
       std::lock_guard<std::mutex> lock(gPreview909Mutex);
       if (!(gPreview909Has[v] && gPreview909Params[v] == key.params)) { report(1, 1); return; }   // the knob moved on while this job waited: nothing to bake
     }
     const dgg::BakeScope bakeScope(abortGen);
-    thread_local dgg::Tr909BakeRunner runner([](const std::string& m) { DGG_Log(m); });
-    std::vector<float> tap; dgg::Tr909BakeResult res = dgg::Tr909BakeResult::RunFailed;
-    if (!dgg::BakeAborted()) res = dgg::Tr909BakeVariant(key, 1, runner, tap);
-    if (res == dgg::Tr909BakeResult::Ok && !tap.empty() && !dgg::BakeAborted())
+    thread_local dgg::BakeRunner909 runner([](const std::string& m) { DGG_Log(m); });
+    std::vector<float> tap; dgg::BakeResult909 res = dgg::BakeResult909::RunFailed;
+    if (!dgg::BakeAborted()) res = dgg::BakeVariant909(key, 1, runner, tap);
+    if (res == dgg::BakeResult909::Ok && !tap.empty() && !dgg::BakeAborted())
     {
       std::lock_guard<std::mutex> lock(gPreview909Mutex);
       if (gPreview909Has[v] && gPreview909Params[v] == key.params)   // not replaced by a newer pot state meanwhile
       {
         // the temporary sample of a knob turn lives in memory only: nothing of a knob drag is written to the cache folder
-        dgg::Tr909PreviewSample::Instance().Set(key.voice, key.params, std::move(tap));
+        dgg::PreviewSample909::Instance().Set(key.voice, key.params, std::move(tap));
       }
     }
-    DggAppLog("909 preview bake " + dgg::Tr909SetBaseName(key) + ": " + (res == dgg::Tr909BakeResult::Ok ? "Ok" : "not stored"));
+    DggAppLog("909 preview bake " + dgg::SetBaseName909(key) + ": " + (res == dgg::BakeResult909::Ok ? "Ok" : "not stored"));
     report(1, 1);
   });
 }
@@ -3567,9 +3568,9 @@ void Enqueue909Preview(const dgg::Tr909SetKey& key)
 // check "Cancel" would drop the queue and the rest of the default sets would be queued again right behind it.
 void Enqueue909FactoryDefaults(double sr, int target, uint64_t cancelGen)
 {
-  for (const dgg::Tr909SetKey& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(sr))))
+  for (const dgg::SetKey909& k : dgg::FactoryDefaultKeys909(static_cast<int>(std::lround(sr))))
   {
-    if (dgg::TR808VariantPoolBaker::Instance().CancelGeneration() != cancelGen) return;
+    if (dgg::VariantPoolBaker808::Instance().CancelGeneration() != cancelGen) return;
     Enqueue909Set(k, target, /*loadIfComplete=*/true);
   }
 }
@@ -3592,13 +3593,13 @@ void CountFactoryDefaultFiles(double sr, int target, int& ready, int& total)
   ready = 0; total = 0;
   for (const std::string& n : names)
     for (int v = 1; v <= target; ++v) { ++total; if (VariantFileValid(VariantFilePath(n, v))) ++ready; }
-  for (const auto& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(sr))))   // the 909 sets (the PCM voices have one variant)
-    for (int v = 1; v <= dgg::Tr909VariantTarget(k.voice, target); ++v) { ++total; if (VariantFileValid(VariantFilePath(dgg::Tr909SetBaseName(k), v))) ++ready; }
+  for (const auto& k : dgg::FactoryDefaultKeys909(static_cast<int>(std::lround(sr))))   // the 909 sets (the PCM voices have one variant)
+    for (int v = 1; v <= dgg::VariantTarget909(k.voice, target); ++v) { ++total; if (VariantFileValid(VariantFilePath(dgg::SetBaseName909(k), v))) ++ready; }
 }
 
 void EnqueueFactoryDefaultSet(const dgg::FactoryDefaultEntry& e, double sr, int target)
 {
-  const dgg::TR808VariantKey128 key = dgg::FactoryDefaultKey(e, sr);
+  const dgg::VariantKey128808 key = dgg::FactoryDefaultKey(e, sr);
   // resident from the start: a first hit on a key that is only on disk would miss and stay silent
   if (e.kind == 1) EnqueueHiHatSet(key, target, /*loadIfComplete=*/true);
   else EnqueueRideSet(e.kind == 0 ? "ride" : "cymbal", key, target, /*loadIfComplete=*/true);
@@ -3627,7 +3628,7 @@ void DrumGroover::ApplyFactoryDefaults()
 
   std::set<std::string> names;
   for (const auto& e : entries) names.insert(dgg::FactoryDefaultBaseName(e, sr));
-  for (const auto& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(sr)))) names.insert(dgg::Tr909SetBaseName(k));
+  for (const auto& k : dgg::FactoryDefaultKeys909(static_cast<int>(std::lround(sr)))) names.insert(dgg::SetBaseName909(k));
 
   if (names.empty()) return;
   if (!std::filesystem::exists(GetCacheDir() / "default.index")) gFirstRunBake.store(true);
@@ -3645,17 +3646,17 @@ void DrumGroover::EnqueueFactoryDefaultBakes()
   const std::vector<dgg::FactoryDefaultEntry> entries = FactoryDefaultEntries();
   const double sr = GetSampleRate();
   const int target = mCacheVariantCount.load(std::memory_order_relaxed);
-  const uint64_t cancelGen = dgg::TR808VariantPoolBaker::Instance().CancelGeneration();
+  const uint64_t cancelGen = dgg::VariantPoolBaker808::Instance().CancelGeneration();
   gDefaultEnqueueRunning.fetch_add(1);
   std::thread([entries, sr, target, cancelGen]() {
     struct Done { ~Done() { gDefaultEnqueueRunning.fetch_sub(1); } } done;   // also on the early return after a Pause
     for (const auto& e : entries)
     {
-      if (dgg::TR808VariantPoolBaker::Instance().CancelGeneration() != cancelGen) return;
+      if (dgg::VariantPoolBaker808::Instance().CancelGeneration() != cancelGen) return;
       EnqueueFactoryDefaultSet(e, sr, target);
     }
     Enqueue909FactoryDefaults(sr, target, cancelGen);
-    const auto snap = dgg::TR808VariantPoolBaker::Instance().GetSnapshot();
+    const auto snap = dgg::VariantPoolBaker808::Instance().GetSnapshot();
     DggAppLog("Default sets queued: planned " + std::to_string(snap.unitsPlanned) + " sounds, done " + std::to_string(snap.unitsDone) + ", jobs pending " + std::to_string(snap.pendingJobs));
   }).detach();
 }
@@ -3665,8 +3666,8 @@ std::vector<dgg::VariantBakeTarget> DrumGroover::CurrentBakeTargets()
   const double sr = GetSampleRate();
   std::vector<dgg::VariantBakeTarget> targets;
   std::set<std::string> seen;
-  auto add = [&](int kind, const dgg::TR808VariantKey128& key) {
-    const std::string name = kind == 1 ? dgg::HiHat808Voice::VariantPoolBaseName(key) : dgg::TR808RideVoice::VariantPoolBaseName(key);
+  auto add = [&](int kind, const dgg::VariantKey128808& key) {
+    const std::string name = kind == 1 ? dgg::HiHat808Voice::VariantPoolBaseName(key) : dgg::RideVoice808::VariantPoolBaseName(key);
     if (seen.insert(name).second) targets.push_back({ kind, key, name });
   };
 
@@ -3687,9 +3688,9 @@ std::vector<dgg::VariantBakeTarget> DrumGroover::CurrentBakeTargets()
     auto& voices = mCymbalPools[i].Voices();
     if (!voices.empty()) add(2, dgg::RideVoiceKey(dgg::CymbalArticulationForPool(i), voices[0], sr));
   }
-  for (const dgg::Tr909SetKey& k : dgg::Tr909FactoryDefaultKeys(static_cast<int>(std::lround(sr))))
+  for (const dgg::SetKey909& k : dgg::FactoryDefaultKeys909(static_cast<int>(std::lround(sr))))
   {
-    const std::string name = dgg::Tr909SetBaseName(k);
+    const std::string name = dgg::SetBaseName909(k);
     if (seen.insert(name).second) targets.push_back({ 12, {}, name, k });
   }
 
@@ -3718,7 +3719,7 @@ constexpr int kApplyMaxRetriesWithoutProgress = 3;
 int CountMissingFiles(const std::vector<dgg::VariantBakeTarget>& targets, int value)
 {
   int missing = 0;
-  for (const auto& t : targets) missing += (int)MissingVariantSlots(t.baseName, t.kind == 12 ? dgg::Tr909VariantTarget(t.key909.voice, value) : value).size();
+  for (const auto& t : targets) missing += (int)MissingVariantSlots(t.baseName, t.kind == 12 ? dgg::VariantTarget909(t.key909.voice, value) : value).size();
   return missing;
 }
 
@@ -3742,7 +3743,7 @@ void DrumGroover::HandleQueryCacheBakeEstimate(const nlohmann::json& payload)
   int missing = 0, missingRide = 0, missingHiHat = 0, missingOther = 0;
   for (const auto& t : CurrentBakeTargets())
   {
-    const int n = (int)MissingVariantSlots(t.baseName, t.kind == 12 ? dgg::Tr909VariantTarget(t.key909.voice, value) : value).size();
+    const int n = (int)MissingVariantSlots(t.baseName, t.kind == 12 ? dgg::VariantTarget909(t.key909.voice, value) : value).size();
     missing += n;
     (t.kind == 1 ? missingHiHat : t.kind >= 3 ? missingOther : missingRide) += n;
   }
@@ -3753,7 +3754,7 @@ void DrumGroover::HandleQueryCacheBakeEstimate(const nlohmann::json& payload)
   const double bytesPerFile = usage.files > 0 ? (double)usage.bytes / usage.files : 5.0 * GetSampleRate() * sizeof(float);
   const double newBytes = missing * bytesPerFile;
 
-  auto& baker = dgg::TR808VariantPoolBaker::Instance();
+  auto& baker = dgg::VariantPoolBaker808::Instance();
   SendBridgeMessage("cacheBakeEstimate", {
     {"value", value}, {"missing", missing}, {"avgBakeMs", baker.AverageBakeMs()},
     {"threads", baker.ThreadCount()},
@@ -3836,9 +3837,9 @@ void DrumGroover::HandleSetCacheLimit(const nlohmann::json& payload)
 // "Close" of the paused bake dialog: ends the whole bake. Finished files stay, what is missing is calculated at the next start (Pause has already stopped the hits being rendered).
 void DrumGroover::HandleAbortCacheBake(const nlohmann::json&)
 {
-  dgg::TR808VariantPoolBaker::Instance().CancelPending();
+  dgg::VariantPoolBaker808::Instance().CancelPending();
   dgg::pcmfast::BakeAbortGeneration().fetch_add(1);
-  dgg::TR808VariantPoolBaker::Instance().ResetPlan();
+  dgg::VariantPoolBaker808::Instance().ResetPlan();
   ReleaseAllSlots();
   gFirstRunBake.store(false);
   DggAppLog("Cache bake closed by the user: queued jobs dropped, 909 hits being rendered are stopped");
@@ -3862,13 +3863,13 @@ void DrumGroover::HandleCancelCacheBake(const nlohmann::json&)
     std::lock_guard<std::mutex> lock(gApplyJobMutex);
     gApplyJob.active = false;
   }
-  dgg::TR808VariantPoolBaker::Instance().CancelPending();
+  dgg::VariantPoolBaker808::Instance().CancelPending();
   dgg::pcmfast::BakeAbortGeneration().fetch_add(1);   // Pause is pause: the 909 hits being rendered stop within a few milliseconds and are discarded (nothing half-finished is stored)
   {
-    const auto snap = dgg::TR808VariantPoolBaker::Instance().GetSnapshot();
+    const auto snap = dgg::VariantPoolBaker808::Instance().GetSnapshot();
     DggAppLog("Pause: planned " + std::to_string(snap.unitsPlanned) + " sounds, done " + std::to_string(snap.unitsDone) + ", jobs pending " + std::to_string(snap.pendingJobs));
   }
-  dgg::TR808VariantPoolBaker::Instance().ResetPlan();   // the dropped jobs' planned units go; Resume plans only what is still missing (the dialog adds the sounds already ready)
+  dgg::VariantPoolBaker808::Instance().ResetPlan();   // the dropped jobs' planned units go; Resume plans only what is still missing (the dialog adds the sounds already ready)
   ReleaseAllSlots();
   gFirstRunBake.store(false);
   DggAppLog("Cache bake paused by the user: queued jobs dropped, 909 hits being rendered are stopped and discarded");
@@ -3911,7 +3912,7 @@ void DrumGroover::PollApplyJob()
 
   const int remaining = CountMissingFiles(gApplyJob.targets, gApplyJob.value);
   bool failed = false;
-  if (remaining > 0 && dgg::TR808VariantPoolBaker::Instance().IsIdle())
+  if (remaining > 0 && dgg::VariantPoolBaker808::Instance().IsIdle())
   {
     if (remaining < gApplyJob.remainingAtLastRetry) gApplyJob.retriesWithoutProgress = 0;
     else gApplyJob.retriesWithoutProgress++;
@@ -3953,7 +3954,7 @@ void DrumGroover::EnqueueHiHatVariantBake(int poolIndex, bool rebakeAll, int acc
     mCacheVariantCount.load(std::memory_order_relaxed), /*loadIfComplete=*/true, rebakeAll);
 }
 
-// Cymbal plays through TR808RideVoice (Crash/Mute articulations, see
+// Cymbal plays through RideVoice808 (Crash/Mute articulations, see
 // 808RideVoice.h); poolIndex = cymbalPos * 2 + (isMute ? 1 : 0).
 void DrumGroover::EnqueueCrashVariantBake(int poolIndex, bool rebakeAll, int accentStep)
 {
@@ -3966,11 +3967,11 @@ void DrumGroover::EnqueueCrashVariantBake(int poolIndex, bool rebakeAll, int acc
 
 void DrumGroover::DrainCacheMisses()
 {
-  dgg::Tr909SetKey miss909;   // sets that a TR-909 hit found missing (the 909 drag state is separate from the guard below)
-  while (dgg::Tr909MissQueue::Instance().Pop(miss909))
+  dgg::SetKey909 miss909;   // sets that a TR-909 hit found missing (the 909 drag state is separate from the guard below)
+  while (dgg::MissQueue909::Instance().Pop(miss909))
   {
-    DGG_Log("CacheMiss909: " + dgg::Tr909SetBaseName(miss909));
-    if (Tr909DragActive() || miss909.params != 0) Enqueue909Preview(miss909);   // a knob is being moved or the pot state is not the factory state: the one temporary sample of the voice (memory only), replaced by the next pot state
+    DGG_Log("CacheMiss909: " + dgg::SetBaseName909(miss909));
+    if (DragActive909() || miss909.params != 0) Enqueue909Preview(miss909);   // a knob is being moved or the pot state is not the factory state: the one temporary sample of the voice (memory only), replaced by the next pot state
     else Enqueue909Set(miss909, mCacheVariantCount.load(std::memory_order_relaxed), /*loadIfComplete=*/true);
   }
   if (mParamDragging.load(std::memory_order_relaxed))
@@ -4103,7 +4104,7 @@ double DrumGroover::AccentFor(bool accent) const
 
 void DrumGroover::TriggerCustom(int k, double velocity01, double gain, bool accent)
 {
-  if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909)   // a 909 instrument: its accent comes from the velocity alone
+  if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Kit909)   // a 909 instrument: its accent comes from the velocity alone
   {
     auto& pool = m909CustomPools[k];
     pool.SetNextGain(gain);
@@ -4207,8 +4208,8 @@ void DrumGroover::TriggerInstrument(const dgg::InstrumentDef& inst, double veloc
       }
       break;
     }
-    case dgg::EngineKind::Cymbal:   // Crash and Mute play TR808RideVoice's articulations of the same names
-      mCymbalPools[inst.poolSlot].SetNextGain(gain); mCymbalPools[inst.poolSlot].SetNextAccent(accent01); mCymbalPools[inst.poolSlot].Trigger(velocity01, inst.isMute ? dgg::TR808RideVoice::Articulation::Mute : dgg::TR808RideVoice::Articulation::Crash);
+    case dgg::EngineKind::Cymbal:   // Crash and Mute play RideVoice808's articulations of the same names
+      mCymbalPools[inst.poolSlot].SetNextGain(gain); mCymbalPools[inst.poolSlot].SetNextAccent(accent01); mCymbalPools[inst.poolSlot].Trigger(velocity01, inst.isMute ? dgg::RideVoice808::Articulation::Mute : dgg::RideVoice808::Articulation::Crash);
       if (inst.isMute)   // a mute hit chokes the crash of its cymbal
         ForEachCymbalPool([&inst](const dgg::InstrumentDef& d, auto& pool) { if (d.cymbalPos == inst.cymbalPos && !d.isMute) pool.ChokeAll(); });
       break;
@@ -4263,33 +4264,33 @@ void DrumGroover::TriggerGmNoteVoices(int note, double velocity01, bool accent)
   if (customK >= 0) TriggerCustom(customK, std::min(1.0, velocity01), gain, accent);
   else if (const dgg::InstrumentDef* inst = dgg::FindInstrumentByNote(note))
   {
-    dgg::Tr909Voice voice909;
-    if (engineMode == static_cast<int>(EngineMode::Tr909) && dgg::Tr909VoiceForInstrument(*inst, voice909)) Trigger909(*inst, std::min(1.0, velocity01), gain);
-    else if (engineMode == static_cast<int>(EngineMode::Tr909) && dgg::Tr909RimLiveForInstrument(*inst)) { m909RimPools[inst->poolSlot].SetNextGain(gain); m909RimPools[inst->poolSlot].Trigger(std::min(1.0, velocity01)); }
+    dgg::Voice909 voice909;
+    if (engineMode == static_cast<int>(EngineMode::Kit909) && dgg::VoiceForInstrument909(*inst, voice909)) Trigger909(*inst, std::min(1.0, velocity01), gain);
+    else if (engineMode == static_cast<int>(EngineMode::Kit909) && dgg::RimLiveForInstrument909(*inst)) { m909RimPools[inst->poolSlot].SetNextGain(gain); m909RimPools[inst->poolSlot].Trigger(std::min(1.0, velocity01)); }
     else TriggerInstrument(*inst, std::min(1.0, velocity01), gain, accent);
   }
 }
 
 void DrumGroover::Setup909Pools(double sampleRate)
 {
-  dgg::Tr909LiveSynth::Instance().Enable([]() -> std::unique_ptr<dgg::Tr909LiveSource> { return std::unique_ptr<dgg::Tr909LiveSource>(new dgg::Tr909PcmModelRunner()); });   // the live first hit of a cache miss (idempotent)
-  dgg::Tr909LiveSynth::Instance().Prebuild(static_cast<int>(std::lround(sampleRate)));   // tables of the PCM voices of the live source: the first live hit builds nothing on the audio thread
+  dgg::LiveSynth909::Instance().Enable([]() -> std::unique_ptr<dgg::LiveSource909> { return std::unique_ptr<dgg::LiveSource909>(new dgg::PcmModelRunner909()); });   // the live first hit of a cache miss (idempotent)
+  dgg::LiveSynth909::Instance().Prebuild(static_cast<int>(std::lround(sampleRate)));   // tables of the PCM voices of the live source: the first live hit builds nothing on the audio thread
   // Experimental: live sources of the PCM voices (hi-hats, cymbals) instead of the cache; only with the environment variable DGG_PCM_LIVE=1 (default: off, the cache path plays). Built in the background (idempotent).
   {
     const char* live = std::getenv("DGG_PCM_LIVE"); const bool pcmLive = live && live[0] == '1';
-    dgg::Tr909LiveBank::Instance().BuildAsync(pcmLive ? +[]() -> std::unique_ptr<dgg::Tr909LiveSource> { return std::unique_ptr<dgg::Tr909LiveSource>(new dgg::Tr909PcmModelRunner()); } : static_cast<dgg::Tr909LiveSynth::Factory>(nullptr), static_cast<int>(std::lround(sampleRate)));
+    dgg::LiveBank909::Instance().BuildAsync(pcmLive ? +[]() -> std::unique_ptr<dgg::LiveSource909> { return std::unique_ptr<dgg::LiveSource909>(new dgg::PcmModelRunner909()); } : static_cast<dgg::LiveSynth909::Factory>(nullptr), static_cast<int>(std::lround(sampleRate)));
   }
   for (int i = 0; i < dgg::kNumInstruments; ++i)
   {
-    dgg::Tr909Voice v;
-    if (dgg::Tr909VoiceForInstrument(dgg::kInstruments[i], v)) for (auto& voice : m909Pools[i].Voices()) { voice.SetVoice(v); voice.basePitch = dgg::Tr909BasePitchForInstrument(dgg::kInstruments[i]); if (dgg::kInstruments[i].kind == dgg::EngineKind::Tom) { voice.pitchRatio = dgg::DefaultOf(dgg::kInstruments[i], "pitchRatio", 1.0); } }
+    dgg::Voice909 v;
+    if (dgg::VoiceForInstrument909(dgg::kInstruments[i], v)) for (auto& voice : m909Pools[i].Voices()) { voice.SetVoice(v); voice.basePitch = dgg::BasePitchForInstrument909(dgg::kInstruments[i]); if (dgg::kInstruments[i].kind == dgg::EngineKind::Tom) { voice.pitchRatio = dgg::DefaultOf(dgg::kInstruments[i], "pitchRatio", 1.0); } }
     m909Pools[i].SetSampleRate(sampleRate);
   }
   for (auto& p : m909RimPools) p.SetSampleRate(sampleRate);
   for (int k = 0; k < dgg::kNumCustomInstruments; ++k)
   {
-    if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Tr909)
-      for (auto& voice : m909CustomPools[k].Voices()) { voice.SetVoice(static_cast<dgg::Tr909Voice>(dgg::CustomInstrument(k).arg)); voice.basePitch = dgg::Tr909CustomBasePitch(dgg::CustomInstrument(k)); }
+    if (dgg::CustomInstrument(k).kind == dgg::CustomKind::Kit909)
+      for (auto& voice : m909CustomPools[k].Voices()) { voice.SetVoice(static_cast<dgg::Voice909>(dgg::CustomInstrument(k).arg)); voice.basePitch = dgg::CustomBasePitch909(dgg::CustomInstrument(k)); }
     m909CustomPools[k].SetSampleRate(sampleRate);
   }
 }
@@ -4297,7 +4298,7 @@ void DrumGroover::Setup909Pools(double sampleRate)
 // Builds the live Rim Shot hosts (worker thread, about 1.4 s and 14 MB each) when the 909 engine is selected; a hit before they are ready is silent. Called on every change of the engine or the sample rate.
 void DrumGroover::Prepare909Rim()
 {
-  if (mEngineMode.load(std::memory_order_relaxed) != static_cast<int>(EngineMode::Tr909)) return;
+  if (mEngineMode.load(std::memory_order_relaxed) != static_cast<int>(EngineMode::Kit909)) return;
   for (auto& p : m909RimPools) for (auto& v : p.Voices()) v.Prepare();
 }
 
@@ -4308,18 +4309,18 @@ void DrumGroover::Trigger909(const dgg::InstrumentDef& inst, double velocity01, 
   if (i < 0 || i >= dgg::kNumInstruments) return;
   m909Pools[i].SetNextGain(gain);
   m909Pools[i].Trigger(velocity01);
-  dgg::Tr909Voice v;
-  if (dgg::Tr909VoiceForInstrument(inst, v) && v == dgg::Tr909Voice::Hh)   // a closed hit chokes every open hi-hat (as in the 808 path)
+  dgg::Voice909 v;
+  if (dgg::VoiceForInstrument909(inst, v) && v == dgg::Voice909::Hh)   // a closed hit chokes every open hi-hat (as in the 808 path)
     for (int j = 0; j < dgg::kNumInstruments; ++j)
     {
-      dgg::Tr909Voice w;
-      if (dgg::Tr909VoiceForInstrument(dgg::kInstruments[j], w) && w == dgg::Tr909Voice::Ho) m909Pools[j].ChokeAll();
+      dgg::Voice909 w;
+      if (dgg::VoiceForInstrument909(dgg::kInstruments[j], w) && w == dgg::Voice909::Ho) m909Pools[j].ChokeAll();
     }
 }
 
 void DrumGroover::ProcessMidiMsg(const IMidiMsg& msg)
 {
-  dgg::Tr909NoiseStream::SetTriggerSample(mStreamBlockStart + static_cast<uint64_t>(std::max(0, msg.mOffset)));   // trigger position in the shared 909 noise stream
+  dgg::NoiseStream909::SetTriggerSample(mStreamBlockStart + static_cast<uint64_t>(std::max(0, msg.mOffset)));   // trigger position in the shared 909 noise stream
   if (msg.StatusMsg() == IMidiMsg::kNoteOn && msg.Velocity() > 0)
   {
     if (msg.Channel() == kCustomPreviewMidiChannel)   // UI preview of a custom instrument, note = registry index
@@ -4539,7 +4540,7 @@ void DrumGroover::WaitForCacheBeforeOfflineRender()
   }
 #endif
 
-  auto& baker = dgg::TR808VariantPoolBaker::Instance();
+  auto& baker = dgg::VariantPoolBaker808::Instance();
   if (baker.IsIdle()) return;
 
   // Upper bound so a stuck bake job can't hang the host forever.
@@ -4612,7 +4613,7 @@ void DrumGroover::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
       while (evIdx < mergedDueEvents.size() && mergedDueEvents[evIdx].sampleOffset == pos)
       {
         const dgg::DueEvent& ev = mergedDueEvents[evIdx];
-        dgg::Tr909NoiseStream::SetTriggerSample(streamBlockStart + static_cast<uint64_t>(pos));
+        dgg::NoiseStream909::SetTriggerSample(streamBlockStart + static_cast<uint64_t>(pos));
         auto trackIt = std::find_if(mTracks.begin(), mTracks.end(),
           [&](const dgg::Track& t) { return t.id == ev.trackId; });
         if (trackIt != mTracks.end())
@@ -4663,7 +4664,7 @@ void DrumGroover::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
         for (int i = 0; i < dgg::kNumInstruments; ++i)   // TR-909 voices play into the mixer channel of their row
           m909Pools[i].Process(chanBuf[static_cast<int>(dgg::kInstruments[i].channel)].data() + pos, segLen);
         for (int i = 0; i < dgg::kNumInstruments; ++i)   // the live 909 Rim Shot of a row renders on every block once its host is built (its clock is the output clock)
-          if (dgg::Tr909RimLiveForInstrument(dgg::kInstruments[i])) m909RimPools[dgg::kInstruments[i].poolSlot].Process(chanBuf[static_cast<int>(dgg::kInstruments[i].channel)].data() + pos, segLen);
+          if (dgg::RimLiveForInstrument909(dgg::kInstruments[i])) m909RimPools[dgg::kInstruments[i].poolSlot].Process(chanBuf[static_cast<int>(dgg::kInstruments[i].channel)].data() + pos, segLen);
         for (int k = 0; k < dgg::kNumCustomInstruments; ++k)   // the 909 custom instruments play into their channel in every engine mode
           m909CustomPools[k].Process(chanBuf[static_cast<int>(dgg::CustomInstrument(k).channel)].data() + pos, segLen);
 

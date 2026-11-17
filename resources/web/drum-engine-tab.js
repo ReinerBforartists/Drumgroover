@@ -621,8 +621,8 @@ function deBuildKnobGroupRow(family, group, index, titleMap, note) {
   return cluster;
 }
 
-// The knob clusters of a card. Rows that play a TR-909 voice (groups909: the circuit pots of the 909 voice) get those clusters in front of the Pitch cluster; the clusters of the 808 circuit show in the
-// 808 / Lo-Fi engine modes, the 909 ones in the TR-909 mode (deApplyEngineClusters). Pitch (digital transpose) belongs to every engine.
+// The knob clusters of a card. Rows that play a 909 voice (groups909: the circuit pots of the 909 voice) get those clusters in front of the Pitch cluster; the clusters of the 808 circuit show in the
+// 808 / Lo-Fi engine modes, the 909 ones in the 909 mode (deApplyEngineClusters). Pitch (digital transpose) belongs to every engine.
 function deAppendKnobGroups(knobRow, family, groups, groups909, index, titleMap, note) {
   let pitchCluster = null;
   for (const group of groups) {
@@ -640,7 +640,7 @@ function deAppendKnobGroups(knobRow, family, groups, groups909, index, titleMap,
 }
 
 function deApplyEngineClusters(panel) {
-  const is909 = deEngineMode === 'tr909';
+  const is909 = deEngineMode === '909';
   panel.querySelectorAll('.knob-cluster[data-engine]').forEach((el) => {
     el.style.display = (el.dataset.engine === '909') === is909 ? '' : 'none';
   });
@@ -701,7 +701,7 @@ function deBuildParamPanel(family, schema) {
 
       const knobRow = document.createElement('div');
       knobRow.className = 'de-knob-groups-row de-instance-card-knobs';
-      const groups909 = tableRow && tableRow.controls909 ? deGroupsOfControls(tableRow.controls909) : undefined;   // rows that play a TR-909 voice (Crash, Ride)
+      const groups909 = tableRow && tableRow.controls909 ? deGroupsOfControls(tableRow.controls909) : undefined;   // rows that play a 909 voice (Crash, Ride)
       deAppendKnobGroups(knobRow, family, groupsForCard, groups909, idx, undefined, art.note);
       main.appendChild(knobRow);
       container.appendChild(main);
@@ -981,7 +981,7 @@ const KICK_PAD_AXIS = {
   decayKnob01: { axis: 'y', type: 'linear', spread: 0.5 },
 };
 
-// The morph pad of the TR-909 pots: Kick Attack (x) / Decay (y), Snare Tone (x) / Snappy (y), the pot ranges 0..1 around the centre 0.5.
+// The morph pad of the 909 pots: Kick Attack (x) / Decay (y), Snare Tone (x) / Snappy (y), the pot ranges 0..1 around the centre 0.5.
 const KICK909_PAD_AXIS = {
   attack909: { axis: 'x', type: 'linear', spread: 0.5 },
   decay909:  { axis: 'y', type: 'linear', spread: 0.5 },
@@ -1280,7 +1280,7 @@ function deBuildInstanceCard(family, inst, padCfg) {
     deWireClusterZoom(zoomShell);
     container.appendChild(zoomShell);
   }
-  // The morph pad of the TR-909 pots of the card (the pad above morphs the knobs of the 808 circuit).
+  // The morph pad of the 909 pots of the card (the pad above morphs the knobs of the 808 circuit).
   if (inst.groups909 && padCfg.pad909) {
     const unit909 = deBuildInstancePadUnit({ inst, container, titleRowEl: resetSlot, family, ...padCfg, ...padCfg.pad909, noVolume: true });
     const pad909 = unit909.querySelector('.de-kick-pad');

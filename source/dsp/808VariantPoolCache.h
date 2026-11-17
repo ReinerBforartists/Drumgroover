@@ -13,7 +13,7 @@
 #include <string>
 
 // Shared multi-variant render-cache for the 808 voices (Ride/Cymbal share
-// TR808RideVoice; HiHat is its own class). The real 808 metal-bank/
+// RideVoice808; HiHat is its own class). The real 808 metal-bank/
 // MNA oscillators never repeat a hit identically, so this stores up to
 // `TargetVariantCount()` independent recordings per (quantized) key and
 // serves a random one per Trigger() instead of always the same one.
@@ -34,7 +34,7 @@ namespace dgg
 {
 
 template <typename Key, typename KeyHash = std::hash<Key>>
-class TR808VariantPoolCache
+class VariantPoolCache808
 {
 public:
   struct Status { int ready = 0; int target = 0; };
@@ -44,7 +44,7 @@ public:
   static constexpr int kMinVariants = 1;
   static constexpr int kMaxVariants = 20;
 
-  explicit TR808VariantPoolCache(int defaultTarget = 7) { SetTargetVariantCount(defaultTarget); }
+  explicit VariantPoolCache808(int defaultTarget = 7) { SetTargetVariantCount(defaultTarget); }
 
   void SetTargetVariantCount(int n)
   {

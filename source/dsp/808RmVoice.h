@@ -19,7 +19,7 @@
 
 namespace dgg {
 
-class TR808RmVoice final : public DrumVoice
+class RmVoice808 final : public DrumVoice
 {
 public:
   // Which position of SW11 this instance is (set once per pool): false = Rim Shot (throw O), true = Claves (throw S).
@@ -41,7 +41,7 @@ public:
   void SetSampleRate(double sr) override
   {
     DrumVoice::SetSampleRate(sr);
-    mHostRatio = rmfast::TR808RmFast::kFs / sr;
+    mHostRatio = rmfast::RmFast808::kFs / sr;
   }
 
   void SetAccent(double accent01) override { mAccent = std::clamp(accent01, 0.0, 1.0); }
@@ -59,7 +59,7 @@ public:
     mRate = std::clamp(pitchRatio, 0.25, 4.0) * mHostRatio;
     mDirect = std::fabs(mRate - 1.0) < 1e-12;
     mFrac = 0.0; mSamples = 0; mQuiet = 0; mInWin = 0; mWinSq = 0.0;
-    constexpr double kFs = rmfast::TR808RmFast::kFs;
+    constexpr double kFs = rmfast::RmFast808::kFs;
     mWinSamples = std::max(1L, (long)(kRmsWindowSec * kFs)); mHoldSamples = (long)(kHitSilenceHoldSec * kFs);
     mMinSamples = (long)(kHitMinSeconds * kFs); mMaxSamples = (long)(kHitMaxSeconds * kFs);
     mActive = true;
@@ -105,7 +105,7 @@ private:
   }
 
   double mVelGain = 1.0, mAccent = 0.0;
-  rmfast::TR808RmFast mModel;
+  rmfast::RmFast808 mModel;
   bool mActive = false, mDirect = true;
   double mHostRatio = 1.0, mRate = 1.0, mFrac = 0.0, mWinSq = 0.0, mY[4] = {};
   long mSamples = 0, mQuiet = 0, mInWin = 0, mWinSamples = 96, mHoldSamples = 480, mMinSamples = 1440, mMaxSamples = 24000;

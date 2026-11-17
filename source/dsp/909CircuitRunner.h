@@ -5,7 +5,7 @@
 // structure of the circuit by 909NetPart.h (PartNet: blocks BD, SD, HC, RM and the tom sheets, coupled through the shared NOISE line by waveform relaxation, validated against the monolithic
 // network and against NGSpice, plan tools/909_GESAMTSCHALTUNG_PLAN.md section S4). This runner renders a hit by
 // continuing that circuit from an idle state that was run for one second (909_circuit_all7_state.h) with the trigger pulse of the voice, the accent voltage and the noise source of the
-// hit, and returns the output of the voice minus its idle level at the sample rate of the request. It is a Tr909ModelRunner (the bake engine of BD, SD, LT, MT, HT, HC).
+// hit, and returns the output of the voice minus its idle level at the sample rate of the request. It is a ModelRunner909 (the bake engine of BD, SD, LT, MT, HT, HC).
 //
 // Not a real-time engine (a hit takes minutes on one thread); the bake and the reference comparisons use it. Supported: voices BD, SD, LT, MT, HT, HC at any pot state of the voice (909PotParams.h; the pots are the circuit pots of the netlist), the 5 us reference noise path.
 // Anything else returns false (no silent replacement by another engine).
@@ -26,14 +26,14 @@
 
 namespace dgg {
 
-class Tr909CircuitRunner : public Tr909ModelRunner
+class CircuitRunner909 : public ModelRunner909
 {
 public:
   // dt: integration step of the circuit (1 us: the step at which the oscillator frequencies of the circuit were validated against NGSpice). abort: polled between steps, true stops the hit (the run then fails).
-  // splitNoise: the network of this runner has the noise sheet as a block of its own (MT split off, PartNet::splitNoise): used for the tom voices LT / MT / HT (Tr909BakeRunner), see SplitNoiseVoice.
-  explicit Tr909CircuitRunner(double dt = 1e-6, std::function<bool()> abort = nullptr, bool splitNoise = false) : dt_(dt), abort_(std::move(abort)), splitNoise_(splitNoise) {}
+  // splitNoise: the network of this runner has the noise sheet as a block of its own (MT split off, PartNet::splitNoise): used for the tom voices LT / MT / HT (BakeRunner909), see SplitNoiseVoice.
+  explicit CircuitRunner909(double dt = 1e-6, std::function<bool()> abort = nullptr, bool splitNoise = false) : dt_(dt), abort_(std::move(abort)), splitNoise_(splitNoise) {}
   // The split of the noise sheet is used for the toms only: it saves 10-31 % of their render time (E-03 phase 2); for BD / SD / HC it brings no gain (and moves HC beyond the 0.0254 V gate against the stand without the split).
-  static bool SplitNoiseVoice(Tr909Voice v) { return v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht; }
+  static bool SplitNoiseVoice(Voice909 v) { return v == Voice909::Lt || v == Voice909::Mt || v == Voice909::Ht; }
 
   static constexpr double kMaxPreroll = 0.2;   // seconds of idle before the trigger, up to this
   // Idle delay before the trigger of variant `seed` (seed = variant index, 1, 2, ...): the free-running oscillators (twelve, 52 ... 310 Hz depending on the pots) are at a different phase for every delay. The table
@@ -113,11 +113,11 @@ public:
       mt = {{"mt_N_333", "mt_N_337"}, {"mt_N_313", "mt_N_317"}, {"mt_N_323", "mt_N_327"}}, ht = {{"ht_N_630", "ht_N_683"}, {"ht_N_689", "ht_N_693"}, {"ht_N_699", "ht_N_703"}};
     switch (which) { case 0: return bd; case 1: return sd; case 2: return lt; case 3: return mt; default: return ht; }
   }
-  static int SheetOfVoice(Tr909Voice v) { switch (v) { case Tr909Voice::Bd: return 0; case Tr909Voice::Sd: return 1; case Tr909Voice::Lt: return 2; case Tr909Voice::Mt: return 3; case Tr909Voice::Ht: return 4; default: return -1; } }
-  static Tr909Voice VoiceOfSheet(int which) { switch (which) { case 0: return Tr909Voice::Bd; case 1: return Tr909Voice::Sd; case 2: return Tr909Voice::Lt; case 3: return Tr909Voice::Mt; default: return Tr909Voice::Ht; } }
+  static int SheetOfVoice(Voice909 v) { switch (v) { case Voice909::Bd: return 0; case Voice909::Sd: return 1; case Voice909::Lt: return 2; case Voice909::Mt: return 3; case Voice909::Ht: return 4; default: return -1; } }
+  static Voice909 VoiceOfSheet(int which) { switch (which) { case 0: return Voice909::Bd; case 1: return Voice909::Sd; case 2: return Voice909::Lt; case 3: return Voice909::Mt; default: return Voice909::Ht; } }
   bool CalibrateSheet(int which, uint64_t ownParams, n909::SheetPhase& sp)
   {
-    n909::PartNet& net = *net_; const Tr909Voice sv = VoiceOfSheet(which); if (!SetPots(sv, ownParams)) return false;
+    n909::PartNet& net = *net_; const Voice909 sv = VoiceOfSheet(which); if (!SetPots(sv, ownParams)) return false;
     const std::vector<double>* table = nullptr; if (!net.restore(StateFor(sv, ownParams, table))) return false;
     if (!sp.setup(net, SheetPairs(which))) return false; sp.wantOrbit = (which == 1) && std::getenv("DGG_PART_NOORBIT") == nullptr;   // SD: the two oscillators are coupled and locked (22:15): orbit mode
     for (const char* t : {"BD", "SD", "LT", "MT", "HT", "HC", "RM"}) net.setSourceDc(std::string("VTRIG_") + t, 0.0);
@@ -133,10 +133,10 @@ public:
     if (std::getenv("DGG_PART_PHASELOG") && fitted) if (sp.orbit) fprintf(stderr, "   orbit: period %.4f ms, %zu samples\n", 1e3 * sp.TL, sp.NL); for (const auto& o : sp.osc) fprintf(stderr, "   osc: xlo %.4f xhi %.4f su %.2f sd %.2f f %.4f Hz\n", o.xlo, o.xhi, o.su, o.sd, 1.0 / o.period());
     return fitted;
   }
-  bool ApplyPhase(Tr909Voice v, uint64_t params, uint64_t seed, double timeShift = -1.0)
+  bool ApplyPhase(Voice909 v, uint64_t params, uint64_t seed, double timeShift = -1.0)
   {
     if (!Ready()) return false; n909::PartNet& net = *net_; std::vector<int> sheets;
-    if (v == Tr909Voice::Hc) { sheets = {0, 1}; } else { const int w = SheetOfVoice(v); if (w < 0) return true; sheets = {w}; }
+    if (v == Voice909::Hc) { sheets = {0, 1}; } else { const int w = SheetOfVoice(v); if (w < 0) return true; sheets = {w}; }
     std::vector<n909::SheetPhase*> sp; const auto cur = net.snapshot(); bool calibrated = false;
     for (int w : sheets) {
       const uint64_t own = (SheetOfVoice(v) == w) ? params : 0; const uint64_t key = ((own << 3) ^ static_cast<uint64_t>(w)) * 8u + static_cast<uint64_t>(w); auto it = sheets_.find(key);
@@ -165,27 +165,27 @@ public:
   }
   static constexpr double kPhaseSample = 20e-6, kPhaseCalSeconds = 0.3;
   bool silentNoise = false;   // test hook: the noise source stays at its idle level (compare with net909 runs that have no noise)
-  static bool Supports(Tr909Voice v) { return v == Tr909Voice::Bd || v == Tr909Voice::Sd || v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht || v == Tr909Voice::Hc; }
+  static bool Supports(Voice909 v) { return v == Voice909::Bd || v == Voice909::Sd || v == Voice909::Lt || v == Voice909::Mt || v == Voice909::Ht || v == Voice909::Hc; }
 
-  bool Run(const Tr909RunRequest& req, std::vector<float>& out) override
+  bool Run(const RunRequest909& req, std::vector<float>& out) override
   {
     out.clear();
-    if (!Supports(req.voice) || req.noise != Tr909NoisePath::Reference5us) return false;
+    if (!Supports(req.voice) || req.noise != NoisePath909::Reference5us) return false;
     if (!Ready()) return false;
     return Render(req.voice, req.params, req.anchorCode, req.noiseSeed, req.seconds, req.sampleRateHz, out);
   }
 
 private:
   // Circuit pots of a voice in the order of 909PotParams.h (names of the deck parameters without vr_).
-  static const char* const* PotNames(Tr909Voice v, int& n)
+  static const char* const* PotNames(Voice909 v, int& n)
   {
     static const char* const bd[] = {"VR2_bd", "VR3_bd", "VR4_bd", "VR5_bd"}, *const sd[] = {"VR6_sd", "VR7_sd", "VR8_sd", "VR9_sd"}, *const lt[] = {"VR10_lt", "VR11_lt", "VR12_lt"}, *const mt[] = {"VR13_mt", "VR14_mt", "VR15_mt"},
                              *const ht[] = {"VR16_ht", "VR17_ht", "VR18_ht"}, *const hc[] = {"VR20_hc"};
-    switch (v) { case Tr909Voice::Bd: n = 4; return bd; case Tr909Voice::Sd: n = 4; return sd; case Tr909Voice::Lt: n = 3; return lt; case Tr909Voice::Mt: n = 3; return mt; case Tr909Voice::Ht: n = 3; return ht; default: n = 1; return hc; }
+    switch (v) { case Voice909::Bd: n = 4; return bd; case Voice909::Sd: n = 4; return sd; case Voice909::Lt: n = 3; return lt; case Voice909::Mt: n = 3; return mt; case Voice909::Ht: n = 3; return ht; default: n = 1; return hc; }
   }
-  bool SetPots(Tr909Voice v, uint64_t params)
+  bool SetPots(Voice909 v, uint64_t params)
   {
-    int n = 0; const char* const* names = PotNames(v, n); double pos[8]; Tr909UnpackPots(v, params, pos);
+    int n = 0; const char* const* names = PotNames(v, n); double pos[8]; UnpackPots909(v, params, pos);
     net_->resetPots();   // nominal pots are the conductances of the deck itself (bit-exact); only pots away from 0.5 are recomputed
     for (int i = 0; i < n; ++i) if (std::fabs(pos[i] - 0.5) > 1e-12 && !net_->setPot(names[i], pos[i])) return false;
     return true;
@@ -205,7 +205,7 @@ private:
     for (size_t k = 1; k < p.t.size(); ++k) if (p.v[k - 1] < mid && p.v[k] >= mid) { const double tc = p.t[k - 1] + (mid - p.v[k - 1]) * (p.t[k] - p.t[k - 1]) / (p.v[k] - p.v[k - 1]); if (n++ == 0) tFirst = tc; tLast = tc; }
     if (n < 4) return false; f = (n - 1) / (tLast - tFirst); return true;
   }
-  const n909::PartNet::Snapshot& StateFor(Tr909Voice v, uint64_t params, const std::vector<double>*& table)
+  const n909::PartNet::Snapshot& StateFor(Voice909 v, uint64_t params, const std::vector<double>*& table)
   {
     table = nullptr;
     if (params == 0) return nominal_;
@@ -236,14 +236,14 @@ private:
     net.clearProbes();
     Settled& ref = settled_[key] = std::move(st); table = ref.table.empty() ? nullptr : &ref.table; return ref.snap;
   }
-  static const char* Tag(Tr909Voice v)   // sheet tag of the netlist (node and source names)
+  static const char* Tag(Voice909 v)   // sheet tag of the netlist (node and source names)
   {
-    switch (v) { case Tr909Voice::Bd: return "BD"; case Tr909Voice::Sd: return "SD"; case Tr909Voice::Lt: return "LT"; case Tr909Voice::Mt: return "MT"; case Tr909Voice::Ht: return "HT"; default: return "HC"; }
+    switch (v) { case Voice909::Bd: return "BD"; case Voice909::Sd: return "SD"; case Voice909::Lt: return "LT"; case Voice909::Mt: return "MT"; case Voice909::Ht: return "HT"; default: return "HC"; }
   }
   bool Ready()
   {
     if (ready_) return true;
-    std::string text; for (int i = 0; i < kTr909CircuitNetLineCount; ++i) { text += kTr909CircuitNetLines[i]; text += '\n'; }
+    std::string text; for (int i = 0; i < kCircuitNetLineCount909; ++i) { text += kCircuitNetLines909[i]; text += '\n'; }
     net_ = std::make_unique<n909::PartNet>(); net_->fixedDt = dt_; net_->H = 20e-6;   // fixed step of the validated runs; relaxation window 20 us, NOISE tolerance 1e-7 V
     net_->splitToms = std::getenv("DGG_PART_NOSPLIT") == nullptr;   // toms block split into LT / HT / MT + noise sheet blocks (Net909Part.h, secondary interfaces TOM_NOISE, TO_NOISE_LT, TO_NOISE_HT); DGG_PART_NOSPLIT=1: one toms block
     net_->splitNoise = std::getenv("DGG_PART_NOSPLITNS") ? false : (splitNoise_ || std::getenv("DGG_PART_SPLITNS") != nullptr);   // E-03 phase 2: the noise sheet is a block of its own, MT split off along TO_NOISE_MT (tom runner; DGG_PART_SPLITNS=1 forces it, DGG_PART_NOSPLITNS=1 switches it off)
@@ -252,17 +252,17 @@ private:
     net_->nzInside = std::getenv("DGG_PART_NZIN") ? std::atoi(std::getenv("DGG_PART_NZIN")) : 2;   // the NOISE line is solved inside the blocks of the hit (PartNet::nzInside, set before build, plan E-03): 2 = one pass per block set (two for several blocks); test hook DGG_PART_NZIN=0 relaxation as before, 1 = interfaces iterated
     if (!net_->build(text)) { net_.reset(); return false; }
     n909::Net::State st;
-    st.x.assign(kTr909CircuitIdleState, kTr909CircuitIdleState + kTr909CircuitStateX);
-    st.q1.assign(kTr909CircuitIdleState + kTr909CircuitStateX, kTr909CircuitIdleState + kTr909CircuitStateX + kTr909CircuitStateQ);
-    st.q2.assign(kTr909CircuitIdleState + kTr909CircuitStateX + kTr909CircuitStateQ, kTr909CircuitIdleState + kTr909CircuitStateX + 2 * kTr909CircuitStateQ);
-    st.stepIndex = kTr909CircuitStateStepIndex; st.hPrev = kTr909CircuitStateHPrev;
+    st.x.assign(kCircuitIdleState909, kCircuitIdleState909 + kCircuitStateX909);
+    st.q1.assign(kCircuitIdleState909 + kCircuitStateX909, kCircuitIdleState909 + kCircuitStateX909 + kCircuitStateQ909);
+    st.q2.assign(kCircuitIdleState909 + kCircuitStateX909 + kCircuitStateQ909, kCircuitIdleState909 + kCircuitStateX909 + 2 * kCircuitStateQ909);
+    st.stepIndex = kCircuitStateStepIndex909; st.hPrev = kCircuitStateHPrev909;
     if (!net_->loadFullState(st)) { net_.reset(); return false; }
     net_->bypassTol = 1e-4;   // device bypass (Net909.h): validated over full 350 ms hits against NGSpice and the run without bypass (plan, section S4 faster circuit)
     if (const char* bp = std::getenv("DGG_PART_BYPASS")) net_->bypassTol = std::atof(bp);   // test hook: other tolerance, 0 = off
     nominal_ = net_->snapshot(); net_->abort = abort_;
     ready_ = true; return true;
   }
-  bool Render(Tr909Voice v, uint64_t params, int accentCode, uint64_t seed, double seconds, int fs, std::vector<float>& out)
+  bool Render(Voice909 v, uint64_t params, int accentCode, uint64_t seed, double seconds, int fs, std::vector<float>& out)
   {
     n909::PartNet& net = *net_;
     if (!SetPots(v, params)) return false;
@@ -276,14 +276,14 @@ private:
     const double t0 = kTriggerDelay + (usePhase ? 0.0 : (fixedPreroll >= 0.0 ? fixedPreroll : PrerollAt(table, seed)));   // trigger time of the hit in the run: the circuit idles on from the stored state before the trigger, so the free-running oscillators are at a different phase for every noise seed (variant)
     for (const char* t : {"BD", "SD", "LT", "MT", "HT", "HC", "RM"}) net.setSourceDc(std::string("VTRIG_") + t, 0.0);
     net.setSource("VTRIG_" + tag, [t0](double t) { return pcmfast::HitTrigger(t - t0); });
-    net.setSourceDc("VACCENT_" + tag, Tr909AccentVolts(accentCode));
+    net.setSourceDc("VACCENT_" + tag, AccentVolts909(accentCode));
     pcmfast::HitNoise noise; noise.Start(seed, 5e-6, 0.0);   // the noise of the hit starts at knot 10000 of the sequence (50 ms) when the trigger arrives
     if (!silentNoise) net.setSource("Vnz", [&noise, t0](double t) { return t < t0 ? 7.5 : noise.At(kNoiseAtTrigger + (t - t0)); });
     else net.setSourceDc("Vnz", 7.5);
     const double ts = 1.0 / fs; const size_t nOut = static_cast<size_t>(seconds * fs + 0.5);
-    net.fixedDt = (v == Tr909Voice::Hc && dt_ > kHcDt) ? kHcDt : dt_; if (v == Tr909Voice::Hc) if (const char* hd = std::getenv("DGG_PART_HCDT")) net.fixedDt = std::atof(hd);   // test hook: other HC base step (default kHcDt)
+    net.fixedDt = (v == Voice909::Hc && dt_ > kHcDt) ? kHcDt : dt_; if (v == Voice909::Hc) if (const char* hd = std::getenv("DGG_PART_HCDT")) net.fixedDt = std::atof(hd);   // test hook: other HC base step (default kHcDt)
     net.recordFrom = t0 - 5e-5;
-    net.bpOrigin = t0; net.bpStep = std::getenv("DGG_PART_NOBP") ? 0.0 : 5e-6; { const double kr = std::getenv("DGG_PART_KFREL") ? std::atof(std::getenv("DGG_PART_KFREL")) : 0.25; net.kfDt = kr * net.fixedDt; net.kfWidth = kr > 0.0 ? net.fixedDt * (std::getenv("DGG_PART_KFWREL") ? std::atof(std::getenv("DGG_PART_KFWREL")) : (v == Tr909Voice::Sd ? 3.0 : 1.0)) : 0.0; }   // finer step (a quarter of the base step) for the first base step after every knot; DGG_PART_KFREL=0 off   // E-03: steps end at the knots of the noise source (HitNoise step 5 us from the trigger); DGG_PART_NOBP=1: as before
+    net.bpOrigin = t0; net.bpStep = std::getenv("DGG_PART_NOBP") ? 0.0 : 5e-6; { const double kr = std::getenv("DGG_PART_KFREL") ? std::atof(std::getenv("DGG_PART_KFREL")) : 0.25; net.kfDt = kr * net.fixedDt; net.kfWidth = kr > 0.0 ? net.fixedDt * (std::getenv("DGG_PART_KFWREL") ? std::atof(std::getenv("DGG_PART_KFWREL")) : (v == Voice909::Sd ? 3.0 : 1.0)) : 0.0; }   // finer step (a quarter of the base step) for the first base step after every knot; DGG_PART_KFREL=0 off   // E-03: steps end at the knots of the noise source (HitNoise step 5 us from the trigger); DGG_PART_NOBP=1: as before
     // idle run before the trigger (no noise on the NOISE line): event-controlled step (fixed step around comparator flips, up to 3 us between; plan section "Schritt 2"); from 0.2 ms before the trigger on the validated fixed step, with the noise of the hit
     net.quietUntil = std::getenv("DGG_PART_QUIET0") ? -1.0 : t0 - 2e-4; net.eventHMax = std::getenv("DGG_PART_EVHMAX") ? std::atof(std::getenv("DGG_PART_EVHMAX")) : 3e-6; if (const char* em = std::getenv("DGG_PART_EVMARGIN")) net.eventMargin = std::atof(em); if (const char* eh = std::getenv("DGG_PART_EVHOLD")) net.eventHold = std::atof(eh);   // test hooks: look-ahead margin and hold time of the comparator-flip prediction   // test hook DGG_PART_EVHMAX: longest step between comparator events in the idle run (default 3 us)
     if (const char* qh = std::getenv("DGG_PART_QUIETH")) net.quietH = std::atof(qh);   // test hook (E-02): window length of the idle run (default 60 us)
@@ -297,10 +297,10 @@ private:
     { const int own = net.blockOfNodeName(lower + "_" + tag + "_OUT"), kb = net.blockOfNodeName("bd_BD_OUT"), ks = net.blockOfNodeName("sd_SD_OUT"), kn = net.blockOfNodeName("noise_N_712"); const bool tomHit = tag == "LT" || tag == "MT" || tag == "HT"; const bool off = std::getenv("DGG_PART_OTHERS0") != nullptr;
       for (size_t i = 0; i < net.blocks.size(); ++i) { const int bi = static_cast<int>(i); const bool keep = bi == own || (tomHit && bi == kn); net.blocks[i]->passive = !off && own >= 0 && !keep; net.blocks[i]->frozenIdle = net.blocks[i]->passive && !(tag == "HC" && (bi == kb || bi == ks)); }   // HC: the BD and SD blocks idle on before the trigger (their slow states settle: frozen at the stored state the first 0.5 ms of the hit are off by -13 dB), as ports of the line they are modelled in the noisy windows
       // BD (addendum 14): event-controlled fine step around comparator flips in the blocks that run full (PartNet::fineEventDt, Net909Part.h); validated against NGSpice for BD up to 60 ms after the trigger. All other voices: off (the net is shared between voices, so it is set on every hit).
-      net.fineEventDt = (v == Tr909Voice::Bd || v == Tr909Voice::Sd || v == Tr909Voice::Lt || v == Tr909Voice::Mt || v == Tr909Voice::Ht) ? kFineDt : 0.0; if (const char* fe = std::getenv("DGG_PART_FINEEV")) net.fineEventDt = std::atof(fe); net.fineNodes.clear(); if (const char* fm = std::getenv("DGG_PART_FINEMARGIN")) net.fineMargin = std::atof(fm); if (const char* fh = std::getenv("DGG_PART_FINEHOLD")) net.fineHold = std::atof(fh); if (v != Tr909Voice::Bd && !std::getenv("DGG_PART_FINEALL")) for (int k = 0; k < kOscillators; ++k) net.fineNodes.insert(OscNodes()[k]); if (v != Tr909Voice::Bd && !std::getenv("DGG_PART_FINEALL")) for (const char* an : {"sd_N_154", "lt_N_229", "mt_N_364", "ht_N_765"}) net.fineNodes.insert(an);   // and the accent stages (their level change at the trigger shifts the oscillator phase)   // E-02 (DETAILS 10.26 / 10.27): the oscillator voices run the fine step around the comparator flips (oscillator comparators and accent stage, PartNet::fineNodes, statR rule): hit half periods against NGSpice -1e-4...-8e-4 -> <= 2e-4, phase-impulse outliers MT k = 4 -26 -> -53 dB; hit time +25...+43 %; DGG_PART_FINEEV=0 = old (only BD)
+      net.fineEventDt = (v == Voice909::Bd || v == Voice909::Sd || v == Voice909::Lt || v == Voice909::Mt || v == Voice909::Ht) ? kFineDt : 0.0; if (const char* fe = std::getenv("DGG_PART_FINEEV")) net.fineEventDt = std::atof(fe); net.fineNodes.clear(); if (const char* fm = std::getenv("DGG_PART_FINEMARGIN")) net.fineMargin = std::atof(fm); if (const char* fh = std::getenv("DGG_PART_FINEHOLD")) net.fineHold = std::atof(fh); if (v != Voice909::Bd && !std::getenv("DGG_PART_FINEALL")) for (int k = 0; k < kOscillators; ++k) net.fineNodes.insert(OscNodes()[k]); if (v != Voice909::Bd && !std::getenv("DGG_PART_FINEALL")) for (const char* an : {"sd_N_154", "lt_N_229", "mt_N_364", "ht_N_765"}) net.fineNodes.insert(an);   // and the accent stages (their level change at the trigger shifts the oscillator phase)   // E-02 (DETAILS 10.26 / 10.27): the oscillator voices run the fine step around the comparator flips (oscillator comparators and accent stage, PartNet::fineNodes, statR rule): hit half periods against NGSpice -1e-4...-8e-4 -> <= 2e-4, phase-impulse outliers MT k = 4 -26 -> -53 dB; hit time +25...+43 %; DGG_PART_FINEEV=0 = old (only BD)
       for (auto& bp : net.blocks) bp->fineEvents = net.fineEventDt > 0.0 && !bp->passive; }
     net.freezeIdle = std::getenv("DGG_PART_FREEZE") ? std::atoi(std::getenv("DGG_PART_FREEZE")) != 0 : !idleOld;   // test hook (E-02): the blocks of the other voices rest during the idle run before the trigger
-    const bool runOk = RunHit(net, t0, t0 + static_cast<double>(nOut) * ts + 2e-4, v == Tr909Voice::Sd || v == Tr909Voice::Bd); net.quietUntil = -1.0;
+    const bool runOk = RunHit(net, t0, t0 + static_cast<double>(nOut) * ts + 2e-4, v == Voice909::Sd || v == Voice909::Bd); net.quietUntil = -1.0;
     if (!runOk) { out.clear(); return false; }
     if (std::getenv("DGG_PART_STATS")) { for (auto& bp : net.blocks) if (bp->qFixed + bp->qAd > 0) { fprintf(stderr, "quiet block %s: fixed steps %ld (%.1f ms), controlled steps %ld (%.1f ms)\n", bp->name.c_str(), bp->qFixed, 1e3 * bp->qFixedT, bp->qAd, 1e3 * bp->qAdT); fprintf(stderr, "   hold steps %ld, predicted-flip steps %ld; by op-amp (out node): ", bp->nHold, bp->nPred); for (size_t oi = 0; oi < bp->predBy.size(); ++oi) if (bp->predBy[oi] || bp->statBy[oi]) fprintf(stderr, "%s pred %ld stat %ld; ", bp->net.nodeName[static_cast<size_t>(bp->net.op[oi].out)].c_str(), bp->predBy[oi], bp->statBy[oi]); fprintf(stderr, "\n"); bp->nHold = bp->nPred = 0; bp->predBy.clear(); bp->statBy.clear(); bp->qFixed = bp->qAd = 0; bp->qFixedT = bp->qAdT = 0.0; } }
     if (std::getenv("DGG_PART_STATS")) { fprintf(stderr, "PartNet: windows %ld passes %ld unconverged %ld hist", net.windows, net.passes, net.unconverged); for (int i = 1; i < 8; ++i) fprintf(stderr, " %d:%ld", i, net.itHist[i]); fprintf(stderr, " max mismatch %.3g\n", net.ifMaxMismatch); }

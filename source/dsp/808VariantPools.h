@@ -7,7 +7,7 @@
 #include <cstdint>
 
 // The per-instrument singleton instantiations of
-// TR808VariantPoolCache (see that file for the design rationale). Kept
+// VariantPoolCache808 (see that file for the design rationale). Kept
 // separate from 808VariantPoolCache.h so that header stays a generic,
 // instrument-agnostic building block.
 namespace dgg
@@ -16,10 +16,10 @@ namespace dgg
 // Generic 128-bit key for variant pools whose parameters do not fit in a
 // uint64_t (Ride/HiHat need pitch in the key). Every variant is baked at its own
 // pitch; the pool never blends between keys, it plays back one exact, whole recording.
-struct TR808VariantKey128
+struct VariantKey128808
 {
   uint64_t lo = 0, hi = 0;
-  bool operator==(const TR808VariantKey128& o) const { return lo == o.lo && hi == o.hi; }
+  bool operator==(const VariantKey128808& o) const { return lo == o.lo && hi == o.hi; }
 };
 
 // Every knob in a variant-pool key is quantized to the UI's own 0.01 grid
@@ -39,7 +39,7 @@ inline uint64_t QuantizeVariantPitch(double x)
 inline double DequantizeVariant(uint64_t q) { return (double)q / 100.0; }
 
 // Accent of a baked set: the Accent amount (0..1) in steps of 1 % (the steps of the Accent slider) (0 = a normal hit, the key and file name of a set without accent stay as they were). Accented sets are baked on demand
-// (the first accented hit that finds no variant plays live and starts the bake), never ahead of time. The step lives in the upper 32 bits of TR808VariantKey128::hi, the sample rate in the lower.
+// (the first accented hit that finds no variant plays live and starts the bake), never ahead of time. The step lives in the upper 32 bits of VariantKey128808::hi, the sample rate in the lower.
 constexpr int kAccentStepsPerUnit = 100;
 inline int QuantizeAccentStep(double accent01) { return (int)std::llround(std::clamp(accent01, 0.0, 1.0) * kAccentStepsPerUnit); }
 inline double DequantizeAccentStep(int step) { return std::clamp(step, 0, kAccentStepsPerUnit) / (double)kAccentStepsPerUnit; }
@@ -47,9 +47,9 @@ inline uint64_t PackKeyHi(double sampleRateHz, int accentStep) { return (uint64_
 inline double KeyHiSampleRate(uint64_t hi) { return (double)(hi & 0xFFFFFFFFull); }
 inline int KeyHiAccentStep(uint64_t hi) { return (int)(hi >> 32); }
 
-struct TR808VariantKey128Hash
+struct VariantKey128Hash808
 {
-  size_t operator()(const TR808VariantKey128& k) const
+  size_t operator()(const VariantKey128808& k) const
   {
     uint64_t h = k.lo * 0x9E3779B97F4A7C15ULL + k.hi;
     h ^= h >> 33;
@@ -57,16 +57,16 @@ struct TR808VariantKey128Hash
   }
 };
 
-class TR808RideVariantPool : public TR808VariantPoolCache<TR808VariantKey128, TR808VariantKey128Hash>
+class RideVariantPool808 : public VariantPoolCache808<VariantKey128808, VariantKey128Hash808>
 {
 public:
-  static TR808RideVariantPool& Instance() { static TR808RideVariantPool inst; return inst; }
+  static RideVariantPool808& Instance() { static RideVariantPool808 inst; return inst; }
 };
 
-class TR808HiHatVariantPool : public TR808VariantPoolCache<TR808VariantKey128, TR808VariantKey128Hash>
+class HiHatVariantPool808 : public VariantPoolCache808<VariantKey128808, VariantKey128Hash808>
 {
 public:
-  static TR808HiHatVariantPool& Instance() { static TR808HiHatVariantPool inst; return inst; }
+  static HiHatVariantPool808& Instance() { static HiHatVariantPool808 inst; return inst; }
 };
 
 }  // namespace dgg

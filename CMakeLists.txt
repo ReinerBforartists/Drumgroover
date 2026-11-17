@@ -126,7 +126,7 @@ iplug_add_plugin(${PROJECT_NAME}
 )
 
 # The AVX2 hi-hat unit is always compiled with AVX2, independent of DGG_AVX2: 256-bit code mixed with legacy-SSE code is about nine times slower. The entry is only called after a run-time check of the CPU
-# (Tr909LanesAvailable); the unit has its own namespace, so none of its AVX2 code is shared with the rest of the plugin.
+# (LanesAvailable909); the unit has its own namespace, so none of its AVX2 code is shared with the rest of the plugin.
 if(MSVC)
   set_source_files_properties(source/dsp/909PcmHatAvx2.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
 endif()

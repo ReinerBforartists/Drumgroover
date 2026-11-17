@@ -5,21 +5,21 @@
 #pragma once
 namespace dgg {
 
-constexpr double kTr909CrashClockRatio[21] = {
+constexpr double kCrashClockRatio909[21] = {
   0.867335, 0.871836, 0.876360, 0.903392, 0.931256, 0.965016, 1.000000,
   1.029247, 1.059348, 1.095185, 1.132234, 1.168168, 1.205243, 1.251582,
   1.299704, 1.367896, 1.439664, 1.519077, 1.602869, 1.632759, 1.663206,
 };
-constexpr double kTr909RideClockRatio[21] = {
+constexpr double kRideClockRatio909[21] = {
   0.865580, 0.873574, 0.881641, 0.904690, 0.928343, 0.963506, 1.000000,
   1.039735, 1.081048, 1.108980, 1.137633, 1.182819, 1.229801, 1.289507,
   1.352113, 1.417614, 1.486287, 1.582156, 1.684211, 1.707402, 1.730912,
 };
 
 // Clock ratio at the pot position x (0..1), linear between the table points; ride = true for the Ride, false for the Crash.
-inline double Tr909PcmClockRatio(double x, bool ride)
+inline double PcmClockRatio909(double x, bool ride)
 {
-  const double* t_ = ride ? kTr909RideClockRatio : kTr909CrashClockRatio;
+  const double* t_ = ride ? kRideClockRatio909 : kCrashClockRatio909;
   x = x < 0.0 ? 0.0 : (x > 1.0 ? 1.0 : x); const double f = x * 20.0; int i = static_cast<int>(f); if (i > 19) i = 19;
   const double t = f - i; return t_[i] * (1.0 - t) + t_[i + 1] * t;
 }

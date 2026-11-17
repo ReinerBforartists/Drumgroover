@@ -1321,7 +1321,7 @@ function neRefreshAccentReadout() {
   if (t && document.activeElement !== t) t.value = String(Math.round(dggAccentAmount * 100));
 }
 
-// Accent lane: one row of markers above the velocity lane, like the ACCENT row of the TR-808 sequencer. A marker at a position makes every
+// Accent lane: one row of markers above the velocity lane, like the ACCENT row of the 808 sequencer. A marker at a position makes every
 // instrument that plays there play accented. Click toggles a marker at the snapped position, a drag paints (adds, or removes when it starts
 // on a marker), a right-drag erases.
 function neBuildAccentLane(ctx) {
@@ -1332,7 +1332,7 @@ function neBuildAccentLane(ctx) {
   labels.className = 'ne-accent-labels';
   const amountPct = Math.round(dggAccentAmount * 100);
   labels.innerHTML = '<span class="ne-accent-title">Accent</span><span class="ne-accent-amount-wrap"><input type="number" class="ne-accent-amount" min="0" max="100" step="5" value="' + amountPct + '"><span class="ne-accent-pct">%</span></span>';
-  labels.dataset.tooltip = 'Accent\nMarks positions where every instrument plays accented, like the accent row of the TR-808 sequencer. How much an accent differs from a normal hit is set by "Accent" in the Drum Engine tab; the box here sets the same amount (0% = accents have no effect).';
+  labels.dataset.tooltip = 'Accent\nMarks positions where every instrument plays accented, like the accent row of the 808 sequencer. How much an accent differs from a normal hit is set by "Accent" in the Drum Engine tab; the box here sets the same amount (0% = accents have no effect).';
   const lane = document.createElement('div');
   lane.className = 'ne-accent-lane';
   const inner = document.createElement('div');

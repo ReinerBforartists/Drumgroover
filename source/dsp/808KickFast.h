@@ -109,14 +109,14 @@ struct SplineBasis
 inline const SplineBasis& Spline() { static const SplineBasis s; return s; }
 }  // namespace detail
 
-class TR808KickFast
+class KickFast808
 {
 public:
   struct Pots { double vr4 = 1.0, vr5 = 0.5, vr6 = 0.5; };
   // false: every host sample is stepped (the plain render); true: the quiet tail is stepped coarsely, see TrackLevel()
   bool adaptiveTail = true;   // fractions of the pots as the engine takes them (level, tone, decay)
 
-  TR808KickFast() { detail::Spline(); SetSampleRate(48000.0); }
+  KickFast808() { detail::Spline(); SetSampleRate(48000.0); }
 
   void SetSampleRate(double sr) { if (sr == mSr) return; mSr = sr; mValid = false; }
   void SetPots(const Pots& p) { if (mValid && p.vr4 == mP.vr4 && p.vr5 == mP.vr5 && p.vr6 == mP.vr6) return; mP = p; mValid = false; }

@@ -17,7 +17,7 @@
 
 namespace dgg {
 
-class TR808KickVoice final : public DrumVoice
+class KickVoice808 final : public DrumVoice
 {
 public:
   // Knob positions 0..1 as the UI shows them.
@@ -41,9 +41,9 @@ public:
     return p <= 0.5 ? 0.3 * p : 0.15 + 1.7 * (p - 0.5);
   }
   static double ReverseLogTaper(double p) { return 1.0 - AudioTaper(1.0 - std::clamp(p, 0.0, 1.0)); }
-  static kickfast::TR808KickFast::Pots PotsFromKnobs(double decay01, double tone01, double level01)
+  static kickfast::KickFast808::Pots PotsFromKnobs(double decay01, double tone01, double level01)
   {
-    kickfast::TR808KickFast::Pots p;
+    kickfast::KickFast808::Pots p;
     p.vr6 = std::clamp(decay01, 0.0, 1.0);
     p.vr5 = 1.0 - ReverseLogTaper(tone01);
     p.vr4 = AudioTaper(level01);
@@ -89,7 +89,7 @@ public:
   bool IsActive() const override { return mActive; }
 
 private:
-  kickfast::TR808KickFast mModel;
+  kickfast::KickFast808 mModel;
   double mVelGain = 1.0, mAccent = 0.0;
   bool mActive = false; double mRest = 0.0, mPitch = 1.0, mPos = 0.0, mS0 = 0.0, mS1 = 0.0; long mHave = 0, mSamples = 0, mQuiet = 0, mHoldSamples = 12000, mMinSamples = 14400, mMaxSamples = 384000;
 };

@@ -172,13 +172,13 @@ struct Stage
 };
 }  // namespace detail
 
-class TR808SnareFast
+class SnareFast808
 {
 public:
   static constexpr double kFs = detail::kFs;                 // internal rate of the model
   static constexpr double kAccentFullScaleVolt = 4.09;      // Dio.ino SetDacA: map(velocity, 0, 127, 0, 4090) mV
 
-  TR808SnareFast() { mRng.Seed(1); }
+  SnareFast808() { mRng.Seed(1); }
   void SetSeed(uint64_t seed) { mRng.Seed(seed); }
   double noiseScale = 1.0, subScale = 1.0;   // test hooks: noiseScale scales the statistical noise component only (0 = the deterministic part alone); subScale scales the first-sample correction
 

@@ -20,7 +20,7 @@
 
 namespace dgg {
 
-class TR808SnareVoice final : public DrumVoice
+class SnareVoice808 final : public DrumVoice
 {
 public:
   // Pot positions 0..1 as the UI shows them.
@@ -32,7 +32,7 @@ public:
 
   // Jack voltage -> sample: the common jack factor (the snare channel is 12k / 12k).
   static constexpr double kVoltToSample = dgg::kJackVoltToSample;
-  static constexpr double kAccentFullScaleVolt = snarefast::TR808SnareFast::kAccentFullScaleVolt;
+  static constexpr double kAccentFullScaleVolt = snarefast::SnareFast808::kAccentFullScaleVolt;
   // A hit ends when the 10 ms RMS of the output has stayed below kSilenceVolt for kSilenceHoldSec (not before kMinSeconds, not after kMaxSeconds); model time.
   static constexpr double kSilenceVolt = 1e-4, kSilenceHoldSec = 0.15, kMinSeconds = 0.3, kMaxSeconds = 3.0, kRmsWindowSec = 0.010;
 
@@ -42,7 +42,7 @@ public:
   void SetSampleRate(double sr) override
   {
     DrumVoice::SetSampleRate(sr);
-    mHostRatio = snarefast::TR808SnareFast::kFs / sr;
+    mHostRatio = snarefast::SnareFast808::kFs / sr;
   }
 
   void SetAccent(double accent01) override { mAccent = std::clamp(accent01, 0.0, 1.0); }
@@ -61,8 +61,8 @@ public:
     mRate = std::clamp(pitchRatio, 0.25, 4.0) * mHostRatio;
     mDirect = std::fabs(mRate - 1.0) < 1e-12;
     mFrac = 0.0; mSamples = 0; mQuiet = 0; mInWin = 0; mWinSq = 0.0;
-    mWinSamples = std::max(1L, (long)(kRmsWindowSec * snarefast::TR808SnareFast::kFs)); mHoldSamples = (long)(kSilenceHoldSec * snarefast::TR808SnareFast::kFs);
-    mMinSamples = (long)(kMinSeconds * snarefast::TR808SnareFast::kFs); mMaxSamples = (long)(kMaxSeconds * snarefast::TR808SnareFast::kFs);
+    mWinSamples = std::max(1L, (long)(kRmsWindowSec * snarefast::SnareFast808::kFs)); mHoldSamples = (long)(kSilenceHoldSec * snarefast::SnareFast808::kFs);
+    mMinSamples = (long)(kMinSeconds * snarefast::SnareFast808::kFs); mMaxSamples = (long)(kMaxSeconds * snarefast::SnareFast808::kFs);
     mActive = true;
     if (!mDirect) { mY[0] = 0.0; mY[1] = NextModel(); mY[2] = NextModel(); mY[3] = NextModel(); }   // history of the cubic interpolation: the first output sample is the first model sample
   }
@@ -113,7 +113,7 @@ private:
   static inline std::atomic<uint32_t> gVoiceCounter{1};
 
   double mVelGain = 1.0, mAccent = 0.0;
-  snarefast::TR808SnareFast mModel;
+  snarefast::SnareFast808 mModel;
   bool mActive = false, mDirect = true;
   double mHostRatio = 1.0, mRate = 1.0, mFrac = 0.0, mWinSq = 0.0, mLast = 0.0, mY[4] = {};
   long mSamples = 0, mQuiet = 0, mInWin = 0, mWinSamples = 480, mHoldSamples = 1440, mMinSamples = 2880, mMaxSamples = 144000;

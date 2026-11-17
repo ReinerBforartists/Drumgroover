@@ -22,7 +22,7 @@
 #include "dsp/808HcVoice.h"
 #include "dsp/808CbVoice.h"
 #include "dsp/808Pc2Voice.h"
-// Cymbal plays through 808RideVoice.h's TR808RideVoice (see its
+// Cymbal plays through 808RideVoice.h's RideVoice808 (see its
 // Articulation::Crash).
 #include "dsp/808RideVoice.h"
 #include "dsp/LoFiVoice.h"
@@ -48,12 +48,12 @@ enum EParams
 
 // Global routing switch: Internal -> native 808 voices, LoFi -> placeholder synthesis (see LoFiVoice.h).
 // Affects all families; it is a routing choice, not a per‑family sound selection.
-enum class EngineMode : int { Internal = 0, LoFi = 1, Tr909 = 2 };   // Tr909: kick, SD, toms and hand clap play the TR-909 fast voices, the rest the 808 voices
+enum class EngineMode : int { Internal = 0, LoFi = 1, Kit909 = 2 };   // Kit909: kick, SD, toms and hand clap play the TR-909 fast voices, the rest the 808 voices
 
 namespace dgg
 {
 // One cache set that a bake order covers. kind: 0=ride, 1=hihat, 2=cymbal, 3=(unused: the kick is synthesised directly), 4=snare, 5=tom/conga, 6=rim shot, 7=claves, 8=hand clap, 9=maracas, 10=(unused: the cowbell is synthesised directly), 11=pc2, 12=TR-909 fast voice.
-struct VariantBakeTarget { int kind; TR808VariantKey128 key; std::string baseName; Tr909SetKey key909 = {}; };   // kind 12: a TR-909 fast-voice set (key909)
+struct VariantBakeTarget { int kind; VariantKey128808 key; std::string baseName; SetKey909 key909 = {}; };   // kind 12: a TR-909 fast-voice set (key909)
 }
 
 class DrumGroover final : public Plugin
@@ -351,16 +351,16 @@ private:
 #if IPLUG_DSP
   // One pool per kick instance (dsp/808InstrumentTable.h, family "kick": High Stack, Open); max polyphony 4, runtime polyphony
   // adjustable via HandleSetPolyphony. Pool index = poolSlot = paramIndex.
-  std::array<dgg::VoicePool<dgg::TR808KickVoice, 4>, dgg::CountInstruments("kick")> mKickPools;
+  std::array<dgg::VoicePool<dgg::KickVoice808, 4>, dgg::CountInstruments("kick")> mKickPools;
   // Calls f(instrumentRow, pool) for every kick instance, in table order.
   template <typename F> void ForEachKickPool(F&& f);
   template <typename F> void ForEachKickPool(F&& f) const;
 
   // One pool per snare instance (dsp/808InstrumentTable.h, family "snare"): the instances of kind SnareSd (Center, Off Center, Edge,
-  // Sidestick) play the SD circuit, those of kind RmRim (Rimshot, Rim Only) the Rim Shot circuit (RM sheet, TR808RmVoice). The
+  // Sidestick) play the SD circuit, those of kind RmRim (Rimshot, Rim Only) the Rim Shot circuit (RM sheet, RmVoice808). The
   // instance's poolSlot is its index in the array of its kind.
-  std::array<dgg::VoicePool<dgg::TR808SnareVoice, 8>, dgg::CountInstruments("snare", dgg::EngineKind::SnareSd)> mSnareSdPools;
-  std::array<dgg::VoicePool<dgg::TR808RmVoice, 6>, dgg::CountInstruments("snare", dgg::EngineKind::RmRim)> mSnareRmPools;
+  std::array<dgg::VoicePool<dgg::SnareVoice808, 8>, dgg::CountInstruments("snare", dgg::EngineKind::SnareSd)> mSnareSdPools;
+  std::array<dgg::VoicePool<dgg::RmVoice808, 6>, dgg::CountInstruments("snare", dgg::EngineKind::RmRim)> mSnareRmPools;
   // Calls f(instrumentRow, pool) for every snare instance, in table order.
   template <typename F> void ForEachSnarePool(F&& f);
   template <typename F> void ForEachSnarePool(F&& f) const;
@@ -379,21 +379,21 @@ private:
   // One pool per tom articulation, in the order of the Note Editor: Rack Tom 1 (HT, tom position) Center/Rimshot/Rim Only (notes 48/82/81),
   // Rack Tom 2 (MT) 47/80/79, Rack Tom 3 (LT) 45/78/77, Floor Tom 1 (MC, conga position) 43/75/74, Floor Tom 2 (LC) 41/73/72.
   // The HT conga is the Custom-tab conga (no pool yet).
-  std::array<dgg::VoicePool<dgg::TR808TomVoice, 6>, dgg::CountInstruments("tom")> mTomPools;
-  std::array<dgg::VoicePool<dgg::Tr909RimLiveVoice, 1>, dgg::CountInstruments("snare", dgg::EngineKind::RmRim)> m909RimPools;   // TR-909 mode: the Rim Shot rows (pool index = poolSlot), live model, one voice per row (a retrigger continues the circuit)
-  std::array<dgg::VoicePool<dgg::Tr909CachedVoice, 4>, dgg::kNumInstruments> m909Pools;   // TR-909 mode: one pool per table row (only the rows of Tr909VoiceForInstrument are used), played into the row's mixer channel
+  std::array<dgg::VoicePool<dgg::TomVoice808, 6>, dgg::CountInstruments("tom")> mTomPools;
+  std::array<dgg::VoicePool<dgg::RimLiveVoice909, 1>, dgg::CountInstruments("snare", dgg::EngineKind::RmRim)> m909RimPools;   // TR-909 mode: the Rim Shot rows (pool index = poolSlot), live model, one voice per row (a retrigger continues the circuit)
+  std::array<dgg::VoicePool<dgg::CachedVoice909, 4>, dgg::kNumInstruments> m909Pools;   // TR-909 mode: one pool per table row (only the rows of VoiceForInstrument909 are used), played into the row's mixer channel
   // Calls f(instrumentRow, pool) for every tom instance, in table order (pool index = poolSlot = paramIndex).
   template <typename F> void ForEachTomPool(F&& f);
   template <typename F> void ForEachTomPool(F&& f) const;
 
   // Custom instruments (Drum Engine > Custom tab, dsp/CustomInstrumentRegistry.h): one pool per implementation kind and registry index, played into the Custom channel.
   // The track a custom instrument is assigned to (Add Track dialog) gives its GM note and track id (setCustomInstruments).
-  std::array<dgg::VoicePool<dgg::TR808TomVoice, 6>, dgg::kNumCustomInstruments> mCustomPools;      // the instruments of kind Tom
-  std::array<dgg::VoicePool<dgg::TR808RmVoice, 6>, dgg::kNumCustomInstruments> mCustomRmPools;     // the instruments of kind RmClaves (RM sheet); the pool of the other kind stays idle
-  std::array<dgg::VoicePool<dgg::TR808HcVoice, 6>, dgg::kNumCustomInstruments> mCustomHcPools;     // the instruments of kind HcClap / HcMaracas (HC sheet); the pools of the other kinds stay idle
-  std::array<dgg::VoicePool<dgg::TR808Pc2Voice, 6>, dgg::kNumCustomInstruments> mCustomPc2Pools;   // the instrument of kind Pc2 (PC-2 sheet); the pools of the other kinds stay idle
-  std::array<dgg::VoicePool<dgg::TR808CbVoice, 6>, dgg::kNumCustomInstruments> mCustomCbPools;     // the instrument of kind Cowbell (CB sheet); the pools of the other kinds stay idle
-  std::array<dgg::VoicePool<dgg::Tr909CachedVoice, 4>, dgg::kNumCustomInstruments> m909CustomPools;   // the instruments of kind Tr909 (909 voice from the baked sets); the pools of the other kinds stay idle
+  std::array<dgg::VoicePool<dgg::TomVoice808, 6>, dgg::kNumCustomInstruments> mCustomPools;      // the instruments of kind Tom
+  std::array<dgg::VoicePool<dgg::RmVoice808, 6>, dgg::kNumCustomInstruments> mCustomRmPools;     // the instruments of kind RmClaves (RM sheet); the pool of the other kind stays idle
+  std::array<dgg::VoicePool<dgg::HcVoice808, 6>, dgg::kNumCustomInstruments> mCustomHcPools;     // the instruments of kind HcClap / HcMaracas (HC sheet); the pools of the other kinds stay idle
+  std::array<dgg::VoicePool<dgg::Pc2Voice808, 6>, dgg::kNumCustomInstruments> mCustomPc2Pools;   // the instrument of kind Pc2 (PC-2 sheet); the pools of the other kinds stay idle
+  std::array<dgg::VoicePool<dgg::CbVoice808, 6>, dgg::kNumCustomInstruments> mCustomCbPools;     // the instrument of kind Cowbell (CB sheet); the pools of the other kinds stay idle
+  std::array<dgg::VoicePool<dgg::CachedVoice909, 4>, dgg::kNumCustomInstruments> m909CustomPools;   // the instruments of kind Kit909 (909 voice from the baked sets); the pools of the other kinds stay idle
   std::atomic<int> mCustomNote[dgg::kNumCustomInstruments];   // GM note of the assigned track, -1: none
   std::atomic<bool> mUiPreviewAccent{false};   // Drum Engine "Preview with accent" switch, set with each UI preview note
   std::atomic<double> mCustomPreviewGain[dgg::kNumCustomInstruments];   // volume knob of a card without a track: scales the preview velocity (unity = 1)
@@ -408,12 +408,12 @@ private:
   // One voice pool per Cymbal instance (dsp/808InstrumentTable.h, family "cymbal": Crash and Mute of each of the five cymbals, pool
   // index = poolSlot = paramIndex, even = Crash, odd = Mute); a Mute hit triggers ChokeAll on the Crash pool of its cymbal.
   // Cymbal plays through the same engine as Ride (see dsp/808RideVoice.h Articulation::Crash).
-  std::array<dgg::VoicePool<dgg::TR808RideVoice, 3>, dgg::CountInstruments("cymbal")> mCymbalPools;
+  std::array<dgg::VoicePool<dgg::RideVoice808, 3>, dgg::CountInstruments("cymbal")> mCymbalPools;
   template <typename F> void ForEachCymbalPool(F&& f);
   template <typename F> void ForEachCymbalPool(F&& f) const;
 
   // Six voice pools for Ride articulations (BowTip, BowShank, BellTip, BellShank, Edge, Mute). Mute chokes others.
-  std::array<dgg::VoicePool<dgg::TR808RideVoice, 3>, dgg::CountInstruments("ride")> mRidePools;
+  std::array<dgg::VoicePool<dgg::RideVoice808, 3>, dgg::CountInstruments("ride")> mRidePools;
   template <typename F> void ForEachRidePool(F&& f);
   template <typename F> void ForEachRidePool(F&& f) const;
 

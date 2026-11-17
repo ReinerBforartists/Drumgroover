@@ -3,7 +3,7 @@
 #pragma once
 // Custom instruments (Drum Engine > Custom tab): extra percussion that a track can be assigned to (Add Track dialog). They are available
 // in every engine mode and the engine mode never redirects them. A custom instrument is one definition (CustomInstrumentDef) that names
-// its own implementation (kind) and carries its own knobs and defaults; the set it belongs to ("TR-808", "TR-909") is a label, not a class.
+// its own implementation (kind) and carries its own knobs and defaults; the set it belongs to ("808", "909") is a label, not a class.
 // The definitions live with their implementations (808CustomInstruments.h, 909CustomInstruments.h); CustomInstrumentRegistry.h lists them.
 #include "InstrumentSchema.h"
 #if __has_include(<nlohmann/json.hpp>)
@@ -15,7 +15,7 @@
 namespace dgg {
 
 // The implementations a custom instrument can run on; the host keeps the voice pool of each.
-enum class CustomKind { Conga, Claves, HandClap, Maracas, Cowbell, Pc2, Tr909 };
+enum class CustomKind { Conga, Claves, HandClap, Maracas, Cowbell, Pc2, Kit909 };
 
 struct CustomInstrumentDef
 {
@@ -23,7 +23,7 @@ struct CustomInstrumentDef
   const char* name;        // Drum Engine card label
   const char* origin;      // the instrument set it belongs to: label only
   CustomKind kind;
-  int arg;                 // engine argument of the kind (Conga: tom sheet; Tr909: the Tr909Voice)
+  int arg;                 // engine argument of the kind (Conga: tom sheet; Kit909: the Voice909)
   MixerChannel channel;
   const ControlDef* controls; int numControls;
   const DefaultValue* defaults; int numDefaults;   // includes "volume": the default of the card's Volume knob (linear gain after the voice, 1.0 = unity)

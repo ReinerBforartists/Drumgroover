@@ -24,7 +24,7 @@
 
 namespace dgg {
 
-class TR808TomVoice final : public DrumVoice
+class TomVoice808 final : public DrumVoice
 {
 public:
   enum class Articulation { Center, RimShot, RimOnly };
@@ -54,7 +54,7 @@ public:
   void SetSampleRate(double sr) override
   {
     DrumVoice::SetSampleRate(sr);
-    mHostRatio = tomfast::TR808TomFast::kFs / sr;
+    mHostRatio = tomfast::TomFast808::kFs / sr;
   }
 
   void SetAccent(double accent01) override { mAccent = std::clamp(accent01, 0.0, 1.0); }
@@ -74,7 +74,7 @@ public:
     mDirect = std::fabs(mRate - 1.0) < 1e-12;
     mFrac = 0.0; mSamples = 0; mQuiet = 0; mInWin = 0; mWinSq = 0.0; mEnv = 1.0;
     mEnvStep = articulation == Articulation::Center ? 1.0 : std::exp(-1.0 / ((articulation == Articulation::RimShot ? kRimShotTauSec : kRimOnlyTauSec) * mSampleRate));
-    constexpr double kFs = tomfast::TR808TomFast::kFs;
+    constexpr double kFs = tomfast::TomFast808::kFs;
     mWinSamples = std::max(1L, (long)(kRmsWindowSec * kFs)); mHoldSamples = (long)(kSilenceHoldSec * kFs);
     mMinSamples = (long)(kMinSeconds * kFs); mMaxSamples = (long)(kMaxSeconds * kFs);
     mActive = true;
@@ -122,7 +122,7 @@ private:
   }
 
   double mVelGain = 1.0, mAccent = 0.0;
-  tomfast::TR808TomFast mModel;
+  tomfast::TomFast808 mModel;
   bool mActive = false, mDirect = true;
   double mHostRatio = 1.0, mRate = 1.0, mFrac = 0.0, mWinSq = 0.0, mY[4] = {};
   double mEnv = 1.0, mEnvStep = 1.0;   // rim articulations: exponential decay per output sample

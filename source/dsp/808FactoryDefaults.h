@@ -18,19 +18,19 @@ namespace dgg
 struct FactoryDefaultEntry { int kind; int index; double decay, tone, level, pitch; };
 
 // Pool order: BowTip, BowShank, BellTip, BellShank, Edge, Mute.
-inline TR808RideVoice::Articulation RideArticulationForPool(int poolIndex)
+inline RideVoice808::Articulation RideArticulationForPool(int poolIndex)
 {
-  static const TR808RideVoice::Articulation kArts[6] = {
-    TR808RideVoice::Articulation::BowTip, TR808RideVoice::Articulation::BowShank,
-    TR808RideVoice::Articulation::BellTip, TR808RideVoice::Articulation::BellShank,
-    TR808RideVoice::Articulation::Edge, TR808RideVoice::Articulation::Mute
+  static const RideVoice808::Articulation kArts[6] = {
+    RideVoice808::Articulation::BowTip, RideVoice808::Articulation::BowShank,
+    RideVoice808::Articulation::BellTip, RideVoice808::Articulation::BellShank,
+    RideVoice808::Articulation::Edge, RideVoice808::Articulation::Mute
   };
   return kArts[std::clamp(poolIndex, 0, 5)];
 }
 
-inline TR808RideVoice::Articulation CymbalArticulationForPool(int poolIndex)
+inline RideVoice808::Articulation CymbalArticulationForPool(int poolIndex)
 {
-  return (poolIndex % 2) != 0 ? TR808RideVoice::Articulation::Mute : TR808RideVoice::Articulation::Crash;
+  return (poolIndex % 2) != 0 ? RideVoice808::Articulation::Mute : RideVoice808::Articulation::Crash;
 }
 
 // Pool order: ClosedEdge, TightEdge, OpenEdge0, OpenEdge4, ClosedTip, TightTip.
@@ -42,35 +42,35 @@ inline HiHat808Voice::CircuitFamily HiHatPoolFamily(int poolIndex)
 // The key of the set a voice currently plays -- the one place every cache
 // request (pattern sync, knob release, clear-cache reload) builds its key
 // from a live voice.
-inline TR808VariantKey128 RideVoiceKey(TR808RideVoice::Articulation art, const TR808RideVoice& v, double sampleRateHz, int accentStep = 0)
+inline VariantKey128808 RideVoiceKey(RideVoice808::Articulation art, const RideVoice808& v, double sampleRateHz, int accentStep = 0)
 {
-  return TR808RideVoice::MakeVariantPoolKey(static_cast<int>(art), v.decayKnob01, v.toneKnob, v.levelKnob, v.pitchRatio, sampleRateHz, accentStep);
+  return RideVoice808::MakeVariantPoolKey(static_cast<int>(art), v.decayKnob01, v.toneKnob, v.levelKnob, v.pitchRatio, sampleRateHz, accentStep);
 }
 
-inline TR808VariantKey128 HiHatVoiceKey(int poolIndex, const HiHat808Voice& v, double sampleRateHz, int accentStep = 0)
+inline VariantKey128808 HiHatVoiceKey(int poolIndex, const HiHat808Voice& v, double sampleRateHz, int accentStep = 0)
 {
   return HiHat808Voice::MakeVariantPoolKey(HiHat808Voice::FamilyKey(HiHatPoolFamily(poolIndex)), poolIndex,
     v.decayKnob01, v.levelKnob01, v.pitchRatio, sampleRateHz, accentStep);
 }
 
 // The key of a factory-default set.
-inline TR808VariantKey128 FactoryDefaultKey(const FactoryDefaultEntry& e, double sampleRateHz)
+inline VariantKey128808 FactoryDefaultKey(const FactoryDefaultEntry& e, double sampleRateHz)
 {
   if (e.kind == 1)
     return HiHat808Voice::MakeVariantPoolKey(HiHat808Voice::FamilyKey(HiHatPoolFamily(e.index)), e.index, e.decay, e.level, e.pitch, sampleRateHz);
   const auto art = (e.kind == 0) ? RideArticulationForPool(e.index) : CymbalArticulationForPool(e.index);
-  return TR808RideVoice::MakeVariantPoolKey(static_cast<int>(art), e.decay, e.tone, e.level, e.pitch, sampleRateHz);
+  return RideVoice808::MakeVariantPoolKey(static_cast<int>(art), e.decay, e.tone, e.level, e.pitch, sampleRateHz);
 }
 
 inline std::string FactoryDefaultBaseName(const FactoryDefaultEntry& e, double sampleRateHz)
 {
-  const TR808VariantKey128 key = FactoryDefaultKey(e, sampleRateHz);
-  return e.kind == 1 ? HiHat808Voice::VariantPoolBaseName(key) : TR808RideVoice::VariantPoolBaseName(key);
+  const VariantKey128808 key = FactoryDefaultKey(e, sampleRateHz);
+  return e.kind == 1 ? HiHat808Voice::VariantPoolBaseName(key) : RideVoice808::VariantPoolBaseName(key);
 }
 
 // Makes a voice's knobs exactly the factory default (the UI's default
 // tables are the single source of these numbers).
-inline void ApplyFactoryDefaultToVoice(TR808RideVoice& v, const FactoryDefaultEntry& e)
+inline void ApplyFactoryDefaultToVoice(RideVoice808& v, const FactoryDefaultEntry& e)
 {
   v.decayKnob01 = e.decay; v.toneKnob = e.tone; v.levelKnob = e.level; v.pitchRatio = e.pitch;
 }

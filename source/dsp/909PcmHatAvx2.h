@@ -1,5 +1,5 @@
 // Entry of the hi-hat voices (Closed / Open) computed by the AVX2 unit PcmHatAvx2.cpp: the same model and solver as pcmfast::PcmVoiceHost, with the AVX2/FMA dot products. The unit is compiled with /arch:AVX2 and
-// lives in its own namespace (256-bit code must not be mixed with legacy-SSE code); it is used only after the run-time check Tr909LanesAvailable(). Without MSVC x64 (or with DGG_NO_LANES)
+// lives in its own namespace (256-bit code must not be mixed with legacy-SSE code); it is used only after the run-time check LanesAvailable909(). Without MSVC x64 (or with DGG_NO_LANES)
 // Create gives nullptr and the voices use the baseline implementation.
 #pragma once
 #if defined(_MSC_VER) && defined(_M_X64) && !defined(DGG_NO_LANES)
@@ -10,7 +10,7 @@ namespace dgg {
 
 #if defined(_MSC_VER) && defined(_M_X64) && !defined(DGG_NO_LANES)
 // True when the CPU and the operating system support AVX2 and FMA (checked without executing any AVX instruction).
-inline bool Tr909LanesAvailable()
+inline bool LanesAvailable909()
 {
   static const bool ok = []
   {
@@ -23,13 +23,13 @@ inline bool Tr909LanesAvailable()
   return ok;
 }
 #else
-inline bool Tr909LanesAvailable() { return false; }
+inline bool LanesAvailable909() { return false; }
 #endif
 
-class Tr909HatAvx2
+class HatAvx2909
 {
 public:
-  virtual ~Tr909HatAvx2() = default;
+  virtual ~HatAvx2909() = default;
   // As PcmSlot::Prepare of a hat: decay = Decay pot (0..1), level = Level pot (VR22), accentVolts = accent input; builds the tables when the sample rate changes (not on the audio thread).
   virtual void Prepare(int sampleRateHz, double decay, double level, double accentVolts) = 0;
   virtual void Trigger() = 0;
@@ -38,9 +38,9 @@ public:
 };
 
 #if defined(_MSC_VER) && defined(_M_X64) && !defined(DGG_NO_LANES)
-Tr909HatAvx2* Tr909HatAvx2Create(bool open);   // open: Open Hat, else Closed Hat; the caller deletes it
+HatAvx2909* HatAvx2Create909(bool open);   // open: Open Hat, else Closed Hat; the caller deletes it
 #else
-inline Tr909HatAvx2* Tr909HatAvx2Create(bool) { return nullptr; }
+inline HatAvx2909* HatAvx2Create909(bool) { return nullptr; }
 #endif
 
 }  // namespace dgg

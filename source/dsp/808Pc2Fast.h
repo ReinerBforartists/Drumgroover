@@ -199,14 +199,14 @@ struct Q22Transient
 };
 }  // namespace detail
 
-class TR808Pc2Fast
+class Pc2Fast808
 {
 public:
   struct Knobs { double vr1 = 0.5, vr2 = 0.5, vr3 = 0.5, vr18 = 0.5, vr19 = 0.5, vr20 = 0.5, tm5 = 0.5; int sw2 = 1, sw3 = 1; };
   // optional start state (engine comparisons): E, VCO x / direction, LFO l / direction, coupling capacitor
   struct StartState { double E, x, l, vcap; int vdir, ldir; };
 
-  TR808Pc2Fast() { Tables(); SetSampleRate(48000.0); }
+  Pc2Fast808() { Tables(); SetSampleRate(48000.0); }
 
   void SetSampleRate(double sr) { if (sr == mSr) return; mSr = sr; mKnobsValid = false; }
   // Knob state (computes the blocks that depend on it when it changed)
@@ -276,7 +276,7 @@ private:
   detail::Q22Transient mQ22;
 };
 
-inline void TR808Pc2Fast::BuildSnapshot()
+inline void Pc2Fast808::BuildSnapshot()
 {
   using namespace detail;
   const Tabs& T = Tables(); const double E0 = mERest, vRest = mC0 + mCE * E0; const bool running = vRest > 0.0755;
@@ -307,7 +307,7 @@ inline void TR808Pc2Fast::BuildSnapshot()
   mSnapY = z; mSnapVc = vc; mSnapValid = true;
 }
 
-inline double TR808Pc2Fast::Step()
+inline double Pc2Fast808::Step()
 {
   using namespace detail;
   if (!mActive) return 0.0;

@@ -22,7 +22,7 @@
 
 namespace dgg {
 
-class TR808CbVoice final : public DrumVoice
+class CbVoice808 final : public DrumVoice
 {
 public:
   // Knob position 0..1 as the UI shows it (VR5, taper A).
@@ -32,7 +32,7 @@ public:
   // Jack voltage -> sample: the common jack factor (peak up to kPeakVoltWorstCase at level 1).
   static constexpr double kPeakVoltWorstCase = 1.47;
   static constexpr double kVoltToSample = dgg::kJackVoltToSample;
-  static constexpr double kAccentFullScaleVolt = cbfast::TR808CbFast::kAccentFullScaleVolt, kAccentMaxVolt = 14.0;
+  static constexpr double kAccentFullScaleVolt = cbfast::CbFast808::kAccentFullScaleVolt, kAccentMaxVolt = 14.0;
   // The gate phase at the trigger is drawn within kPhaseSpanSec.
   static constexpr double kPhaseSpanSec = 1.0;
   // A hit ends when the 10 ms RMS of the output has stayed below kHitSilenceVolt for kHitSilenceHoldSec (not before kHitMinSeconds, not after kHitMaxSeconds).
@@ -105,7 +105,7 @@ private:
   }
   static inline std::atomic<uint32_t> gSeedCounter{1};
 
-  cbfast::TR808CbFast mModel;
+  cbfast::CbFast808 mModel;
   bool mActive = false;
   double mAccent = 0.0;
   double mGain = 0.0, mRate = 1.0, mFrac = 0.0, mY0 = 0.0, mY1 = 0.0, mLevelApplied = -1.0, mWinSq = 0.0;

@@ -65,9 +65,9 @@ public:
   void WarmupFreeRunningOscillatorsForBake(double seconds) { mWarmupSec = seconds; }
 
   // pitchRatio is part of THIS key: the variant pool never blends between keys. articulationId: the pool index (0-5), so pools of the same family and equal knobs still bake independently.
-  static dgg::TR808VariantKey128 MakeVariantPoolKey(int familyKey, int articulationId, double decay01, double levelKnob01, double pitchRatio, double sampleRateHz, int accentStep = 0)
+  static dgg::VariantKey128808 MakeVariantPoolKey(int familyKey, int articulationId, double decay01, double levelKnob01, double pitchRatio, double sampleRateHz, int accentStep = 0)
   {
-    dgg::TR808VariantKey128 key;
+    dgg::VariantKey128808 key;
     uint64_t lo = (uint64_t)(familyKey & 0xF);
     lo = (lo << 4) | (uint64_t)(articulationId & 0xF);
     lo = (lo << 12) | QuantizeVariantKnob01(decay01);
@@ -80,7 +80,7 @@ public:
 
   // The quantized settings a key stands for -- the exact inverse of MakeVariantPoolKey().
   struct VariantPoolParams { int familyKey, poolIndex; double decay, level, pitch, sampleRateHz; int accentStep; };
-  static VariantPoolParams DecodeVariantPoolKey(const dgg::TR808VariantKey128& key)
+  static VariantPoolParams DecodeVariantPoolKey(const dgg::VariantKey128808& key)
   {
     VariantPoolParams p;
     p.pitch = dgg::DequantizeVariant(key.lo & 0xFFF);
@@ -94,7 +94,7 @@ public:
   }
 
   // Cache file base name for a key, e.g. "HiHat_OpenEdge0_decay85_level100_pitch100_sr44100" (knobs in hundredths).
-  static std::string VariantPoolBaseName(const dgg::TR808VariantKey128& key)
+  static std::string VariantPoolBaseName(const dgg::VariantKey128808& key)
   {
     static const char* kPoolNames[6] = { "ClosedEdge", "TightEdge", "OpenEdge0", "OpenEdge4", "ClosedTip", "TightTip" };
     const VariantPoolParams p = DecodeVariantPoolKey(key);
@@ -149,8 +149,8 @@ public:
     const int accentStep = dgg::QuantizeAccentStep(mAccent);   // 0 = a normal hit
     if (diagUseVariantPool)
     {
-      const dgg::TR808VariantKey128 variantKey = MakeVariantPoolKey(FamilyKey(circuitFamily), variantPoolArticulationId, decayKnob01, levelKnob01, pitchRatio, mSampleRate, accentStep);
-      mCachePlayback = dgg::TR808HiHatVariantPool::Instance().GetRandom(variantKey);
+      const dgg::VariantKey128808 variantKey = MakeVariantPoolKey(FamilyKey(circuitFamily), variantPoolArticulationId, decayKnob01, levelKnob01, pitchRatio, mSampleRate, accentStep);
+      mCachePlayback = dgg::HiHatVariantPool808::Instance().GetRandom(variantKey);
       if (mCachePlayback) mCachePlaybackIsPrePitched = true;
     }
     // A miss is reported (the plugin bakes the key: the normal set at once, an accented set on demand); this hit is synthesised live with the fast model.

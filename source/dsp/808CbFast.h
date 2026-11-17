@@ -165,12 +165,12 @@ struct LevelStage
 }  // namespace detail
 
 // The cowbell model. One instance = one voice. Not thread safe; no allocation after construction.
-class TR808CbFast
+class CbFast808
 {
 public:
   static constexpr double kAccentFullScaleVolt = 4.09;   // Dio.ino SetDacA: map(velocity, 0, 127, 0, 4090) mV; the voice always runs with the full accent
 
-  TR808CbFast() { SetSampleRate(48000.0); SetLevel(0.75); }
+  CbFast808() { SetSampleRate(48000.0); SetLevel(0.75); }
 
   // Recomputes the step matrices (four matrix exponentials, ~0.1 ms); not for the audio thread's hot path, but cheap enough for a rate change.
   void SetSampleRate(double fs)

@@ -21,7 +21,7 @@ namespace dgg {
 namespace {
 
 template <class M, bool Open>
-class HatImpl final : public Tr909HatAvx2
+class HatImpl final : public HatAvx2909
 {
 public:
   void Prepare(int fs, double decay, double level, double accentVolts) override
@@ -41,7 +41,7 @@ private:
 
 }  // namespace
 
-Tr909HatAvx2* Tr909HatAvx2Create(bool open)
+HatAvx2909* HatAvx2Create909(bool open)
 {
   if (open) return new HatImpl<HhoModelA0, true>();
   return new HatImpl<HhModelA0, false>();
