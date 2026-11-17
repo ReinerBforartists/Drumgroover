@@ -5,8 +5,8 @@
 // The output is in volts relative to the idle output of the voice at the accent of the hit (the slow DC drift of the circuit is part of the signal); after the voice has ended the
 // remaining offset relaxes exponentially (tau 0.22 s) to zero.
 #pragma once
-#include "PcmFast.h"
-#include "HostDecimator.h"
+#include "909PcmFast.h"
+#include "909HostDecimator.h"
 
 namespace dgg { namespace pcmfast {
 

@@ -1,23 +1,23 @@
 // TR-909: the complete circuit as the engine of a hit.
 //
-// Net909 (tr909/Net909.h) solves the full Nava netlist of BD, SD, LT, MT, HT, HC, RM and the shared NOISE sheet (482 nodes), like the coupled NGSpice deck:
+// Net909 (909Net.h) solves the full Nava netlist of BD, SD, LT, MT, HT, HC, RM and the shared NOISE sheet (482 nodes), like the coupled NGSpice deck:
 // the free-running oscillators of the toms, SD and BD, the shared noise line, the shared tom shaping filter and the slow RC states are parts of ONE circuit. The matrix is split along the
-// structure of the circuit by tr909/Net909Part.h (PartNet: blocks BD, SD, HC, RM and the tom sheets, coupled through the shared NOISE line by waveform relaxation, validated against the monolithic
+// structure of the circuit by 909NetPart.h (PartNet: blocks BD, SD, HC, RM and the tom sheets, coupled through the shared NOISE line by waveform relaxation, validated against the monolithic
 // network and against NGSpice, plan tools/909_GESAMTSCHALTUNG_PLAN.md section S4). This runner renders a hit by
-// continuing that circuit from an idle state that was run for one second (tr909/models/circuit_all7_state.h) with the trigger pulse of the voice, the accent voltage and the noise source of the
+// continuing that circuit from an idle state that was run for one second (909_circuit_all7_state.h) with the trigger pulse of the voice, the accent voltage and the noise source of the
 // hit, and returns the output of the voice minus its idle level at the sample rate of the request. It is a Tr909ModelRunner (the bake engine of BD, SD, LT, MT, HT, HC).
 //
 // Not a real-time engine (a hit takes minutes on one thread); the bake and the reference comparisons use it. Supported: voices BD, SD, LT, MT, HT, HC at any pot state of the voice (909PotParams.h; the pots are the circuit pots of the netlist), the 5 us reference noise path.
 // Anything else returns false (no silent replacement by another engine).
 #pragma once
-#include "../909BakeHost.h"
-#include "../909PotParams.h"
-#include "Net909.h"
-#include "Net909Part.h"
-#include "Net909Phase.h"
-#include "HitNoise.h"
-#include "models/circuit_all7_net.h"
-#include "models/circuit_all7_state.h"
+#include "909BakeHost.h"
+#include "909PotParams.h"
+#include "909Net.h"
+#include "909NetPart.h"
+#include "909NetPhase.h"
+#include "909HitNoise.h"
+#include "909_circuit_all7_net.h"
+#include "909_circuit_all7_state.h"
 #include <functional>
 #include <map>
 #include <memory>

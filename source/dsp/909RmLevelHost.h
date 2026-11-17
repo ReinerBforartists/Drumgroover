@@ -80,11 +80,11 @@
 #include <intrin.h>
 #endif
 #include <cstdint>
-#include "RmFullFast.h"
+#include "909RmFullFast.h"
 #ifndef RMF_DEC_RATIO
 #define RMF_DEC_RATIO 16   // decimator: linear interpolation where the node spacing changes by more than this factor (a step edge between sparse and dense nodes), see HostDecimator.h
 #endif
-#include "RmHostDecimator.h"
+#include "909RmHostDecimator.h"
 
 namespace dgg { namespace rmfast {
 using namespace ::dgg::pcmfast;

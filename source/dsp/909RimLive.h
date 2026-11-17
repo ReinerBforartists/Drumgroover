@@ -1,6 +1,6 @@
 // TR-909 Rim Shot: live voice (no cache).
 //
-// The state-carrying full model of the RM circuit (tr909/rm/, 22 level models, one host with a model clock) runs while the voice plays: a hit is computed block by block,
+// The state-carrying full model of the RM circuit (909RmFullFast.h, 909RmLevelHost.h, 22 level models in 909_rm_full_lv*.h, one host with a model clock) runs while the voice plays: a hit is computed block by block,
 // about 100 times faster than real time. Nothing is baked; the circuit state carries on between hits like the circuit's (a retrigger continues the running voice).
 //
 // The host is built on a worker thread (the propagators of the 22 models take about 1.4 s and 14 MB) by Prepare(), never on the audio thread. A hit before the host is ready
@@ -8,7 +8,7 @@
 #pragma once
 #include "909Playback.h"
 #include "DrumVoice.h"
-#include "tr909/rm/models/rm_full_levels.h"
+#include "909_rm_full_levels.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>

@@ -1,6 +1,6 @@
 // Hi-hat voices of the 909 (Closed / Open) with AVX2/FMA dot products (see PcmHatAvx2.h). This unit is compiled with /arch:AVX2 and everything it includes lives in the namespace dgg_hat (the macro below), so the
 // AVX2 code of its copy of PcmFast / PcmVoiceHost is never shared with the rest of the plugin.
-#include "PcmHatAvx2.h"
+#include "909PcmHatAvx2.h"
 #if defined(_MSC_VER) && defined(_M_X64) && !defined(DGG_NO_LANES)
 #include <algorithm>
 #include <cmath>
@@ -12,9 +12,9 @@
 #include <immintrin.h>
 #define PCMFAST_DOT_AVX2
 #define dgg dgg_hat
-#include "PcmVoiceHost.h"
-#include "models/hh_pcm.h"
-#include "models/hho_pcm.h"
+#include "909PcmVoiceHost.h"
+#include "909_hh_pcm.h"
+#include "909_hho_pcm.h"
 #undef dgg
 
 namespace dgg {

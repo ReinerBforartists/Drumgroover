@@ -7,8 +7,8 @@
 // with the updated NOISE waveform until it no longer changes (tolerance ifTol): the loop gain is Rno x the load conductances, so
 // the iteration converges in one or two passes. The coupling is therefore kept, not dropped.
 #pragma once
-#include "Net909.h"
-#include "Net909Modal.h"
+#include "909Net.h"
+#include "909NetModal.h"
 #include <algorithm>
 #include <chrono>
 #include <set>
@@ -394,7 +394,7 @@ class PartNet {
     b.hCur = h;
   }
   static signed char sgn3(double v) { return v > 10.0 ? 1 : (v < -10.0 ? -1 : 0); }
-  void saveWindowStart(Block& b) { b.vdPrevS = b.vdPrev; b.vdPrev2S = b.vdPrev2; b.satS = b.sat; b.holdUntilS = b.holdUntil; b.hLastS = b.hLast; b.st = b.net.saveState(); b.xA = b.net.xA; b.xB = b.net.xB; b.hAB = b.net.hAB; b.hCurSave = b.hCur; }
+  void saveWindowStart(Block& b) { b.vdPrevS = b.vdPrev; b.vdPrev2S = b.vdPrev2; b.satS = b.sat; b.holdUntilS = b.holdUntil; b.hLastS = b.hLast; b.net.saveStateInto(b.st); b.xA = b.net.xA; b.xB = b.net.xB; b.hAB = b.net.hAB; b.hCurSave = b.hCur; }
   void restoreWindowStart(Block& b) { b.vdPrev = b.vdPrevS; b.vdPrev2 = b.vdPrev2S; b.sat = b.satS; b.holdUntil = b.holdUntilS; b.hLast = b.hLastS; b.net.restoreState(b.st); b.net.xA = b.xA; b.net.xB = b.xB; b.net.hAB = b.hAB; b.hCur = b.hCurSave; }
   // one macro window; returns false when a block fails. Waveform relaxation on the NOISE voltage V(t): the blocks draw the currents I(V); V = (Th - I) / gTot. Plain iteration (first pass) has the loop gain
   // Rno x (load conductance), which is no longer small while a hit drives the noise into the transistors of the voices; from the second pass on a secant estimate G(t) = dI / dV of the loads (from the two last

@@ -6,7 +6,7 @@
 // the same recorded run. A new phase = advance (x_i, s_i) along the ramps by a time, then move the block state by G^T (feat_new - feat_old): the slow states of the stored circuit state are kept, only the oscillator
 // dependent part follows the phase.
 #pragma once
-#include "Net909Part.h"
+#include "909NetPart.h"
 #include <cmath>
 #include <vector>
 #include <string>

@@ -1,24 +1,24 @@
 // Tr909ModelRunner of the PCM voices (hi-hats, crash, ride): the reduced model with the ROM replacement inside, one slot per voice, created on first use. The voices with a circuit (BD, SD, LT, MT, HT, HC) are rendered by
-// the complete circuit (tr909/CircuitRunner.h, 909CircuitBake.h).
+// the complete circuit (909CircuitRunner.h, 909CircuitBake.h).
 //
 // An object of this class is not thread safe; use one object per worker thread.
 #pragma once
 #include "909BakeHost.h"
-#include "tr909/HitNoise.h"
-#include "tr909/PcmHatAvx2.h"
-#if __has_include("tr909/models_rom_test/crash_pcm.h")
+#include "909HitNoise.h"
+#include "909PcmHatAvx2.h"
+#if __has_include("909_rom_test_crash_pcm.h")
 // LOCAL TEST ONLY: hi-hat, crash and ride models with the original ROM data (folder is gitignored, never shipped; delete the folder to go back to the replacement samples)
-#include "tr909/models_rom_test/crash_pcm.h"
-#include "tr909/models_rom_test/ride_pcm.h"
-#include "tr909/models_rom_test/hh_pcm.h"
-#include "tr909/models_rom_test/hho_pcm.h"
+#include "909_rom_test_crash_pcm.h"
+#include "909_rom_test_ride_pcm.h"
+#include "909_rom_test_hh_pcm.h"
+#include "909_rom_test_hho_pcm.h"
 #else
-#include "tr909/models/crash_pcm.h"
-#include "tr909/models/ride_pcm.h"
-#include "tr909/models/hh_pcm.h"
-#include "tr909/models/hho_pcm.h"
+#include "909_crash_pcm.h"
+#include "909_ride_pcm.h"
+#include "909_hh_pcm.h"
+#include "909_hho_pcm.h"
 #endif
-#include "tr909/PcmVoiceHost.h"
+#include "909PcmVoiceHost.h"
 #include "909PcmTune.h"
 #include "909PotParams.h"
 #include <algorithm>

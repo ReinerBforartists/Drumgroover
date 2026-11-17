@@ -122,6 +122,7 @@ class Net {
   // Circuit state for continuing a run (free-running oscillators and slow RC states are part of the circuit): unknowns, charge history of the integrator, step history.
   struct State { std::vector<double> x, q1, q2; int stepIndex = 0; double hPrev = 0; };
   State saveState() const { State st; st.x = x; st.q1 = q1; st.q2 = q2; st.stepIndex = stepIndex; st.hPrev = hPrev; return st; }
+  void saveStateInto(State& st) const { st.x = x; st.q1 = q1; st.q2 = q2; st.stepIndex = stepIndex; st.hPrev = hPrev; }   // same as saveState() without reallocating the vectors of st
   bool restoreState(const State& st) { linBDirty = true; if (st.x.size() != x.size() || st.q1.size() != q1.size() || st.q2.size() != q2.size()) return false; x = st.x; xprev1 = x; q1 = st.q1; q2 = st.q2; stepIndex = st.stepIndex; hPrev = st.hPrev; dcMode = false; srcScale = 1.0; rampT = 0.0; gminExtra = 0.0; opGain = 1.0; vdState.clear(); return true; }
   struct PotLeg { int res = 0; std::string pot; bool second = false; double rt = 0, ex = 1, g0 = 0; };   // g0: conductance of the deck (nominal position)
   std::vector<PotLeg> potLegs;
@@ -447,7 +448,8 @@ class Net {
 
   // ---- macro models ----
   Diode clampD(double Is, double Rs) { Diode d; d.Is = Is; d.N = 1; d.Rs = Rs; return d; }
-  std::map<const void*, double> vdState;
+  struct VdMap { std::vector<std::pair<const void*, double>> v; VdMap() { v.reserve(64); } double& operator[](const void* k) { for (auto& e : v) if (e.first == k) return e.second; v.emplace_back(k, 0.0); return v.back().second; } void clear() { v.clear(); } };   // clamp-diode states of the macro models by device address (few entries: linear search, no node allocation)
+  VdMap vdState;
   void stamp5218(Op5218& m) {
     const double C1 = 53e-12, LOADK = 2000.0 / (2000.0 + 196.08), GM = 2 * 3.14159265 * 7e6 * C1 / LOADK, R1 = 316228.0 / LOADK / GM, IMAX = 2.2e6 * C1 / LOADK;
     const double CMRR = 31622.8, HEAD = 15.0 - (14.275 - 0.885), ROUT = 196.08;
@@ -688,8 +690,12 @@ class Net {
   long itTotal = 0, itHist[8] = {0,0,0,0,0,0,0,0};
   std::vector<double> byLast[4]; long byN[4] = {0, 0, 0, 0}, byHit[4][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}};   // bypass potential counters (N909_PROFILE)
   double profAsm = 0, profSolve = 0, profLin = 0, profDio = 0, profBjt = 0, profOp = 0, profInv = 0, profOther = 0;   // seconds in assemble / solveSystem (only with -DN909_PROFILE)
+  std::vector<double> nwSol, nwM;   // work vectors of newton() (kept between calls: no allocation per step)
+  struct AdvScratch { std::vector<double> xs, q1s, q2s; };
+  AdvScratch advScratch[10];   // saved state of advance() per subdivision depth
+  std::vector<double> stepXs;
   bool newton(double tNow, int maxIt = 160) {
-    std::vector<double> sol, M, R;
+    std::vector<double>& sol = nwSol; std::vector<double>& M = nwM;
     for (int it = 0; it < maxIt; ++it) {
       if (it == 20 && envJF && std::fabs(tNow - std::atof(envJF)) < 1e-9) { checkJacobian(tNow, 30); std::exit(0); }
 #ifdef N909_PROFILE
@@ -798,7 +804,7 @@ class Net {
     return false;
   }
   bool advance(double t, double h, int depth = 0) {   // step from t to t+h; on Newton failure retry with halves (backward Euler)
-    double saveDt = dt, saveHp = hPrev; std::vector<double> xs = x, q1s = q1, q2s = q2; int si = stepIndex;
+    double saveDt = dt, saveHp = hPrev; AdvScratch& sc = advScratch[depth < 9 ? depth : 9]; std::vector<double>& xs = sc.xs; std::vector<double>& q1s = sc.q1s; std::vector<double>& q2s = sc.q2s; xs = x; q1s = q1; q2s = q2; int si = stepIndex;
     dt = h; bool ok = step(t + h); dt = saveDt;
     if (ok) return true;
     x = xs; q1 = q1s; q2 = q2s; stepIndex = si; hPrev = saveHp;
@@ -809,7 +815,7 @@ class Net {
   }
   std::function<void(double, double)> stepPre, stepPost;   // E-03: called before every Newton attempt of a step (time at the start, step size; also for the halves of a subdivided step) and after the step was accepted (time at the end, step size): coupled linear port models (Net909Modal.h) set their Norton equivalent and advance their state
   bool step(double tNow) {   // advance to time tNow (uses dt)
-    std::vector<double> xs = x;
+    std::vector<double>& xs = stepXs; xs = x;
     if (stepPre) stepPre(tNow - dt, dt);
     if (!newton(tNow)) { x = xs; return false; }
     q2 = q1; linBDirty = true; if (reassembleCharges) assemble(tNow); q1 = qNow; ++stepIndex; hPrev = dt;  // qNow of the converged solution (assemble evaluated charges at x); without the extra assembly qNow is the one of the last Newton iteration (evaluated one update before the converged x)

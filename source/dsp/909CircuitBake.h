@@ -1,9 +1,9 @@
 // TR-909 bake engine: the complete circuit for BD, SD, LT, MT, HT and HC, the PCM models for hi-hats, crash and ride.
 //
-// Tr909CircuitRunner (tr909/CircuitRunner.h) renders a hit with the whole Nava circuit in one network at every pot state with the 5 us noise path; the PCM voices have no circuit and are rendered by Tr909PcmModelRunner.
+// Tr909CircuitRunner (909CircuitRunner.h) renders a hit with the whole Nava circuit in one network at every pot state with the 5 us noise path; the PCM voices have no circuit and are rendered by Tr909PcmModelRunner.
 #pragma once
 #include "909ModelRunner.h"
-#include "tr909/CircuitRunner.h"
+#include "909CircuitRunner.h"
 #include "BakeAbort.h"
 #include <functional>
 

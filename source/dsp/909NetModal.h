@@ -14,7 +14,7 @@
 // Per step the model delivers its Norton equivalent at the NOISE node,  I = g V + Ih  (g = d + sum Re(rho c0), Ih = I0 - g V0 + sum Re(rho c1)), which the block that solves the line puts in series with the
 // Thevenin source of the line: V = (Th - sum of the other loads - Ih) / (gTot + g).
 #pragma once
-#include "Net909.h"
+#include "909Net.h"
 #include <algorithm>
 #include <cmath>
 #include <complex>

@@ -1,7 +1,7 @@
 // Noise source and trigger pulse of the TR-909 circuit (shared by the circuit runner and the other 909 engines).
 #pragma once
 #include <atomic>
-#include "../BakeAbort.h"
+#include "BakeAbort.h"
 #include <cmath>
 #include <cstdint>
 #include <vector>
