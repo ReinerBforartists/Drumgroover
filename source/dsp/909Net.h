@@ -123,7 +123,10 @@ class Net {
   struct State { std::vector<double> x, q1, q2; int stepIndex = 0; double hPrev = 0; };
   State saveState() const { State st; st.x = x; st.q1 = q1; st.q2 = q2; st.stepIndex = stepIndex; st.hPrev = hPrev; return st; }
   void saveStateInto(State& st) const { st.x = x; st.q1 = q1; st.q2 = q2; st.stepIndex = stepIndex; st.hPrev = hPrev; }   // same as saveState() without reallocating the vectors of st
-  bool restoreState(const State& st) { linBDirty = true; if (st.x.size() != x.size() || st.q1.size() != q1.size() || st.q2.size() != q2.size()) return false; x = st.x; xprev1 = x; q1 = st.q1; q2 = st.q2; stepIndex = st.stepIndex; hPrev = st.hPrev; dcMode = false; srcScale = 1.0; rampT = 0.0; gminExtra = 0.0; opGain = 1.0; vdState.clear(); return true; }
+  bool restoreState(const State& st) { linBDirty = true; if (st.x.size() != x.size() || st.q1.size() != q1.size() || st.q2.size() != q2.size()) return false; x = st.x; xprev1 = x; q1 = st.q1; q2 = st.q2; stepIndex = st.stepIndex; hPrev = st.hPrev; dcMode = false; srcScale = 1.0; rampT = 0.0; gminExtra = 0.0; opGain = 1.0; vdState.clear();
+    for (Rec& r : recDio) r.valid = false; for (Rec& r : recBjt) r.valid = false; for (Rec& r : recOp) r.valid = false; for (Rec& r : recInv) r.valid = false; for (Rec& r : recCmp) r.valid = false; for (Rec& r : recOta) r.valid = false;   // bypass records and diode limiting memory belong to the run before: the restored state starts a run of its own
+    patDirty = true; luValid = false; linAValid = false; luAge = 0;   // the pivot order and the factorisation of the run before is not reused (Jacobian reuse / chord)
+    for (Diode& d : dio) d.vdLast = 0.0; return true; }
   struct PotLeg { int res = 0; std::string pot; bool second = false; double rt = 0, ex = 1, g0 = 0; };   // g0: conductance of the deck (nominal position)
   std::vector<PotLeg> potLegs;
   // Position (0..1) of a circuit pot named like the deck parameter without 'vr_' (VR2_bd, VR10_lt ...): sets the resistance of its legs (the netlist keeps the structure; only the conductances change). False: no such pot.

@@ -263,9 +263,19 @@ private:
     nominal_ = net_->snapshot(); net_->abort = abort_;
     ready_ = true; return true;
   }
+  // Run settings of the net (step plan, relaxation, idle-run and fine-step controls, block roles) back to those of a runner that has not rendered a hit: the settle and calibration runs of a hit then do not depend on the hit
+  // rendered before on the same runner (the result of a hit is the same alone, after other hits and in any thread).
+  void ResetRunSettings(n909::PartNet& net) const
+  {
+    net.fixedDt = dt_; net.maxIt = 6; net.ifRel = 1e-6; net.bpOrigin = 0.0; net.bpStep = 0.0; net.kfDt = 0.0; net.kfWidth = 0.0;
+    net.quietUntil = -1.0; net.eventHMax = 3e-6; net.eventMargin = 20e-6; net.eventHold = 12e-6; net.quietH = 60e-6; net.qaRtol = 0.0; net.qaAtol = 1e-5; net.qaHmax = 1e-4; net.statR = 0.0; net.freezeIdle = false;
+    net.fineEventDt = 0.0; net.fineMargin = -1.0; net.fineHold = -1.0; net.fineNodes.clear(); net.afterWindow = nullptr; net.recordFrom = -1.0;
+    for (auto& bp : net.blocks) { bp->passive = false; bp->frozenIdle = false; bp->fineEvents = false; }
+  }
   bool Render(Voice909 v, uint64_t params, int accentCode, uint64_t seed, double seconds, int fs, std::vector<float>& out)
   {
     n909::PartNet& net = *net_;
+    ResetRunSettings(net);
     if (!SetPots(v, params)) return false;
     const std::vector<double>* table = nullptr;
     if (!net.restore(StateFor(v, params, table))) return false;
@@ -277,6 +287,7 @@ private:
     const double t0 = kTriggerDelay + (usePhase ? 0.0 : (fixedPreroll >= 0.0 ? fixedPreroll : PrerollAt(table, seed)));   // trigger time of the hit in the run: the circuit idles on from the stored state before the trigger, so the free-running oscillators are at a different phase for every noise seed (variant)
     for (const char* t : {"BD", "SD", "LT", "MT", "HT", "HC", "RM"}) net.setSourceDc(std::string("VTRIG_") + t, 0.0);
     net.setSource("VTRIG_" + tag, [t0](double t) { return pcmfast::HitTrigger(t - t0); });
+    for (const char* t : {"BD", "SD", "LT", "MT", "HT", "HC", "RM"}) net.setSourceDc(std::string("VACCENT_") + t, 2.4);   // the accent of the stored idle state on the sheets of the other voices (the previous hit of the runner left its own)
     net.setSourceDc("VACCENT_" + tag, AccentVolts909(accentCode));
     pcmfast::HitNoise noise; noise.Start(seed, 5e-6, 0.0);   // the noise of the hit starts at knot 10000 of the sequence (50 ms) when the trigger arrives
     if (!silentNoise) net.setSource("Vnz", [&noise, t0](double t) { return t < t0 ? 7.5 : noise.At(kNoiseAtTrigger + (t - t0)); });
