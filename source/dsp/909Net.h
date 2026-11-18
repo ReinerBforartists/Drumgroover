@@ -148,7 +148,7 @@ class Net {
   bool bjtLinearOnly = false;
   std::vector<char> touched; bool patDirty = true;   // structural pattern of A (all positions ever stamped), see SparseLU below
   std::vector<int> touchedList;   // indices of touched entries: only these need zeroing before the next assembly
-  void touch(size_t idx) { if (touched.size() != A.size()) { touched.assign(A.size(), 0); touchedList.clear(); patDirty = true; } if (!touched[idx]) { touched[idx] = 1; touchedList.push_back((int)idx); patDirty = true; } }
+  void touch(size_t idx) { if (touched.size() != A.size()) { touched.assign(A.size(), 0); touchedList.clear(); anDirty = true; patDirty = true; } if (!touched[idx]) { touched[idx] = 1; touchedList.push_back((int)idx); anDirty = true; patDirty = true; } }
   // ---- device bypass (off by default: bypassTol 0): the stamp of a nonlinear device (diode, BJT, macro) is recorded; while its terminal voltages stay within bypassTol of the voltages of the recorded evaluation the record is replayed instead of
   // evaluating the device again (SPICE 'bypass'). The linearisation of the old point is stamped (error second order in the voltage change); the charge elements are re-stamped from the recorded (q, c, v) with the present voltages and the
   // present step coefficients / charge history, so the integration stays consistent. Only in transient mode without homotopy (gminExtra 0, opGain 1).
@@ -567,7 +567,7 @@ class Net {
   struct SparseLU {
     int n = 0; bool ok = false; std::vector<int> q, pinv, acp, ari, lp, li, up, ui; std::vector<double> lx, ux, d, w, y;
   } sp;
-  long spRebuilds = 0, spRepivots = 0;
+  long spRebuilds = 0, spRepivots = 0; bool anDirty = true;   // the pattern changed since the last column order (touch())
   void spAnalyze() {   // pattern -> column order, column pointers (CSC of the pattern)
     int n = nUnk; sp.n = n; sp.ok = false; ++spRebuilds;
     std::vector<std::vector<char>> adj(n, std::vector<char>(n, 0));
@@ -656,7 +656,7 @@ class Net {
   }
   bool solveSystem(std::vector<double>& M, const std::vector<double>& Rhs, std::vector<double>& sol) {
     if (useSparse) {
-      if (patDirty || !sp.ok || sp.n != nUnk) { spAnalyze(); patDirty = false; luValid = false; if (!spPivot()) goto dense; }
+      if (patDirty || !sp.ok || sp.n != nUnk) { if (anDirty || sp.n != nUnk) { spAnalyze(); anDirty = false; } patDirty = false; luValid = false; if (!spPivot()) goto dense; }   // the column order depends only on the pattern (anDirty); a restored state (patDirty) only repeats the pivot search
       if (bypassTol > 0.0 && luValid && asmEvaluated == 0 && !asmDyn && std::memcmp(asmKey, luKey, sizeof(asmKey)) == 0) { ++nLuReused; spSolve(Rhs, sol); return true; }   // no device evaluated, same step coefficients: the factorisation is still the matrix
       if (jacReuseMax > 0 && luValid && !asmDyn && luAge < jacReuseMax && newtonIt < 3 && std::memcmp(asmKey, luKey, sizeof(asmKey)) == 0 && (int)x.size() == sp.n) {
         // modified Newton: the old factorisation solves for the update, dx = LU^-1 (B - A x), with the matrix and right-hand side of this assembly (stale Jacobian; the iteration continues until the update is below the tolerances as before)
