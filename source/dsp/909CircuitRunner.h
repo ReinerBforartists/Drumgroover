@@ -281,7 +281,7 @@ private:
     if (!net.restore(StateFor(v, params, table))) return false;
     const bool usePhase = UsePhase();   // E-02: phases from the oscillator automaton instead of the idle Preroll
     if (usePhase && !ApplyPhase(v, params, seed, std::getenv("DGG_PART_PHASETIME") ? std::atof(std::getenv("DGG_PART_PHASETIME")) : -1.0)) return false;
-    { double bt = v == Voice909::Hc ? kBypassTolBase : kBypassTolHit; if (const char* bp = std::getenv("DGG_PART_BYPASS")) bt = std::atof(bp);   // device bypass of the hit run per voice (E-12); the settle and calibration runs above use the base tolerance (shared by all voices)
+    { double bt = (v == Voice909::Hc || v == Voice909::Bd) ? kBypassTolBase : kBypassTolHit; if (const char* bp = std::getenv("DGG_PART_BYPASS")) bt = std::atof(bp);   // device bypass of the hit run per voice (E-12); the settle and calibration runs above use the base tolerance (shared by all voices)
       net.bypassTol = bt; for (auto& bp : net.blocks) bp->net.bypassTol = bt; }
     const std::string tag = Tag(v), lower = tag == "BD" ? "bd" : tag == "SD" ? "sd" : tag == "LT" ? "lt" : tag == "MT" ? "mt" : tag == "HT" ? "ht" : "hc";
     net.clearProbes(); if (!net.addProbe(lower + "_" + tag + "_OUT")) return false;
@@ -327,7 +327,7 @@ private:
     out.assign(nOut, 0.0f); for (size_t k = 0; k < nOut; ++k) out[k] = static_cast<float>(yk[k] - idle);
     return true;
   }
-  static constexpr double kBypassTolBase = 1e-4, kBypassTolHit = 1e-3;   // E-12: BD / SD / toms 1e-3 in the hit run (window errors against 1e-4 <= -42 dB, 1.2-4.5 ms: within the sensitivity of the net to a change of 1e-4 by 0.01 %), HC 1e-4
+  static constexpr double kBypassTolBase = 1e-4, kBypassTolHit = 1e-3;   // E-12: SD / toms 1e-3 in the hit run (window errors against 1e-4 <= -42 dB, 1.2-3.3 mV; against NGSpice within 2.2 dB of 1e-4), BD and HC 1e-4 (BD 0.8 V at 1e-3: 200-350 ms window -29.5 dB against NGSpice, 1e-4 -39 dB; HC 1e-3 departs from 1e-4 by -50 dB)
   static constexpr double kTriggerDelay = 0.05;   // minimum idle before the trigger: the accent (a held level in the sequencer) and the pot states settle as in the NGSpice decks (50 ms)
   static constexpr double kNoiseAtTrigger = 0.05;   // the noise sequence of a hit is read from 50 ms on when the trigger arrives
   static constexpr double kSettle = 0.5, kSettlePhase = 0.05;
