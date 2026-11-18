@@ -77,6 +77,7 @@ public:
   static constexpr double kFineDt = 2e-8, kFineWidth = 2e-5;
   // HC: base step 0.2 us (2026-11-14, report Nachtrag 19 continuation 6): against the NGSpice reference with the production noise start dt 1 us exceeds -30 dB in 0-1 ms at 4.064 V (seeds 2, 3: -23 dB), dt 0.2 us is at or below -37 dB in all six cases. About 3x the compute time; provisional accuracy step, not an optimisation.
   static constexpr double kHcDt = 2e-7;
+  static constexpr double kHitDt = 2.5e-6;   // Z-01: base step of the hit for BD / SD / LT / MT / HT (a divisor of the 5 us noise knots; 12-25 % faster than 1 us, window errors against NGSpice within -4...+2 dB of 1 us); idle run, calibration and settle keep dt_
   // Further ramps of the trigger source (addendum 11 / 12): the falling edge of pcmfast::HitTrigger (t0 + 2.01 ms ... 2.02 ms) is the same kind of event as the rising edge (the SD output jumps by 11 mV at 0.8 V / 126 mV at 4.064 V; error of the
   // 1 us step in 2.01-2.04 ms: 332 / 1082 uV rms, with the fine step 14 / 64 uV). The ramps (segments with a non-zero slope) are found by sampling HitTrigger (no fixed times); each gets the window [ramp start, ramp start + 2 x ramp length], relative to t0.
   static const std::vector<std::pair<double, double>>& TriggerRampWindows()
@@ -295,7 +296,7 @@ private:
     if (!silentNoise) net.setSource("Vnz", [&noise, t0](double t) { return t < t0 ? 7.5 : noise.At(kNoiseAtTrigger + (t - t0)); });
     else net.setSourceDc("Vnz", 7.5);
     const double ts = 1.0 / fs; const size_t nOut = static_cast<size_t>(seconds * fs + 0.5);
-    net.fixedDt = (v == Voice909::Hc && dt_ > kHcDt) ? kHcDt : dt_; if (v == Voice909::Hc) if (const char* hd = std::getenv("DGG_PART_HCDT")) net.fixedDt = std::atof(hd);   // test hook: other HC base step (default kHcDt)
+    net.fixedDt = (v == Voice909::Hc && dt_ > kHcDt) ? kHcDt : (v != Voice909::Hc && dt_ < kHitDt ? kHitDt : dt_); if (v == Voice909::Hc) if (const char* hd = std::getenv("DGG_PART_HCDT")) net.fixedDt = std::atof(hd);   // test hook: other HC base step (default kHcDt)
     const OutputFilter909 ofilt(fs); const double fMargin = ofilt.Margin() + 1e-5;   // the run covers the kernel half width before the first and after the last output instant
     net.recordFrom = t0 - 5e-5 - fMargin;
     net.bpOrigin = t0; net.bpStep = std::getenv("DGG_PART_NOBP") ? 0.0 : 5e-6; { const double kr = std::getenv("DGG_PART_KFREL") ? std::atof(std::getenv("DGG_PART_KFREL")) : 0.25; net.kfDt = kr * net.fixedDt; net.kfWidth = kr > 0.0 ? net.fixedDt * (std::getenv("DGG_PART_KFWREL") ? std::atof(std::getenv("DGG_PART_KFWREL")) : (v == Voice909::Sd ? 3.0 : 1.0)) : 0.0; }   // finer step (a quarter of the base step) for the first base step after every knot; DGG_PART_KFREL=0 off   // E-03: steps end at the knots of the noise source (HitNoise step 5 us from the trigger); DGG_PART_NOBP=1: as before
