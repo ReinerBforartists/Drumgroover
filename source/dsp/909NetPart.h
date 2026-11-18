@@ -292,8 +292,9 @@ class PartNet {
   // E-03: breakpoints of the noise source. It is piecewise linear with a knot every bpStep from bpOrigin (the trigger time) on; a step that spans a knot integrates the kink of the source with the error of the step
   // (the steps of a block drift off the lattice of the trigger after every fine event step, 1 us steps then straddle the knots), so every step ends at the next knot (bpStep <= 0: off).
   double bpOrigin = 0.0, bpStep = 0.0, kfDt = 0.0, kfWidth = 0.0;   // kfDt / kfWidth: finer step after every knot (0: off)
-  double knotStepCap(double t) const { if (kfDt <= 0.0 || bpStep <= 0.0 || t < bpOrigin - 1e-12) return 1e30; const double since = t - (bpOrigin + std::floor((t - bpOrigin) / bpStep + 1e-6) * bpStep); return since < kfWidth - 1e-12 ? kfDt : 1e30; }   // step after a knot of the source: kfDt for kfWidth (the kink of the source excites the fast transients of the linear stages: a quarter of the base step for the first base step)
-  double nextBreak(double t) const { if (bpStep <= 0.0) return 1e30; if (t < bpOrigin - 1e-12) return bpOrigin; return bpOrigin + (std::floor((t - bpOrigin) / bpStep + 1e-6) + 1.0) * bpStep; }
+  double bpEnd = 1e30, tailFrom = 1e30, tailDt = 0.0;   /* Z-02: noise knots end at bpEnd (frozen source), base step tailDt from tailFrom (BD tail, CircuitRunner909::BdFreezesNoise) */
+  double knotStepCap(double t) const { if (t >= bpEnd - 1e-12 || kfDt <= 0.0 || bpStep <= 0.0 || t < bpOrigin - 1e-12) return 1e30; const double since = t - (bpOrigin + std::floor((t - bpOrigin) / bpStep + 1e-6) * bpStep); return since < kfWidth - 1e-12 ? kfDt : 1e30; }   // step after a knot of the source: kfDt for kfWidth (the kink of the source excites the fast transients of the linear stages: a quarter of the base step for the first base step)
+  double nextBreak(double t) const { if (bpStep <= 0.0 || t >= bpEnd - 1e-12) return 1e30; if (t < bpOrigin - 1e-12) return bpOrigin; return bpOrigin + (std::floor((t - bpOrigin) / bpStep + 1e-6) + 1.0) * bpStep; }
   bool modalOn = true;   // false: the passive blocks that load the line run as blocks that solve the line (reference of the A/B comparison)
   bool modalBuilt = false, modalRun = false; double gM = 0.0, ihM = 0.0; long modelBuilds = 0; double passTol = 1.0;   // passTol: factor on the tolerance (ifTolV + ifRelV x swing) of the line voltage that a second pass may still change (0: always two passes)
   bool ownsIface(const Block* b) const { for (const Iface& f : ifaces) if (f.owner >= 0 && blocks[static_cast<size_t>(f.owner)].get() == b) return true; return false; }
@@ -512,7 +513,8 @@ class PartNet {
     for (size_t g = 0; g < ifaces.size(); ++g) { Iface& f = ifaces[g]; f.iHold = 0.0;   // interface state at T: owner voltage, summed load current of the others
       for (size_t i = 0; i < blocks.size(); ++i) { Block& b = *blocks[i]; if (b.ifNode[g] < 0) continue; Net& n = b.net; if (static_cast<int>(i) == f.owner) f.vHold = n.V(b.ifNode[g]); else f.iHold += -n.x[static_cast<size_t>(n.nNodes - 1 + n.vs[static_cast<size_t>(b.ifIdx[g])].br)]; } }
     unsigned nw = 0;
-    while (T < tstop - 1e-13) { if (abort && ((++nw & 63u) == 0) && abort()) return false; const bool q = quietUntil > 0.0 && fixedDt > 0.0 && eventHMax > fixedDt && T + 2.0 * H <= quietUntil; const double t1 = std::min(T + (q ? quietH : H), q ? std::min(tstop, quietUntil) : tstop); if (!window(T, t1)) return false; if (afterWindow) afterWindow(T); }
+    while (T < tstop - 1e-13) { if (tailDt > 0.0 && T >= tailFrom - 1e-13) fixedDt = tailDt;
+      if (abort && ((++nw & 63u) == 0) && abort()) return false; const bool q = quietUntil > 0.0 && fixedDt > 0.0 && eventHMax > fixedDt && T + 2.0 * H <= quietUntil; const double t1 = std::min(T + (q ? quietH : H), q ? std::min(tstop, quietUntil) : tstop); if (!window(T, t1)) return false; if (afterWindow) afterWindow(T); }
     return true;
   }
 };
