@@ -469,7 +469,7 @@ class Net {
     if (!m.st) chargeStamp(m.n1, 0, m.qc, paraC1 * C1 * V(m.n1), paraC1 * C1);   // paraC1: test hook, only the charge (GM, R1, IMAX keep the C1 of the model)
     // clamp diodes: n1 -> (VCC - HEAD), (VEE + HEAD) -> n1
     for (int hi = 0; hi < (pruneLin || pruneNl ? 0 : 2); ++hi) {
-      double Vt_ = hi ? V(m.n1) - V(m.vcc) + HEAD : V(m.vee) + HEAD - V(m.n1); double i, g; dioLim(Vt_, 1e-20, 1, 1.0, 1e30, 1e-3, vdState[(const void*)((char*)&m + hi)], i, g);
+      double Vt_ = hi ? V(m.n1) - V(m.vcc) + HEAD : V(m.vee) + HEAD - V(m.n1); if (clampSkipV < 0.0 && Vt_ < clampSkipV) continue; double i, g; dioLim(Vt_, 1e-20, 1, 1.0, 1e30, 1e-3, vdState[(const void*)((char*)&m + hi)], i, g);
       if (hi) { int k[2] = {m.n1, m.vcc}; double gg[2] = {g, -g}; nlCurrent(m.n1, m.vcc, i, 2, k, gg); }
       else { int k[2] = {m.vee, m.n1}; double gg[2] = {g, -g}; nlCurrent(m.vee, m.n1, i, 2, k, gg); }
     }
@@ -560,6 +560,7 @@ class Net {
   // partial pivoting (diagonal preferred) and kept; every Newton iteration only refactors numerically in that structure.
   // A pivot that becomes small relative to its column triggers a new pivot search; if that fails the dense solver is used. ----
   bool useSparse = !std::getenv("N909_DENSE");
+  double clampSkipV = -1.0;   // Z-05: an op-amp (5218) output clamp diode is not evaluated while its junction voltage is below this value (Is 1e-20: current < 1e-20 A, conductance 0); 0 = always evaluate
   const char* envPrune = std::getenv("N909_PRUNE");   // comma list: dummyop (drop grounded op-amp halves), oplin (linear op-amp input stage, no clamps)
   bool pruneDummy = envPrune && std::strstr(envPrune, "dummyop"), pruneLin = envPrune && std::strstr(envPrune, "oplin"), pruneNl = envPrune && std::strstr(envPrune, "opnl");   // opnl: the whole input stage current (no linear gm either) is left to the generator as a nonlinear device
   bool pruneLinCap = envPrune && std::strstr(envPrune, "lincap");
