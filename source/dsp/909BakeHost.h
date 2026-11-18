@@ -19,6 +19,7 @@ struct RunRequest909
   uint64_t noiseSeed = 1;
   int sampleRateHz = 48000;
   double seconds = 0.35;        // length of the rendered hit
+  uint64_t streamKnot = ~0ULL;  // position of the trigger in the shared noise stream (knot, ~0 = none: the hit uses its own sequence by noiseSeed); only the circuit runner reads it
 };
 
 class ModelRunner909

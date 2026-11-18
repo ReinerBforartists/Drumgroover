@@ -173,7 +173,7 @@ public:
     out.clear();
     if (!Supports(req.voice) || req.noise != NoisePath909::Reference5us) return false;
     if (!Ready()) return false;
-    return Render(req.voice, req.params, req.anchorCode, req.noiseSeed, req.seconds, req.sampleRateHz, out);
+    return Render(req.voice, req.params, req.anchorCode, req.noiseSeed, req.seconds, req.sampleRateHz, out, req.streamKnot);
   }
 
 private:
@@ -272,7 +272,7 @@ private:
     net.fineEventDt = 0.0; net.fineMargin = -1.0; net.fineHold = -1.0; net.fineNodes.clear(); net.afterWindow = nullptr; net.recordFrom = -1.0;
     for (auto& bp : net.blocks) { bp->passive = false; bp->frozenIdle = false; bp->fineEvents = false; }
   }
-  bool Render(Voice909 v, uint64_t params, int accentCode, uint64_t seed, double seconds, int fs, std::vector<float>& out)
+  bool Render(Voice909 v, uint64_t params, int accentCode, uint64_t seed, double seconds, int fs, std::vector<float>& out, uint64_t streamKnot = pcmfast::HitNoise::kNoStream)
   {
     n909::PartNet& net = *net_;
     ResetRunSettings(net);
@@ -291,7 +291,7 @@ private:
     net.setSource("VTRIG_" + tag, [t0](double t) { return pcmfast::HitTrigger(t - t0); });
     for (const char* t : {"BD", "SD", "LT", "MT", "HT", "HC", "RM"}) net.setSourceDc(std::string("VACCENT_") + t, 2.4);   // the accent of the stored idle state on the sheets of the other voices (the previous hit of the runner left its own)
     net.setSourceDc("VACCENT_" + tag, AccentVolts909(accentCode));
-    pcmfast::HitNoise noise; noise.Start(seed, 5e-6, 0.0);   // the noise of the hit starts at knot 10000 of the sequence (50 ms) when the trigger arrives
+    pcmfast::HitNoise noise; if (streamKnot == pcmfast::HitNoise::kNoStream) noise.Start(seed, 5e-6, 0.0); else noise.StartAt(pcmfast::HitNoise::kStreamSeed, streamKnot, 5e-6, 0.0);   // shared noise stream at the trigger position of the hit (E-18), else the sequence of the seed; the noise of the hit starts at knot 10000 of the sequence (50 ms) when the trigger arrives
     if (!silentNoise) net.setSource("Vnz", [&noise, t0](double t) { return t < t0 ? 7.5 : noise.At(kNoiseAtTrigger + (t - t0)); });
     else net.setSourceDc("Vnz", 7.5);
     const double ts = 1.0 / fs; const size_t nOut = static_cast<size_t>(seconds * fs + 0.5);
