@@ -16,6 +16,7 @@
 #include "909NetPart.h"
 #include "909NetPhase.h"
 #include "909HitNoise.h"
+#include "909OutputFilter.h"
 #include "909_circuit_all7_net.h"
 #include "909_circuit_all7_state.h"
 #include <functional>
@@ -282,7 +283,8 @@ private:
     else net.setSourceDc("Vnz", 7.5);
     const double ts = 1.0 / fs; const size_t nOut = static_cast<size_t>(seconds * fs + 0.5);
     net.fixedDt = (v == Voice909::Hc && dt_ > kHcDt) ? kHcDt : dt_; if (v == Voice909::Hc) if (const char* hd = std::getenv("DGG_PART_HCDT")) net.fixedDt = std::atof(hd);   // test hook: other HC base step (default kHcDt)
-    net.recordFrom = t0 - 5e-5;
+    const OutputFilter909 ofilt(fs); const double fMargin = ofilt.Margin() + 1e-5;   // the run covers the kernel half width before the first and after the last output instant
+    net.recordFrom = t0 - 5e-5 - fMargin;
     net.bpOrigin = t0; net.bpStep = std::getenv("DGG_PART_NOBP") ? 0.0 : 5e-6; { const double kr = std::getenv("DGG_PART_KFREL") ? std::atof(std::getenv("DGG_PART_KFREL")) : 0.25; net.kfDt = kr * net.fixedDt; net.kfWidth = kr > 0.0 ? net.fixedDt * (std::getenv("DGG_PART_KFWREL") ? std::atof(std::getenv("DGG_PART_KFWREL")) : (v == Voice909::Sd ? 3.0 : 1.0)) : 0.0; }   // finer step (a quarter of the base step) for the first base step after every knot; DGG_PART_KFREL=0 off   // E-03: steps end at the knots of the noise source (HitNoise step 5 us from the trigger); DGG_PART_NOBP=1: as before
     // idle run before the trigger (no noise on the NOISE line): event-controlled step (fixed step around comparator flips, up to 3 us between; plan section "Schritt 2"); from 0.2 ms before the trigger on the validated fixed step, with the noise of the hit
     net.quietUntil = std::getenv("DGG_PART_QUIET0") ? -1.0 : t0 - 2e-4; net.eventHMax = std::getenv("DGG_PART_EVHMAX") ? std::atof(std::getenv("DGG_PART_EVHMAX")) : 3e-6; if (const char* em = std::getenv("DGG_PART_EVMARGIN")) net.eventMargin = std::atof(em); if (const char* eh = std::getenv("DGG_PART_EVHOLD")) net.eventHold = std::atof(eh);   // test hooks: look-ahead margin and hold time of the comparator-flip prediction   // test hook DGG_PART_EVHMAX: longest step between comparator events in the idle run (default 3 us)
@@ -300,17 +302,16 @@ private:
       net.fineEventDt = (v == Voice909::Bd || v == Voice909::Sd || v == Voice909::Lt || v == Voice909::Mt || v == Voice909::Ht) ? kFineDt : 0.0; if (const char* fe = std::getenv("DGG_PART_FINEEV")) net.fineEventDt = std::atof(fe); net.fineNodes.clear(); if (const char* fm = std::getenv("DGG_PART_FINEMARGIN")) net.fineMargin = std::atof(fm); if (const char* fh = std::getenv("DGG_PART_FINEHOLD")) net.fineHold = std::atof(fh); if (v != Voice909::Bd && !std::getenv("DGG_PART_FINEALL")) for (int k = 0; k < kOscillators; ++k) net.fineNodes.insert(OscNodes()[k]); if (v != Voice909::Bd && !std::getenv("DGG_PART_FINEALL")) for (const char* an : {"sd_N_154", "lt_N_229", "mt_N_364", "ht_N_765"}) net.fineNodes.insert(an);   // and the accent stages (their level change at the trigger shifts the oscillator phase)   // E-02 (DETAILS 10.26 / 10.27): the oscillator voices run the fine step around the comparator flips (oscillator comparators and accent stage, PartNet::fineNodes, statR rule): hit half periods against NGSpice -1e-4...-8e-4 -> <= 2e-4, phase-impulse outliers MT k = 4 -26 -> -53 dB; hit time +25...+43 %; DGG_PART_FINEEV=0 = old (only BD)
       for (auto& bp : net.blocks) bp->fineEvents = net.fineEventDt > 0.0 && !bp->passive; }
     net.freezeIdle = std::getenv("DGG_PART_FREEZE") ? std::atoi(std::getenv("DGG_PART_FREEZE")) != 0 : !idleOld;   // test hook (E-02): the blocks of the other voices rest during the idle run before the trigger
-    const bool runOk = RunHit(net, t0, t0 + static_cast<double>(nOut) * ts + 2e-4, v == Voice909::Sd || v == Voice909::Bd); net.quietUntil = -1.0;
+    const bool runOk = RunHit(net, t0, t0 + static_cast<double>(nOut) * ts + 2e-4 + fMargin, v == Voice909::Sd || v == Voice909::Bd); net.quietUntil = -1.0;
     if (!runOk) { out.clear(); return false; }
     if (std::getenv("DGG_PART_STATS")) { for (auto& bp : net.blocks) if (bp->qFixed + bp->qAd > 0) { fprintf(stderr, "quiet block %s: fixed steps %ld (%.1f ms), controlled steps %ld (%.1f ms)\n", bp->name.c_str(), bp->qFixed, 1e3 * bp->qFixedT, bp->qAd, 1e3 * bp->qAdT); fprintf(stderr, "   hold steps %ld, predicted-flip steps %ld; by op-amp (out node): ", bp->nHold, bp->nPred); for (size_t oi = 0; oi < bp->predBy.size(); ++oi) if (bp->predBy[oi] || bp->statBy[oi]) fprintf(stderr, "%s pred %ld stat %ld; ", bp->net.nodeName[static_cast<size_t>(bp->net.op[oi].out)].c_str(), bp->predBy[oi], bp->statBy[oi]); fprintf(stderr, "\n"); bp->nHold = bp->nPred = 0; bp->predBy.clear(); bp->statBy.clear(); bp->qFixed = bp->qAd = 0; bp->qFixedT = bp->qAdT = 0.0; } }
     if (std::getenv("DGG_PART_STATS")) { fprintf(stderr, "PartNet: windows %ld passes %ld unconverged %ld hist", net.windows, net.passes, net.unconverged); for (int i = 1; i < 8; ++i) fprintf(stderr, " %d:%ld", i, net.itHist[i]); fprintf(stderr, " max mismatch %.3g\n", net.ifMaxMismatch); }
     const auto& pr = net.probes[0];
     if (pr.t.size() < 2) { out.clear(); return false; }
-    size_t j = 0;
-    auto at = [&](double tt) { while (j + 1 < pr.t.size() - 1 && pr.t[j + 1] < tt) ++j; const double a = std::min(std::max((tt - pr.t[j]) / std::max(pr.t[j + 1] - pr.t[j], 1e-30), 0.0), 1.0); return pr.v[j] + (pr.v[j + 1] - pr.v[j]) * a; };
-    const double idle = at(t0);   // output just before the trigger
-    out.assign(nOut, 0.0f);
-    for (size_t k = 0; k < nOut; ++k) out[k] = static_cast<float>(at(t0 + static_cast<double>(k) * ts) - idle);
+    std::vector<double> yk; ofilt.Resample(pr.t, pr.v, t0, nOut, yk);   // low-pass resampling of the step ends to the host instants (OutputFilter909)
+    const size_t i1 = std::min<size_t>(static_cast<size_t>(std::lower_bound(pr.t.begin(), pr.t.end(), t0) - pr.t.begin()), pr.t.size() - 1), i0 = i1 > 0 ? i1 - 1 : 0;   // idle level: the raw output just before the trigger
+    const double idle = i1 == i0 ? pr.v[i0] : pr.v[i0] + (pr.v[i1] - pr.v[i0]) * std::min(std::max((t0 - pr.t[i0]) / std::max(pr.t[i1] - pr.t[i0], 1e-30), 0.0), 1.0);
+    out.assign(nOut, 0.0f); for (size_t k = 0; k < nOut; ++k) out[k] = static_cast<float>(yk[k] - idle);
     return true;
   }
   static constexpr double kTriggerDelay = 0.05;   // minimum idle before the trigger: the accent (a held level in the sequencer) and the pot states settle as in the NGSpice decks (50 ms)
