@@ -56,6 +56,7 @@ class PartNet {
   // input difference closer than eventMargin, or eventHold after a flip) and up to eventHMax between them; the full circuit is solved, only the step size follows the events. quietUntil < 0: off (noisy runs stay fixed).
   double qaRtol = 0.0, qaAtol = 1e-5, qaHmax = 1e-4;   // E-02: > 0: in the quiet run the steps between the comparator events are error-controlled (Net::advanceAdaptive) instead of eventHMax
   double statR = 0.0;   // E-02: quiet run: a saturated op-amp with |input difference| < 50 mV counts as 'flip imminent' only if it moves faster than this (V/s); 0 = always (old rule)
+  bool freezeHit = false;   /* Z-09: passive non-modal blocks of the other voices are not stepped during the hit either (load current held), see CircuitRunner909::HitFreezesOthers */
   bool freezeIdle = false;   // E-02: passive blocks are not stepped in the quiet (idle) run, see runBlock
   std::set<std::string> fineNodes;   // E-02: non-empty: only the op-amps whose output node is listed count as comparator flips of the fine-event step (the oscillator comparators; the saturating op-amps of the noise stages would otherwise keep it on)
   double fineMargin = -1.0, fineHold = -1.0;   // E-02: look-ahead margin and hold time of the fine-event step (< 0: eventMargin / eventHold)
@@ -335,7 +336,7 @@ class PartNet {
       else s.vs[static_cast<size_t>(b.ifIdx[g])].f = [this, g](double t) { return ifaces[g].V.at(t); }; }
     recIf(t0);
     double t = t0; double h = b.hCur;
-    if (freezeIdle && b.frozenIdle && quietUntil > 0.0 && t1 <= quietUntil + 1e-12)   // E-02: the blocks of the voices that are not played are not stepped in the idle run before the trigger (their state stays at the stored state, load current held); their phases do not matter for the hit
+    if (freezeIdle && b.frozenIdle && ((quietUntil > 0.0 && t1 <= quietUntil + 1e-12) || (freezeHit && !b.modal)))   // E-02: the blocks of the voices that are not played are not stepped in the idle run before the trigger (their state stays at the stored state, load current held); their phases do not matter for the hit
     { b.wf.t.push_back(t1); b.wf.v.push_back(b.wf.hold); recIf(t1); b.ts.push_back(t1); for (size_t k = 0; k < probes.size(); ++k) b.pv[k].push_back(0.0); b.hLast = 0.0; b.hCur = h; return; }
     const bool quiet = fixedDt > 0 && eventHMax > fixedDt && (b.passive || (quietUntil > 0.0 && t1 <= quietUntil + 1e-12) || (tailEvHMax > 0.0 && tailDt > 0.0 && t0 >= tailFrom - 1e-12));
     if (quiet) {
