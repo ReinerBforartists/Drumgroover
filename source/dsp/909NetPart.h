@@ -292,6 +292,7 @@ class PartNet {
   // E-03: breakpoints of the noise source. It is piecewise linear with a knot every bpStep from bpOrigin (the trigger time) on; a step that spans a knot integrates the kink of the source with the error of the step
   // (the steps of a block drift off the lattice of the trigger after every fine event step, 1 us steps then straddle the knots), so every step ends at the next knot (bpStep <= 0: off).
   double bpOrigin = 0.0, bpStep = 0.0, kfDt = 0.0, kfWidth = 0.0;   // kfDt / kfWidth: finer step after every knot (0: off)
+  double tailEvHMax = 0.0;   /* Z-06: > 0: after tailFrom the played blocks run event-controlled (fixedDt = tailDt near comparator flips) with this longest step between them */
   double bpEnd = 1e30, tailFrom = 1e30, tailDt = 0.0;   /* Z-02: noise knots end at bpEnd (frozen source), base step tailDt from tailFrom (BD tail, CircuitRunner909::BdFreezesNoise) */
   double knotStepCap(double t) const { if (t >= bpEnd - 1e-12 || kfDt <= 0.0 || bpStep <= 0.0 || t < bpOrigin - 1e-12) return 1e30; const double since = t - (bpOrigin + std::floor((t - bpOrigin) / bpStep + 1e-6) * bpStep); return since < kfWidth - 1e-12 ? kfDt : 1e30; }   // step after a knot of the source: kfDt for kfWidth (the kink of the source excites the fast transients of the linear stages: a quarter of the base step for the first base step)
   double nextBreak(double t) const { if (bpStep <= 0.0 || t >= bpEnd - 1e-12) return 1e30; if (t < bpOrigin - 1e-12) return bpOrigin; return bpOrigin + (std::floor((t - bpOrigin) / bpStep + 1e-6) + 1.0) * bpStep; }
@@ -336,7 +337,7 @@ class PartNet {
     double t = t0; double h = b.hCur;
     if (freezeIdle && b.frozenIdle && quietUntil > 0.0 && t1 <= quietUntil + 1e-12)   // E-02: the blocks of the voices that are not played are not stepped in the idle run before the trigger (their state stays at the stored state, load current held); their phases do not matter for the hit
     { b.wf.t.push_back(t1); b.wf.v.push_back(b.wf.hold); recIf(t1); b.ts.push_back(t1); for (size_t k = 0; k < probes.size(); ++k) b.pv[k].push_back(0.0); b.hLast = 0.0; b.hCur = h; return; }
-    const bool quiet = fixedDt > 0 && eventHMax > fixedDt && (b.passive || (quietUntil > 0.0 && t1 <= quietUntil + 1e-12));
+    const bool quiet = fixedDt > 0 && eventHMax > fixedDt && (b.passive || (quietUntil > 0.0 && t1 <= quietUntil + 1e-12) || (tailEvHMax > 0.0 && tailDt > 0.0 && t0 >= tailFrom - 1e-12));
     if (quiet) {
       const size_t NO = s.op.size(); auto vd = [&](size_t i) { return s.V(s.op[i].inp) - s.V(s.op[i].inn); };
       if (b.vdPrev.size() != NO || b.hLast <= 0.0) { b.vdPrev.resize(NO); b.vdPrev2.resize(NO); b.sat.resize(NO); for (size_t i = 0; i < NO; ++i) { b.vdPrev[i] = b.vdPrev2[i] = vd(i); b.sat[i] = sgn3(s.V(s.op[i].out)); } b.hLast = fixedDt; b.holdUntil = t0 + eventHold; }
@@ -513,7 +514,7 @@ class PartNet {
     for (size_t g = 0; g < ifaces.size(); ++g) { Iface& f = ifaces[g]; f.iHold = 0.0;   // interface state at T: owner voltage, summed load current of the others
       for (size_t i = 0; i < blocks.size(); ++i) { Block& b = *blocks[i]; if (b.ifNode[g] < 0) continue; Net& n = b.net; if (static_cast<int>(i) == f.owner) f.vHold = n.V(b.ifNode[g]); else f.iHold += -n.x[static_cast<size_t>(n.nNodes - 1 + n.vs[static_cast<size_t>(b.ifIdx[g])].br)]; } }
     unsigned nw = 0;
-    while (T < tstop - 1e-13) { if (tailDt > 0.0 && T >= tailFrom - 1e-13) fixedDt = tailDt;
+    while (T < tstop - 1e-13) { if (tailDt > 0.0 && T >= tailFrom - 1e-13) { fixedDt = tailDt; if (tailEvHMax > 0.0) eventHMax = tailEvHMax; }
       if (abort && ((++nw & 63u) == 0) && abort()) return false; const bool q = quietUntil > 0.0 && fixedDt > 0.0 && eventHMax > fixedDt && T + 2.0 * H <= quietUntil; const double t1 = std::min(T + (q ? quietH : H), q ? std::min(tstop, quietUntil) : tstop); if (!window(T, t1)) return false; if (afterWindow) afterWindow(T); }
     return true;
   }
