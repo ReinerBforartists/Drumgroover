@@ -37,7 +37,7 @@ class PartNet {
     Wave wf, wfPrev, vl;   // vl: NOISE voltage at the steps of the last run (E-03: the line voltage the block solved)
     std::vector<double> ts; std::vector<std::vector<double>> pv;   // steps of the present pass: time, probe values
     std::vector<int> ifNode, ifIdx; std::vector<Wave> ifW;   // per secondary interface: node in this net (-1: not used), index of the VIF source (non-owner) / IFI current source (owner), waveform (owner: node voltage, other: current drawn)
-    std::vector<double> vdPrev, vdPrev2; bool passive = false, frozenIdle = false, fineEvents = false, modal = false; PortModel pm; PortModel::State pmWin, pmEnd; std::vector<char> fineMask; double hAd = 0.0; bool lastAd = false; long qFixed = 0, qAd = 0; long nHold = 0, nPred = 0, nStat = 0; std::vector<long> predBy, statBy; double qFixedT = 0.0, qAdT = 0.0;   // quiet-run step statistics   // passive: the voice of the block is not played: coarse event-controlled step, coarse step. frozenIdle: not stepped in the idle run before the trigger (stays at the stored state). modal (E-03): in the noisy windows the block is not stepped, its load on the NOISE line is its linear port model pm (Net909Modal.h)
+    std::vector<double> vdPrev, vdPrev2; bool passive = false, frozenIdle = false, liveHit = false, fineEvents = false, modal = false; PortModel pm; PortModel::State pmWin, pmEnd; std::vector<char> fineMask; double hAd = 0.0; bool lastAd = false; long qFixed = 0, qAd = 0; long nHold = 0, nPred = 0, nStat = 0; std::vector<long> predBy, statBy; double qFixedT = 0.0, qAdT = 0.0;   // quiet-run step statistics   // passive: the voice of the block is not played: coarse event-controlled step, coarse step. frozenIdle: not stepped in the idle run before the trigger (stays at the stored state). modal (E-03): in the noisy windows the block is not stepped, its load on the NOISE line is its linear port model pm (Net909Modal.h)
      std::vector<signed char> sat; double holdUntil = -1.0, hLast = 0.0; std::vector<double> vdPrevS, vdPrev2S; std::vector<signed char> satS; double holdUntilS = -1.0, hLastS = 0.0;   // event-controlled stepping (quiet windows): comparator input differences of the last two steps, saturation, fine-step hold
   };
   // Secondary interface nodes (splitToms): nodes shared by blocks that are not the NOISE line. The owner block keeps the node and receives the loads of the other blocks as a current source; every other block
@@ -294,7 +294,10 @@ class PartNet {
   // (the steps of a block drift off the lattice of the trigger after every fine event step, 1 us steps then straddle the knots), so every step ends at the next knot (bpStep <= 0: off).
   double bpOrigin = 0.0, bpStep = 0.0, kfDt = 0.0, kfWidth = 0.0;   // kfDt / kfWidth: finer step after every knot (0: off)
   double tailEvHMax = 0.0;   /* Z-06: > 0: after tailFrom the played blocks run event-controlled (fixedDt = tailDt near comparator flips) with this longest step between them */
-  double bpEnd = 1e30, tailFrom = 1e30, tailDt = 0.0;   /* Z-02: noise knots end at bpEnd (frozen source), base step tailDt from tailFrom (BD tail, CircuitRunner909::BdFreezesNoise) */
+  double bpEnd = 1e30, tailFrom = 1e30, tailDt = 0.0, tailKnotsFrom = 1e30;   /* Z-02: the steps no longer end at the noise knots from bpEnd on, base step tailDt from tailFrom, the steps end at the knots again from tailKnotsFrom on (BD tail plan, CircuitRunner909::BdTailPlan) */
+  double qkDt = 0.0, qkWidth = 0.0;   // Z-02: kfDt / kfWidth of the event-controlled (quiet) branch (0 = those of knotStepCap)
+  double quietCap(double t) const { if (qkDt <= 0.0 || qkWidth <= 0.0) return knotStepCap(t); if (t >= bpEnd - 1e-12 || bpStep <= 0.0 || t < bpOrigin - 1e-12) return 1e30; const double since = t - (bpOrigin + std::floor((t - bpOrigin) / bpStep + 1e-6) * bpStep); return since < qkWidth - 1e-12 ? qkDt : 1e30; }
+  bool quietKnotCap = false; double quietKnotCapFrom = 0.0;   // Z-02: step cap after a knot (quietCap) also in the event-controlled (quiet) branch, from this absolute time on
   double knotStepCap(double t) const { if (t >= bpEnd - 1e-12 || kfDt <= 0.0 || bpStep <= 0.0 || t < bpOrigin - 1e-12) return 1e30; const double since = t - (bpOrigin + std::floor((t - bpOrigin) / bpStep + 1e-6) * bpStep); return since < kfWidth - 1e-12 ? kfDt : 1e30; }   // step after a knot of the source: kfDt for kfWidth (the kink of the source excites the fast transients of the linear stages: a quarter of the base step for the first base step)
   double nextBreak(double t) const { if (bpStep <= 0.0 || t >= bpEnd - 1e-12) return 1e30; if (t < bpOrigin - 1e-12) return bpOrigin; return bpOrigin + (std::floor((t - bpOrigin) / bpStep + 1e-6) + 1.0) * bpStep; }
   bool modalOn = true;   // false: the passive blocks that load the line run as blocks that solve the line (reference of the A/B comparison)
@@ -336,7 +339,7 @@ class PartNet {
       else s.vs[static_cast<size_t>(b.ifIdx[g])].f = [this, g](double t) { return ifaces[g].V.at(t); }; }
     recIf(t0);
     double t = t0; double h = b.hCur;
-    if (freezeIdle && b.frozenIdle && ((quietUntil > 0.0 && t1 <= quietUntil + 1e-12) || (freezeHit && !b.modal)))   // E-02: the blocks of the voices that are not played are not stepped in the idle run before the trigger (their state stays at the stored state, load current held); their phases do not matter for the hit
+    if (freezeIdle && b.frozenIdle && ((quietUntil > 0.0 && t1 <= quietUntil + 1e-12) || (freezeHit && !b.modal && !b.liveHit)))   // E-02: the blocks of the voices that are not played are not stepped in the idle run before the trigger (their state stays at the stored state, load current held); their phases do not matter for the hit
     { b.wf.t.push_back(t1); b.wf.v.push_back(b.wf.hold); recIf(t1); b.ts.push_back(t1); for (size_t k = 0; k < probes.size(); ++k) b.pv[k].push_back(0.0); b.hLast = 0.0; b.hCur = h; return; }
     const bool quiet = fixedDt > 0 && eventHMax > fixedDt && (b.passive || (quietUntil > 0.0 && t1 <= quietUntil + 1e-12) || (tailEvHMax > 0.0 && tailDt > 0.0 && t0 >= tailFrom - 1e-12));
     if (quiet) {
@@ -348,7 +351,7 @@ class PartNet {
         if (std::getenv("DGG_PART_STATS")) { if (b.predBy.size() != NO) { b.predBy.assign(NO, 0); b.statBy.assign(NO, 0); }
           if (t < b.holdUntil) ++b.nHold; else if (tev <= eventMargin) { ++b.nPred; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0 && -d / r <= eventMargin) ++b.predBy[i]; else if (!(r * d < 0.0) && std::fabs(d) < 0.05) ++b.statBy[i]; } } }
         const bool idleQa = qaRtol > 0.0 && quietUntil > 0.0 && t1 <= quietUntil + 1e-12;   // error-controlled steps only in the idle run, not in the event-controlled blocks during the hit
-        double hh = nearEv ? fixedDt : std::min(idleQa ? qaHmax : eventHMax, std::max(fixedDt, 0.5 * (tev - eventMargin)));
+        double hh = nearEv ? fixedDt : std::min(idleQa ? qaHmax : eventHMax, std::max(fixedDt, 0.5 * (tev - eventMargin))); if (quietKnotCap && t >= quietKnotCapFrom - 1e-13) hh = std::min(hh, quietCap(t));
         hh = std::min(hh, std::min(t1, nextBreak(t)) - t);
         if (idleQa && !nearEv && hh > 2.0 * fixedDt)   // error-controlled step between the events (start after a fixed-step phase: new history, first step is not checked)
         {
@@ -371,7 +374,7 @@ class PartNet {
       if (fineNodes.empty()) b.fineMask.clear(); else if (b.fineMask.size() != NO) { b.fineMask.assign(NO, 0); for (size_t i = 0; i < NO; ++i) b.fineMask[i] = fineNodes.count(s.nodeName[static_cast<size_t>(s.op[i].out)]) ? 1 : 0; }
       const bool masked = !b.fineMask.empty();
       while (t < t1 - 1e-13) {
-        double tev = 1e9; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0 && (!masked || b.fineMask[i])) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0) tev = std::min(tev, -d / r); else if (std::fabs(d) < 0.05 && (!masked || std::fabs(r) >= statR)) tev = 0.0; }   // masked: a stationary saturated op-amp (accent stage) is no flip candidate (statR as in the idle run)
+        double tev = 1e9; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0 && (!masked || b.fineMask[i])) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0) tev = std::min(tev, -d / r); else if (std::fabs(d) < 0.05 && std::fabs(r) >= statR) tev = 0.0; }   // masked: a stationary saturated op-amp (accent stage) is no flip candidate (statR as in the idle run)
         double hh = (t < b.holdUntil || tev <= (fineMargin >= 0.0 ? fineMargin : eventMargin)) ? fineEventDt : fixedDt;
         hh = std::min(hh, std::min(t1, nextBreak(t)) - t); hh = std::min(hh, knotStepCap(t));
         if (!s.advance(t, hh)) { b.net.x = b.st.x; break; }
@@ -515,7 +518,7 @@ class PartNet {
     for (size_t g = 0; g < ifaces.size(); ++g) { Iface& f = ifaces[g]; f.iHold = 0.0;   // interface state at T: owner voltage, summed load current of the others
       for (size_t i = 0; i < blocks.size(); ++i) { Block& b = *blocks[i]; if (b.ifNode[g] < 0) continue; Net& n = b.net; if (static_cast<int>(i) == f.owner) f.vHold = n.V(b.ifNode[g]); else f.iHold += -n.x[static_cast<size_t>(n.nNodes - 1 + n.vs[static_cast<size_t>(b.ifIdx[g])].br)]; } }
     unsigned nw = 0;
-    while (T < tstop - 1e-13) { if (tailDt > 0.0 && T >= tailFrom - 1e-13) { fixedDt = tailDt; if (tailEvHMax > 0.0) eventHMax = tailEvHMax; }
+    while (T < tstop - 1e-13) { if (tailDt > 0.0 && T >= tailFrom - 1e-13) { fixedDt = tailDt; if (tailEvHMax > 0.0) eventHMax = tailEvHMax; } if (T >= tailKnotsFrom - 1e-13) bpEnd = 1e30;
       if (abort && ((++nw & 63u) == 0) && abort()) return false; const bool q = quietUntil > 0.0 && fixedDt > 0.0 && eventHMax > fixedDt && T + 2.0 * H <= quietUntil; const double t1 = std::min(T + (q ? quietH : H), q ? std::min(tstop, quietUntil) : tstop); if (!window(T, t1)) return false; if (afterWindow) afterWindow(T); }
     return true;
   }

@@ -4,6 +4,7 @@
 // M5218_V1, CD4069UB_INV, AN6912_CMP, BA6110_OTA_N.
 #pragma once
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <cmath>
@@ -152,13 +153,14 @@ class Net {
   // ---- device bypass (off by default: bypassTol 0): the stamp of a nonlinear device (diode, BJT, macro) is recorded; while its terminal voltages stay within bypassTol of the voltages of the recorded evaluation the record is replayed instead of
   // evaluating the device again (SPICE 'bypass'). The linearisation of the old point is stamped (error second order in the voltage change); the charge elements are re-stamped from the recorded (q, c, v) with the present voltages and the
   // present step coefficients / charge history, so the integration stays consistent. Only in transient mode without homotopy (gminExtra 0, opGain 1).
-  struct Rec { std::vector<std::pair<int, double>> a, b; struct Chg { int a, b, slot; double q0, c0, v0; }; std::vector<Chg> c; double v[8] = {0}; int nv = 0; bool valid = false; };
+  struct Rec { std::vector<std::pair<int, double>> a, b; struct Chg { int a, b, slot; double q0, c0, v0; int iaa = -1, ibb = -1, iab = -1, iba = -1, ra = -1, rb = -1; };  /* iaa..iba: matrix indices of the four conductance entries, ra / rb: right-hand-side rows (-1: ground node); set by fillChg */ std::vector<Chg> c; double v[8] = {0}; int nv = 0; bool valid = false; };
   double bypassTol = 0.0; long nBypassed = 0, nEvaluated = 0; bool compactRec = false, recOnly = false, replayOrder = std::getenv("N909_REPLAYORDER") != nullptr;   // recOnly: a device evaluation only records its stamp, the replay writes it (same summation order for evaluated and replayed devices; needed by the partial refactorisation)
   // partial refactorisation (needs bypassTol > 0): the columns of A that a re-evaluated device changed are marked; only the LU columns that depend on a marked column (their own or one in their U pattern) are recomputed
   std::vector<double> Alast; bool partialLU = false; std::vector<char> colDirty, dirtyK; long nPartialLU = 0, nColsRefactored = 0, nColsTotal = 0;
   // ---- pre-stamped linear part (off by default): Gmin, resistors and the capacitor companion models are stamped once per step coefficients (matrix) and once per Newton solve (right-hand side, charge history); every iteration copies them
   bool prestamp = false, linAValid = false, linBDirty = true; double linKey[6] = {0, 0, 0, 0, 0, 0}; std::vector<int> linAIdx, linBIdx, slotOf; std::vector<double> linAVal, linBVal; Rec* linRec = nullptr; Rec linTmp; long nPrestampBuilds = 0, nPrestampCopies = 0;
   int dynRes = -1; bool hasDynRes() { if (dynRes < 0) { dynRes = 0; for (const auto& r : res) if (r.dyn || !r.pw.empty()) { dynRes = 1; break; } } return dynRes == 1; }
+  struct LinIdx { size_t asz = 0, nres = 0, ncap = 0; std::vector<int> g; std::vector<Rec::Chg> r, c; } li;   // matrix indices of the linear elements (assemble)
   Rec* curRec = nullptr; std::vector<Rec> recDio, recBjt, recOp, recInv, recCmp, recOta;
   void ad(int i, int j, double v) { if (i > 0 && j > 0) { size_t idx = (size_t)(i - 1) * nUnk + (j - 1); touch(idx); if (curRec) { if (recOnly) { curRec->a.push_back({(int)idx, v}); return; } curRec->a.push_back({(int)idx, v}); } else if (linRec) linRec->a.push_back({(int)idx, v}); A[idx] += v; } }
   void rhs(int i, double v) { if (i > 0) { if (curRec) { curRec->b.push_back({i - 1, v}); if (recOnly) return; } else if (linRec) linRec->b.push_back({i - 1, v}); B[i - 1] += v; } }
@@ -170,14 +172,32 @@ class Net {
   }
   void conduct(int a, int b, double g) { ad(a, a, g); ad(b, b, g); ad(a, b, -g); ad(b, a, -g); }
   // charge element between nodes a,b: q(v) with c = dq/dv at the present iterate
+  // Step coefficients of the variable-step BDF2: computed once per step length / history (the key is compared, so every caller sees the values of the present dt / hPrev / stepIndex).
+  double cA0 = 1, cA1 = 0, cA2 = 0, cKdt = -1, cKh = -1; int cKi = -1; bool cKv = false;
+  void stepCoefs(double& a0, double& a1, double& a2) {
+    if (!(cKdt == dt && cKh == hPrev && cKi == stepIndex && cKv == varStepBdf2)) {
+      if (stepIndex == 0) { cA0 = 1; cA1 = -1; cA2 = 0; } else if (varStepBdf2 && hPrev > 0) { const double r = dt / hPrev; cA0 = (1 + 2 * r) / (1 + r); cA1 = -(1 + r); cA2 = r * r / (1 + r); } else { cA0 = 1.5; cA1 = -2; cA2 = 0.5; }
+      cKdt = dt; cKh = hPrev; cKi = stepIndex; cKv = varStepBdf2;
+    }
+    a0 = cA0; a1 = cA1; a2 = cA2;
+  }
+  void fillChg(Rec::Chg& c) const { const int n = nUnk; if (c.a > 0) { c.iaa = (c.a - 1) * n + (c.a - 1); c.ra = c.a - 1; } if (c.b > 0) { c.ibb = (c.b - 1) * n + (c.b - 1); c.rb = c.b - 1; } if (c.a > 0 && c.b > 0) { c.iab = (c.a - 1) * n + (c.b - 1); c.iba = (c.b - 1) * n + (c.a - 1); } }
+  // chargeStampAt for the case without recording (curRec / linRec null): the same operations in the same order (bit-identical), matrix indices precomputed; the entries are touched already (the recording evaluation or the first linear assembly stamped them).
+  void chargeFast(const Rec::Chg& c, double q0, double c0, double v0) {
+    double a0, a1, a2; stepCoefs(a0, a1, a2);
+    const double g = a0 * c0 / dt; const double ieq = (a0 * (q0 - c0 * v0) + a1 * q1[c.slot] + a2 * q2[c.slot]) / dt;
+    if (c.iaa >= 0) A[(size_t)c.iaa] += g; if (c.ibb >= 0) A[(size_t)c.ibb] += g; if (c.iab >= 0) A[(size_t)c.iab] += -g; if (c.iba >= 0) A[(size_t)c.iba] += -g;
+    if (c.ra >= 0) B[(size_t)c.ra] += -ieq; if (c.rb >= 0) B[(size_t)c.rb] += ieq;
+    qNow[c.slot] = q0;
+  }
   void chargeStamp(int a, int b, int slot, double q0, double c0) {
     if (dcMode) return;
     const double vNow = V(a) - V(b);
-    if (curRec) { curRec->c.push_back({a, b, slot, q0, c0, vNow}); if (!recOnly) { Rec* keep = curRec; curRec = nullptr; chargeStampAt(a, b, slot, q0, c0, vNow); curRec = keep; } }
+    if (curRec) { curRec->c.push_back({a, b, slot, q0, c0, vNow}); fillChg(curRec->c.back()); if (!recOnly) { Rec* keep = curRec; curRec = nullptr; chargeStampAt(a, b, slot, q0, c0, vNow); curRec = keep; } }
     else chargeStampAt(a, b, slot, q0, c0, vNow);
   }
   void chargeStampAt(int a, int b, int slot, double q0, double c0, double v0) {
-    double a0, a1, a2; if (stepIndex == 0) { a0 = 1; a1 = -1; a2 = 0; } else if (varStepBdf2 && hPrev > 0) { const double r = dt / hPrev; a0 = (1 + 2 * r) / (1 + r); a1 = -(1 + r); a2 = r * r / (1 + r); } else { a0 = 1.5; a1 = -2; a2 = 0.5; }   // variable-step BDF2 (r = h / h_prev; r = 1 gives 1.5, -2, 0.5): after a halved step the history is not equally spaced
+    double a0, a1, a2; stepCoefs(a0, a1, a2);   // variable-step BDF2 (r = h / h_prev; r = 1 gives 1.5, -2, 0.5): after a halved step the history is not equally spaced
     double g = a0 * c0 / dt; double ieq = (a0 * (q0 - c0 * v0) + a1 * q1[slot] + a2 * q2[slot]) / dt;
     conduct(a, b, g); rhs(a, -ieq); rhs(b, ieq);
     qNow[slot] = q0;
@@ -291,7 +311,7 @@ class Net {
       if (ok) {
         for (const auto& e : r.a) A[(size_t)e.first] += e.second;
         for (const auto& e : r.b) B[(size_t)e.first] += e.second;
-        for (const auto& c : r.c) { const double vn = V(c.a) - V(c.b); chargeStampAt(c.a, c.b, c.slot, c.q0 + c.c0 * (vn - c.v0), c.c0, vn); }
+        for (const auto& c : r.c) { const double vn = V(c.a) - V(c.b); chargeFast(c, c.q0 + c.c0 * (vn - c.v0), c.c0, vn); }
         ++nBypassed; return;
       }
     }
@@ -348,6 +368,18 @@ class Net {
         for (auto& c : cap) qNow[(size_t)c.q] = c.c * (V(c.a) - V(c.b));
         ++nPrestampCopies;
       }
+      usedLin = true;
+    }
+    if (!usedLin && !dcMode && !hasDynRes()) {   // Gmin, resistors and capacitor companion models with precomputed matrix indices: the same additions in the same order as the general path below (bit-identical)
+      if (li.asz != A.size() || li.nres != res.size() || li.ncap != cap.size()) {
+        li.asz = A.size(); li.nres = res.size(); li.ncap = cap.size(); li.g.clear(); li.r.clear(); li.c.clear(); const int n = nUnk;
+        for (int i = 1; i < nNodes; ++i) { const int idx = (i - 1) * n + (i - 1); touch((size_t)idx); li.g.push_back(idx); }
+        for (auto& r : res) { Rec::Chg c{r.a, r.b, 0, 0, 0, 0}; fillChg(c); for (int idx : {c.iaa, c.ibb, c.iab, c.iba}) if (idx >= 0) touch((size_t)idx); li.r.push_back(c); }
+        for (auto& cp : cap) { Rec::Chg c{cp.a, cp.b, cp.q, 0, 0, 0}; fillChg(c); for (int idx : {c.iaa, c.ibb, c.iab, c.iba}) if (idx >= 0) touch((size_t)idx); li.c.push_back(c); }
+      }
+      { const double gm = kGmin + gminExtra; for (int idx : li.g) A[(size_t)idx] += gm; }
+      for (size_t k = 0; k < res.size(); ++k) { const Rec::Chg& c = li.r[k]; const double g = res[k].g; if (c.iaa >= 0) A[(size_t)c.iaa] += g; if (c.ibb >= 0) A[(size_t)c.ibb] += g; if (c.iab >= 0) A[(size_t)c.iab] += -g; if (c.iba >= 0) A[(size_t)c.iba] += -g; }
+      for (size_t k = 0; k < cap.size(); ++k) { const Cap& cp = cap[k]; const double vNow = V(cp.a) - V(cp.b); chargeFast(li.c[k], cp.c * vNow, cp.c, vNow); }
       usedLin = true;
     }
     if (!usedLin) {
