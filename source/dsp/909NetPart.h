@@ -296,7 +296,7 @@ class PartNet {
   double bpOrigin = 0.0, bpStep = 0.0, kfDt = 0.0, kfWidth = 0.0;   // kfDt / kfWidth: finer step after every knot (0: off)
   double tailEvHMax = 0.0;   /* Z-06: > 0: after tailFrom the played blocks run event-controlled (fixedDt = tailDt near comparator flips) with this longest step between them */
   double bpEnd = 1e30, tailFrom = 1e30, tailDt = 0.0, tailKnotsFrom = 1e30;   /* Z-02: the steps no longer end at the noise knots from bpEnd on, base step tailDt from tailFrom, the steps end at the knots again from tailKnotsFrom on (BD tail plan, CircuitRunner909::BdTailPlan) */
-  double qkDt = 0.0, qkWidth = 0.0;   // Z-02: kfDt / kfWidth of the event-controlled (quiet) branch (0 = those of knotStepCap)
+  double qkDt = 0.0, qkWidth = 0.0, quietEvDt = 0.0;   // quietEvDt > 0: from tailFrom on, the event-controlled branch caps the step near comparator flips (predicted crossing within eventMargin, eventHold after a flip); the step grows by at most 2x per step; Z-02: kfDt / kfWidth of the event-controlled (quiet) branch (0 = those of knotStepCap)
   double quietCap(double t) const { if (qkDt <= 0.0 || qkWidth <= 0.0) return knotStepCap(t); if (t >= bpEnd - 1e-12 || bpStep <= 0.0 || t < bpOrigin - 1e-12) return 1e30; const double since = t - (bpOrigin + std::floor((t - bpOrigin) / bpStep + 1e-6) * bpStep); return since < qkWidth - 1e-12 ? qkDt : 1e30; }
   bool quietKnotCap = false; double quietKnotCapFrom = 0.0;   // Z-02: step cap after a knot (quietCap) also in the event-controlled (quiet) branch, from this absolute time on
   double knotStepCap(double t) const { if (t >= bpEnd - 1e-12 || kfDt <= 0.0 || bpStep <= 0.0 || t < bpOrigin - 1e-12) return 1e30; const double since = t - (bpOrigin + std::floor((t - bpOrigin) / bpStep + 1e-6) * bpStep); return since < kfWidth - 1e-12 ? kfDt : 1e30; }   // step after a knot of the source: kfDt for kfWidth (the kink of the source excites the fast transients of the linear stages: a quarter of the base step for the first base step)
@@ -347,12 +347,12 @@ class PartNet {
       const size_t NO = s.op.size(); auto vd = [&](size_t i) { return s.V(s.op[i].inp) - s.V(s.op[i].inn); };
       if (b.vdPrev.size() != NO || b.hLast <= 0.0) { b.vdPrev.resize(NO); b.vdPrev2.resize(NO); b.sat.resize(NO); for (size_t i = 0; i < NO; ++i) { b.vdPrev[i] = b.vdPrev2[i] = vd(i); b.sat[i] = sgn3(s.V(s.op[i].out)); } b.hLast = fixedDt; b.holdUntil = t0 + eventHold; }
       while (t < t1 - 1e-13) {
-        double tev = 1e9; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0) tev = std::min(tev, -d / r); else if (std::fabs(d) < 0.05 && std::fabs(r) >= statR) tev = 0.0; }
+        double tev = 1e9, tevP = 1e9; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0) { tev = std::min(tev, -d / r); tevP = std::min(tevP, -d / r); } else if (std::fabs(d) < 0.05 && std::fabs(r) >= statR) tev = 0.0; }
         const bool nearEv = t < b.holdUntil || tev <= eventMargin;
         if (std::getenv("DGG_PART_STATS")) { if (b.predBy.size() != NO) { b.predBy.assign(NO, 0); b.statBy.assign(NO, 0); }
           if (t < b.holdUntil) ++b.nHold; else if (tev <= eventMargin) { ++b.nPred; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0 && -d / r <= eventMargin) ++b.predBy[i]; else if (!(r * d < 0.0) && std::fabs(d) < 0.05) ++b.statBy[i]; } } }
         const bool idleQa = qaRtol > 0.0 && quietUntil > 0.0 && t1 <= quietUntil + 1e-12;   // error-controlled steps only in the idle run, not in the event-controlled blocks during the hit
-        double hh = nearEv ? fixedDt : std::min(idleQa ? qaHmax : eventHMax, std::max(fixedDt, 0.5 * (tev - eventMargin))); if (quietKnotCap && t >= quietKnotCapFrom - 1e-13) hh = std::min(hh, quietCap(t));
+        double hh = nearEv ? fixedDt : std::min(idleQa ? qaHmax : eventHMax, std::max(fixedDt, 0.5 * (tev - eventMargin))); if (quietKnotCap && t >= quietKnotCapFrom - 1e-13) hh = std::min(hh, quietCap(t)); if (quietEvDt > 0.0 && t >= tailFrom - 1e-13) { if (t < b.holdUntil || tevP <= eventMargin) hh = std::min(hh, quietEvDt); if (b.hLast > 0.0) hh = std::min(hh, 2.0 * b.hLast); }
         hh = std::min(hh, std::min(t1, nextBreak(t)) - t);
         if (idleQa && !nearEv && hh > 2.0 * fixedDt)   // error-controlled step between the events (start after a fixed-step phase: new history, first step is not checked)
         {
