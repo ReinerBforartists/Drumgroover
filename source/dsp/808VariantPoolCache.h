@@ -109,22 +109,37 @@ public:
   // Appends one freshly rendered variant. No-op past the current target
   // (guards against an in-flight bake job finishing after a target
   // decrease, or two bake jobs racing on the same key).
-  void AddVariant(const Key& key, std::vector<float>&& buf)
+  void AddVariant(const Key& key, std::vector<float>&& buf) { AddVariantAt(key, 0, std::move(buf)); }
+
+  // Same, with the number of the variant slot the buffer was baked for (1-based; 0 = unknown). Lets a caller pick the variant of a given slot (GetBySlot), independent of the order the variants arrived in.
+  void AddVariantAt(const Key& key, int slot, std::vector<float>&& buf)
   {
     std::lock_guard<std::mutex> lock(mMutex);
     auto& variants = mMap[key];
     if ((int)variants.size() >= mTarget) return;
     variants.push_back(std::make_shared<std::vector<float>>(std::move(buf)));
+    mSlots[key].push_back(slot);
+  }
+
+  // The variant baked for `slot`, or nullptr when that slot is not ready (the caller falls back, e.g. to GetRandom).
+  std::shared_ptr<const std::vector<float>> GetBySlot(const Key& key, int slot)
+  {
+    std::lock_guard<std::mutex> lock(mMutex);
+    auto it = mMap.find(key); auto st = mSlots.find(key);
+    if (it == mMap.end() || st == mSlots.end()) return nullptr;
+    for (size_t i = 0; i < st->second.size() && i < it->second.size(); ++i) if (st->second[i] == slot) return it->second[i];
+    return nullptr;
   }
 
   // Drops every variant of `key` (a rebake replaces the whole set).
-  void ClearKey(const Key& key) { std::lock_guard<std::mutex> lock(mMutex); mMap.erase(key); }
+  void ClearKey(const Key& key) { std::lock_guard<std::mutex> lock(mMutex); mMap.erase(key); mSlots.erase(key); }
 
-  void ClearForTest() { std::lock_guard<std::mutex> lock(mMutex); mMap.clear(); }
+  void ClearForTest() { std::lock_guard<std::mutex> lock(mMutex); mMap.clear(); mSlots.clear(); }
 
 private:
   std::mutex mMutex;
   std::unordered_map<Key, std::vector<std::shared_ptr<const std::vector<float>>>, KeyHash> mMap;
+  std::unordered_map<Key, std::vector<int>, KeyHash> mSlots;   // slot number of each variant of mMap (same order)
   int mTarget;
   std::mt19937 mRng{std::random_device{}()};
 };

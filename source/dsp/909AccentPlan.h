@@ -135,5 +135,7 @@ inline bool DecodeSetBaseName909(const std::string& name, SetKey909& k)
 
 // Noise seed of variant k (1-based file index _v<k>): the engine source has index 2 and the seed offset is the variant number.
 inline uint64_t NoiseSeed909(int variantIndex) { return static_cast<uint64_t>(std::max(variantIndex, 1)); }
+// Position of variant k in the shared noise stream of the circuit (knots of 5 us): the same for every voice and pot state, so the variants k of all voices are hits triggered at the same time in one circuit. The spacing (0.5 s) exceeds the length of a hit with its 50 ms lead.
+inline uint64_t StreamKnot909(int variantIndex) { return 3000000ULL + 100000ULL * static_cast<uint64_t>(std::max(variantIndex, 1) - 1); }
 
 }  // namespace dgg

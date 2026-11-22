@@ -65,7 +65,7 @@ inline BakeResult909 BakeVariant909(const SetKey909& key, int variantIndex, Mode
   for (int i = 0; i < n; ++i)
   {
     RunRequest909 r; r.voice = key.voice; r.params = key.params; r.anchorCode = runs[i].anchorCode; r.noise = key.noise;
-    r.noiseSeed = NoiseSeed909(variantIndex); r.sampleRateHz = key.sampleRateHz; r.seconds = HitSeconds909(key.voice);
+    r.noiseSeed = NoiseSeed909(variantIndex); r.streamKnot = StreamKnot909(variantIndex); r.sampleRateHz = key.sampleRateHz; r.seconds = HitSeconds909(key.voice);
     if (!runner.Run(r, y[i]) || y[i].empty()) return BakeResult909::RunFailed;
   }
   if (n == 1) { out = std::move(y[0]); return BakeResult909::Ok; }

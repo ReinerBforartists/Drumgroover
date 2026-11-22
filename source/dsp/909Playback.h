@@ -139,7 +139,7 @@ public:
     // Only the factory pot state (params 0: every circuit pot at its nominal position) lives in the cache. A pot state set with a knob never does: its first hit is computed live, the following hits play the
     // temporary sample of that pot state (in memory, one per voice) or are computed live again (another velocity than the temporary sample, or the sample is not ready yet).
     const bool cacheState = k.params == 0 && !KnobEditing909().load(std::memory_order_relaxed);
-    mBuf = cacheState ? VariantPool909::Instance().GetRandom(k) : nullptr; mPos = 0; mFrac = 0.0;
+    mBuf = cacheState ? PickVariant(k) : nullptr; mPos = 0; mFrac = 0.0;
     mRate = std::clamp(pitchRatio * basePitch, 0.25, 4.0);
     if (!mBuf)
     {
@@ -196,6 +196,19 @@ public:
   }
   bool IsActive() const override { return mBuf != nullptr || mLiveOn; }
   void Choke() { EndHit(); }
+  // Variant slot of a trigger at stream position `sample`: voices triggered at the same sample get the same slot (the same stretch of the shared noise stream, StreamKnot909), other positions an independent one.
+  static int SlotOfTrigger(uint64_t sample, int slots)
+  {
+    uint64_t z = sample + 0x9E3779B97F4A7C15ULL; z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL; z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL; z ^= z >> 31;
+    return 1 + static_cast<int>(z % static_cast<uint64_t>(std::max(slots, 1)));
+  }
+  // Cache hit of the circuit voices: the variant of the slot of this trigger; while that slot is not baked or loaded, any ready variant. The PCM voices have one variant.
+  static std::shared_ptr<const std::vector<float>> PickVariant(const SetKey909& k)
+  {
+    VariantPool909& pool = VariantPool909::Instance();
+    if (!IsPcmVoice909(k.voice)) if (auto b = pool.GetBySlot(k, SlotOfTrigger(NoiseStream909::Sample(), pool.TargetVariantCount()))) return b;
+    return pool.GetRandom(k);
+  }
   unsigned misses() const { return mMisses; }
 
   // Circuit pots of the voice (0..1, 909PotParams.h): a set is baked for one pot state, the state is part of the set key. Level is the output pot of the circuit (VR12 / HC VR20), not a gain.

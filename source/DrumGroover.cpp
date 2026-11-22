@@ -3194,7 +3194,7 @@ void LoadExistingVariantsIntoPool(Pool& pool, const Key& key, const std::string&
     std::error_code ec;
     if (!std::filesystem::exists(path, ec)) continue;
     std::vector<float> buf;
-    if (LoadVariantFromDisk(path, buf)) pool.AddVariant(key, std::move(buf));
+    if (LoadVariantFromDisk(path, buf)) pool.AddVariantAt(key, k, std::move(buf));
   }
 }
 
@@ -3328,7 +3328,7 @@ void EnqueueMissingVariants(const char* label, Pool& pool, const dgg::VariantKey
       const auto path = VariantFilePath(baseName, k);
       if ((rebakeAll || !VariantFileValid(path)) && !tap.empty())
       {
-        if (SaveVariantToDisk(path, tap)) poolPtr->AddVariant(key, std::vector<float>(tap));
+        if (SaveVariantToDisk(path, tap)) poolPtr->AddVariantAt(key, k, std::vector<float>(tap));
         EvictCacheIfOverBudget();
       }
       DGG_Log("BakeTiming: " + baseName + " v" + std::to_string(k) + " took " + std::to_string(ms) + "ms ("
@@ -3483,7 +3483,7 @@ void Enqueue909Set(const dgg::SetKey909& key, int target, bool loadIfComplete, b
         const auto path = VariantFilePath(baseName, k);
         if (!aborted && res == dgg::BakeResult909::Ok && (rebakeAll || !VariantFileValid(path)) && !tap.empty())
         {
-          if (SaveVariantToDisk(path, tap)) dgg::VariantPool909::Instance().AddVariant(key, std::vector<float>(tap));
+          if (SaveVariantToDisk(path, tap)) dgg::VariantPool909::Instance().AddVariantAt(key, k, std::vector<float>(tap));
           EvictCacheIfOverBudget();
         }
         DGG_Log("BakeTiming: " + baseName + " v" + std::to_string(k) + " took " + std::to_string(ms) + "ms ("
