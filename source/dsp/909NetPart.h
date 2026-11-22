@@ -60,7 +60,7 @@ class PartNet {
   bool freezeIdle = false;   // E-02: passive blocks are not stepped in the quiet (idle) run, see runBlock
   std::set<std::string> fineNodes;   // E-02: non-empty: only the op-amps whose output node is listed count as comparator flips of the fine-event step (the oscillator comparators; the saturating op-amps of the noise stages would otherwise keep it on)
   double fineMargin = -1.0, fineHold = -1.0;   // E-02: look-ahead margin and hold time of the fine-event step (< 0: eventMargin / eventHold)
-  double fineLateFrom = 1e30, fineLateDt = 0.0;   // SD-04 prototype: from this time on the fine-event step is fineLateDt (0: off)
+  double fineLateFrom = 1e30, fineLateDt = 0.0;   // from this time on the fine-event step is fineLateDt (0: off)
   double fineEventDt = 0.0;   /* > 0: blocks with fineEvents run their fixed-step windows with this step around predicted / just happened comparator flips (op-amp outputs in saturation: input difference extrapolated to its zero crossing within eventMargin, or eventHold after a flip) and with fixedDt otherwise; default off */ double quietUntil = -1.0, eventHMax = 3e-6, eventMargin = 20e-6, eventHold = 12e-6, quietH = 60e-6;
   double nwAtolV = 1e-6, nwAtolI = 1e-8; bool predictor = false, reassemble = false; double bypassTol = 0.0; int jacReuse = 0; bool prestamp = false, compactRec = false, partialLU = false;   // Newton tolerances and predictor start of the blocks (Net defaults: 1e-6 / 1e-8, off)
   // statistics
@@ -376,7 +376,7 @@ class PartNet {
       const bool masked = !b.fineMask.empty();
       while (t < t1 - 1e-13) {
         double tev = 1e9; for (size_t i = 0; i < NO; ++i) if (b.sat[i] != 0 && (!masked || b.fineMask[i])) { const double d = b.vdPrev[i], r = (b.vdPrev[i] - b.vdPrev2[i]) / std::max(b.hLast, 1e-12); if (r * d < 0.0) tev = std::min(tev, -d / r); else if (std::fabs(d) < 0.05 && std::fabs(r) >= statR) tev = 0.0; }   // masked: a stationary saturated op-amp (accent stage) is no flip candidate (statR as in the idle run)
-        double hh = (t < b.holdUntil || tev <= (fineMargin >= 0.0 ? fineMargin : eventMargin)) ? (t >= fineLateFrom && fineLateDt > 0.0 ? fineLateDt : fineEventDt) : fixedDt;   // SD-04 prototype: from fineLateFrom on the event step is fineLateDt
+        double hh = (t < b.holdUntil || tev <= (fineMargin >= 0.0 ? fineMargin : eventMargin)) ? (t >= fineLateFrom && fineLateDt > 0.0 ? fineLateDt : fineEventDt) : fixedDt;   // from fineLateFrom on the event step is fineLateDt
         hh = std::min(hh, std::min(t1, nextBreak(t)) - t); hh = std::min(hh, knotStepCap(t));
         if (!s.advance(t, hh)) { b.net.x = b.st.x; break; }
         t += hh; b.hLast = hh; b.wf.t.push_back(t); b.wf.v.push_back(loadCurrent(b)); if (b.ifSrc >= 0) { b.vl.t.push_back(t); b.vl.v.push_back(s.V(s.vs[static_cast<size_t>(b.ifSrc)].p)); } recIf(t);
