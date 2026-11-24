@@ -80,6 +80,14 @@ public:
   static double FineLateDt(Voice909 v) { switch (v) { case Voice909::Sd: return 1e-7; case Voice909::Lt: return 7e-8; case Voice909::Mt: return 1e-7; case Voice909::Ht: return 7e-8; default: return 0.0; } }
   // HC: base step 0.2 us (2026-11-14, report Nachtrag 19 continuation 6): against the NGSpice reference with the production noise start dt 1 us exceeds -30 dB in 0-1 ms at 4.064 V (seeds 2, 3: -23 dB), dt 0.2 us is at or below -37 dB in all six cases. About 3x the compute time; provisional accuracy step, not an optimisation.
   static constexpr double kHcDt = 2e-7;
+  // HC-01: staircase of the base step after the trigger (the first stage is kHcDt): 0.2 us to 20 ms, 0.5 us to 60 ms, 1 us to 100 ms, 2.5 us after. Against the NGSpice window errors of the constant 0.2 us the cells to 60 ms change by at most 0.3 dB (accents 4.064 / 0.8 V, seeds 1-3); the windows from 60 ms (no NGSpice reference) are at or below -33 dB against the 0.2 us run (that run is within -54 dB of 0.1 us there), 0.8 V ... 4.064 V, seeds, Level pot 0.1 / 0.9. 5 us from 100 ms: -24 dB.
+  static constexpr int kHcStages = 3; static constexpr double kHcStageT[kHcStages] = {0.02, 0.06, 0.1}, kHcStageDt[kHcStages] = {5e-7, 1e-6, 2.5e-6};
+  static bool RunHcStaged(n909::PartNet& net, double t0, double tEnd)
+  {
+    bool ok = net.run(std::min(t0 + kHcStageT[0], tEnd));
+    for (int i = 0; ok && i < kHcStages && t0 + kHcStageT[i] < tEnd; ++i) { net.fixedDt = kHcStageDt[i]; for (auto& bl : net.blocks) bl->hCur = kHcStageDt[i]; ok = net.run(i + 1 < kHcStages ? std::min(t0 + kHcStageT[i + 1], tEnd) : tEnd); }
+    return ok;
+  }
   // SD-03: from kSdTailFromT after the trigger the step after a noise knot is kSdTailKnotDt (uniform over the knot interval) instead of 0.25 x the base step (0.625 us): windows 100-350 ms against NGSpice within 0.3 dB of before (accents 4.064 / 0.8 V, seeds 1 / 2), -16 % hit time; 1.667 us (-22 %) and 2.5 us worsen the windows 100-350 ms by 1.7-5 dB
   static constexpr double kSdTailFromT = 0.1, kSdTailKnotDt = 1.25e-6;
   static constexpr double kFineHitDt = 1e-6;   // LT / MT / HT: base step of the hit; the oscillator periods and the output windows against NGSpice need 1 us (2.5 us: period errors HT 2.2e-4, LT 1.9e-4, MT 1.05e-4)
@@ -340,7 +348,7 @@ private:
       for (auto& bp : net.blocks) bp->fineEvents = net.fineEventDt > 0.0 && !bp->passive; }
     net.fineLateFrom = t0 + kFineLateFromT; net.fineLateDt = FineLateDt(v);   // from kFineLateFromT after the trigger the fine event step is FineLateDt(v) instead of kFineDt (0: unchanged)
     net.freezeIdle = std::getenv("DGG_PART_FREEZE") ? std::atoi(std::getenv("DGG_PART_FREEZE")) != 0 : !idleOld;   // test hook (E-02): the blocks of the other voices rest during the idle run before the trigger
-    const bool runOk = RunHit(net, t0, t0 + static_cast<double>(nOut) * ts + 2e-4 + fMargin, v == Voice909::Sd || v == Voice909::Bd); net.quietUntil = -1.0;
+    const double tEndHit = t0 + static_cast<double>(nOut) * ts + 2e-4 + fMargin; const bool runOk = v == Voice909::Hc ? RunHcStaged(net, t0, tEndHit) : RunHit(net, t0, tEndHit, v == Voice909::Sd || v == Voice909::Bd); net.quietUntil = -1.0;
     if (!runOk) { out.clear(); return false; }
     if (std::getenv("DGG_PART_STATS")) { for (auto& bp : net.blocks) if (bp->qFixed + bp->qAd > 0) { fprintf(stderr, "quiet block %s: fixed steps %ld (%.1f ms), controlled steps %ld (%.1f ms)\n", bp->name.c_str(), bp->qFixed, 1e3 * bp->qFixedT, bp->qAd, 1e3 * bp->qAdT); fprintf(stderr, "   hold steps %ld, predicted-flip steps %ld; by op-amp (out node): ", bp->nHold, bp->nPred); for (size_t oi = 0; oi < bp->predBy.size(); ++oi) if (bp->predBy[oi] || bp->statBy[oi]) fprintf(stderr, "%s pred %ld stat %ld; ", bp->net.nodeName[static_cast<size_t>(bp->net.op[oi].out)].c_str(), bp->predBy[oi], bp->statBy[oi]); fprintf(stderr, "\n"); bp->nHold = bp->nPred = 0; bp->predBy.clear(); bp->statBy.clear(); bp->qFixed = bp->qAd = 0; bp->qFixedT = bp->qAdT = 0.0; } }
     if (std::getenv("DGG_PART_STATS")) { fprintf(stderr, "PartNet: windows %ld passes %ld unconverged %ld hist", net.windows, net.passes, net.unconverged); for (int i = 1; i < 8; ++i) fprintf(stderr, " %d:%ld", i, net.itHist[i]); fprintf(stderr, " max mismatch %.3g\n", net.ifMaxMismatch); }
