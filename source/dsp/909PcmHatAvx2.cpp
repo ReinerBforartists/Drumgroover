@@ -1,5 +1,5 @@
-// Hi-hat voices of the 909 (Closed / Open) with AVX2/FMA matrix and dot products (see PcmHatAvx2.h). This unit is compiled for the baseline instruction set like the rest of the plugin: only the intrinsics in
-// pcmfast::Dot / MatVecAdd are AVX2 code. Do not compile it with /arch:AVX2: the compiler would then emit AVX2 copies of shared library functions (std::max, std::fill, ...), which the linker may use anywhere.
+// Hi-hat voices of the 909 (Closed / Open) with AVX2/FMA matrix and dot products and BJT exponentials (see PcmHatAvx2.h). This unit is compiled for the baseline instruction set like the rest of the plugin: only the intrinsics in
+// pcmfast::Dot / MatVecAdd / ExpBatch are AVX2 code. Do not compile it with /arch:AVX2: the compiler would then emit AVX2 copies of shared library functions (std::max, std::fill, ...), which the linker may use anywhere.
 // Everything it includes lives in the namespace dgg_hat (the macro below), so its copy of PcmFast / PcmVoiceHost is separate from the one of the rest of the plugin.
 #include "909PcmHatAvx2.h"
 #if defined(_MSC_VER) && !defined(__clang__) && defined(_M_X64) && !defined(DGG_NO_LANES)

@@ -34,16 +34,15 @@ constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kNewtonTolCym
 struct BjtOut { double ic, ib, d[2][2]; };
 // Approximate evaluation for devices that stay below high injection (cbe/IKF < ~1e-3, checked by the generator) and have either vbc <= 0.1 V (the
 // collector junction carries a negligible current: IS*exp(vbc/Vt) < 5e-12 A) or are evaluated with the exact junction term: no division, no sqrt.
-inline BjtOut BjtEvalFast(const double* P, double vbe, double vbc)
+// BjtFromExp is the algebra with the exponentials supplied: eE = exp(vbe/(NF Vt)) and eL = exp(vbe/(NE Vt)) (both 0 in deep cutoff), eC = exp(vbc/Vt) (read above vbc = 0.1 V only).
+inline BjtOut BjtFromExp(const double* P, double vbe, double vbc, double eE, double eL, double eC)
 {
   const double s = P[0], IS = P[1], ISE = P[8], invNFVt = P[9], invNEVt = P[10], invVAF = P[11], invIKF = P[12], invBF = P[13], invBR = P[14];
-  const double aE = vbe * invNFVt, aL = vbe * invNEVt;   // exp(a) < 2.4e-16 for a < -36: the junction is in deep cutoff, the exponential is dropped (change below the rounding of IS)
-  const double eE = aE < -36.0 ? 0.0 : std::exp(std::fmin(aE, 80.0));
   const double cbe = IS * (eE - 1.0) + kGmin * vbe, gbe = IS * eE * invNFVt + kGmin;
   double cbc = kGmin * vbc, gbc = kGmin;
-  if (vbc > 0.1) { const double eC = std::exp(std::fmin(vbc * (1.0 / kVt), 80.0)); cbc = IS * (eC - 1.0) + kGmin * vbc; gbc = IS * eC * (1.0 / kVt) + kGmin; }
+  if (vbc > 0.1) { cbc = IS * (eC - 1.0) + kGmin * vbc; gbc = IS * eC * (1.0 / kVt) + kGmin; }
   double cben = 0.0, gben = 0.0;
-  if (ISE != 0.0) { const double eL = aL < -36.0 ? 0.0 : std::exp(std::fmin(aL, 80.0)); cben = ISE * (eL - 1.0); gben = ISE * eL * invNEVt; }
+  if (ISE != 0.0) { cben = ISE * (eL - 1.0); gben = ISE * eL * invNEVt; }
   const double iq1 = 1.0 - vbc * invVAF;                         // 1/q1 (Early effect)
   const double q2 = cbe * invIKF, dq2 = gbe * invIKF;
   const double g = 1.0 - q2 + 2.0 * q2 * q2, dg = (-1.0 + 4.0 * q2) * dq2;    // 1/(1 + q2 - q2^2), series in the small q2
@@ -53,6 +52,15 @@ inline BjtOut BjtEvalFast(const double* P, double vbe, double vbc)
   const double dcbbe = gbe * invBF + gben, dcbbc = gbc * invBR;
   BjtOut o; o.ic = s * cc; o.ib = s * cb; o.d[0][0] = s * dccbe; o.d[0][1] = s * dccbc; o.d[1][0] = s * dcbbe; o.d[1][1] = s * dcbbc;
   return o;
+}
+
+inline BjtOut BjtEvalFast(const double* P, double vbe, double vbc)
+{
+  const double aE = vbe * P[9], aL = vbe * P[10];   // exp(a) < 2.4e-16 for a < -36: the junction is in deep cutoff, the exponential is dropped (change below the rounding of IS)
+  const double eE = aE < -36.0 ? 0.0 : std::exp(std::fmin(aE, 80.0));
+  const double eC = vbc > 0.1 ? std::exp(std::fmin(vbc * (1.0 / kVt), 80.0)) : 0.0;
+  const double eL = P[8] == 0.0 || aL < -36.0 ? 0.0 : std::exp(std::fmin(aL, 80.0));
+  return BjtFromExp(P, vbe, vbc, eE, eL, eC);
 }
 
 inline BjtOut BjtEval(const double* P, double vbe, double vbc)
@@ -132,8 +140,31 @@ template <class M> struct QTable
   }
 };
 #ifdef PCMFAST_DOT_AVX2
-// The unit that defines PCMFAST_DOT_AVX2 is compiled for the baseline instruction set: the only AVX2 code is that of the intrinsics in Dot and MatVecAdd, which clear the upper register halves before they return.
+// The unit that defines PCMFAST_DOT_AVX2 is compiled for the baseline instruction set: the only AVX2 code is that of the intrinsics in Dot, MatVecAdd and ExpBatch, which clear the upper register halves before they return.
 #include <immintrin.h>
+// exp(x[i]) for N values (a multiple of four), four at a time, equal to std::exp within the rounding of the result; the arguments are limited to [-700, 80] (a NaN gives exp(80), like std::fmin).
+// x = n ln 2 + r with |r| <= ln 2 / 2, Taylor polynomial of degree 13 (truncation 4e-18), n added into the exponent field. No table.
+template <int N> inline void ExpBatch(const double (&x)[N], double (&e)[N])
+{
+  static_assert(N % 4 == 0, "ExpBatch works on groups of four");
+#define PF_C4(v) _mm256_set1_pd(v)   // a macro: a lambda here gets a symbol outside the namespace of the unit
+  const __m256d shift = PF_C4(6755399441055744.0);   // 1.5 * 2^52: the low bits of (x / ln 2 + shift) hold the rounded integer n
+  for (int j = 0; j < N; j += 4)
+  {
+    const __m256d v = _mm256_max_pd(_mm256_min_pd(_mm256_loadu_pd(x + j), PF_C4(80.0)), PF_C4(-700.0));
+    const __m256d t = _mm256_fmadd_pd(v, PF_C4(1.4426950408889634), shift), n = _mm256_sub_pd(t, shift);
+    const __m256d r = _mm256_fnmadd_pd(n, PF_C4(1.90821492927058770002e-10), _mm256_fnmadd_pd(n, PF_C4(6.93147180369123816490e-01), v));   // ln 2 in two parts
+    const __m256d r2 = _mm256_mul_pd(r, r), r4 = _mm256_mul_pd(r2, r2), r8 = _mm256_mul_pd(r4, r4);
+    const __m256d p23 = _mm256_fmadd_pd(r, PF_C4(1.0 / 6.0), PF_C4(0.5)), p45 = _mm256_fmadd_pd(r, PF_C4(1.0 / 120.0), PF_C4(1.0 / 24.0)), p67 = _mm256_fmadd_pd(r, PF_C4(1.0 / 5040.0), PF_C4(1.0 / 720.0));
+    const __m256d p89 = _mm256_fmadd_pd(r, PF_C4(1.0 / 362880.0), PF_C4(1.0 / 40320.0)), pab = _mm256_fmadd_pd(r, PF_C4(1.0 / 39916800.0), PF_C4(1.0 / 3628800.0)), pcd = _mm256_fmadd_pd(r, PF_C4(1.0 / 6227020800.0), PF_C4(1.0 / 479001600.0));
+    const __m256d low = _mm256_fmadd_pd(r4, _mm256_fmadd_pd(r2, p67, p45), _mm256_fmadd_pd(r2, p23, r)), high = _mm256_fmadd_pd(r4, pcd, _mm256_fmadd_pd(r2, pab, p89));
+    const __m256d q = _mm256_fmadd_pd(r8, high, low);   // exp(r) - 1
+    const __m256d scale = _mm256_castsi256_pd(_mm256_slli_epi64(_mm256_add_epi64(_mm256_castpd_si256(t), _mm256_set1_epi64x(1023)), 52));   // 2^n
+    _mm256_storeu_pd(e + j, _mm256_fmadd_pd(scale, q, scale));
+  }
+#undef PF_C4
+  _mm256_zeroupper();
+}
 inline double Dot(const double* a, const double* b, int n)   // AVX2/FMA dot product, four accumulators over 16 elements per pass
 {
   __m256d s0 = _mm256_setzero_pd(), s1 = s0, s2 = s0, s3 = s0; int k = 0;
@@ -509,10 +540,24 @@ template <class M> struct Voice
   // currents f (and the block Jacobians when jf != nullptr) at the port voltages q
   void EvalF(const double* q, double* f, double (*jf)[4]) const
   {
+#if defined(PCMFAST_DOT_AVX2) && !defined(PCMFAST_EXACT_BJT)
+    constexpr int NX = (3 * NB + 3) / 4 * 4;   // the three exponentials of all devices at once (those a device does not need are computed and ignored)
+    double xa[NX] = {}, xe[NX];
     for (int k = 0; k < NB; ++k)
     {
       const double vbe = q[M::kPortBe[k]], vbc = M::kPortBc[k] >= 0 ? q[M::kPortBc[k]] : vbcFix[k];
+      xa[3 * k] = vbe * bp[k][9]; xa[3 * k + 1] = vbe * bp[k][10]; xa[3 * k + 2] = vbc * (1.0 / kVt);
+    }
+    ExpBatch(xa, xe);
+#endif
+    for (int k = 0; k < NB; ++k)
+    {
+      const double vbe = q[M::kPortBe[k]], vbc = M::kPortBc[k] >= 0 ? q[M::kPortBc[k]] : vbcFix[k];
+#if defined(PCMFAST_DOT_AVX2) && !defined(PCMFAST_EXACT_BJT)
+      const BjtOut o = BjtFromExp(bp[k], vbe, vbc, xa[3 * k] < -36.0 ? 0.0 : xe[3 * k], xa[3 * k + 1] < -36.0 ? 0.0 : xe[3 * k + 1], xe[3 * k + 2]);   // deep cutoff as in BjtEvalFast
+#else
       const BjtOut o = BjtEvalSel(bp[k], vbe, vbc);
+#endif
       if (M::kHasLinPart)   // semi-linear devices: the linear part about the DC point is in the linear model, only the remainder is nonlinear
       {
         const double* L = &M::kLinPart[8 * k]; const double dvbe = vbe - L[0], dvbc = vbc - L[1];
