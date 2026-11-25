@@ -163,10 +163,11 @@ public:
     else if (mLiveOn)
     {
       // the live hit computes the samples this block needs
-      const size_t need = mPos + static_cast<size_t>(nFrames * std::max(1.0, mRate)) + 8;
+      // at the original pitch exactly the samples of this block, transposed with a margin for the interpolation: the first block of a hit computes no more than it needs
+      const size_t need = mPos + (std::fabs(mRate - 1.0) < 1e-12 ? static_cast<size_t>(nFrames) : static_cast<size_t>(nFrames * std::max(1.0, mRate)) + 8);
       while (!mLiveDone && mLiveBuf.size() < need)
       {
-        const int chunk = mBankSrc ? 64 : 256;   // a bank source is pulled in small chunks: the first block of a hit computes no more than it needs
+        const int chunk = static_cast<int>(std::min<size_t>(256, need - mLiveBuf.size()));
         float tmp[256]; const int g = mBankSrc ? mBankSrc->Pull(tmp, chunk) : LiveSynth909::Instance().Pull(this, tmp, chunk);
         mLiveBuf.insert(mLiveBuf.end(), tmp, tmp + g);
         if (g < chunk) mLiveDone = true;

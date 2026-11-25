@@ -25,6 +25,9 @@ namespace dgg { namespace pcmfast {
 
 constexpr double kSettlePeriod = 0.1; constexpr int kSettlePeriods = 300, kStagePeriods = 60, kRampPeriods = 100; constexpr double kStageLn = 0.4;   // idle settling: PCM period in seconds and number of periods
 constexpr double kChordMaxCorr = 0.2;   // volts: above this correction the next iteration is a full Newton iteration
+// Block-triangular Jacobian (blockRel > 0, hi-hats): at some operating points (a quiet hit after a loud one) the dropped entries matter and the iteration fails step after step. A step that reaches kBlkSwitchIt
+// iterations (or fails) is solved again from its start with the dense Jacobian, and so are the following kBlkDenseSteps steps. Not in the first kBlkStartSteps steps of a hit from rest (about 10 ms).
+constexpr int kBlkSwitchIt = 30, kBlkDenseSteps = 200; constexpr long kBlkStartSteps = 2000;
 constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kNewtonTolCym = 3e-3, kNewtonTolHat = 3e-2, kBlockRelHat = 1e-4, kJReuseHat = 100, kDioMemoHat = 1e-9, kTailRel = 0.0, kTailRelCym = 1e-2, kEnvDecay = 0.975, kAcAlpha = 0.0031, kAcEndLevel = 1e-3, kAcEndLevelHat = 2e-7; constexpr int kAcEndPeriods = 400;   // volts on the port voltages; the correction is applied before the test, so the error left is of the order of the square
 
 // Gummel-Poon static currents of one BJT in node orientation: ic = s*cc (leaving the collector node into the device), ib = s*cb, and the 2x2 Jacobian wrt (vbe, vbc)
@@ -232,6 +235,7 @@ template <class M> struct Voice
   JCache jc[M::kSteps];   // Jacobian and block factors per step type (jReuse > 0): reused for up to jReuse periods; invalidated when the reused Jacobian needs more than one extra iteration
   double dioMemoThr = 0.0; mutable double dioMemoV[ND > 0 ? ND : 1], dioMemoI[ND > 0 ? ND : 1], dioMemoG[ND > 0 ? ND : 1]; mutable bool dioMemoOk[ND > 0 ? ND : 1] = {};   // diode evaluation memo (HH-K17): reuse within |dv| <= dioMemoThr volts
   bool qTable = false;   // charge channels from the Hermite table instead of the exact function
+  int denseSteps = 0; long denseSwitches = 0;   // block mode: steps left with the dense Jacobian; number of switches
   int jReuse = 0; long jReuseUsed = 0; double jReuseTol = 0.1;   // jReuseTol: the correction limit of a step that starts with a reused Jacobian is newtonTol * jReuseTol
   double blockRel = 0.0, blkT = -1.0; bool blkReady = false; int nBlk = 0, bOrd[NP], bStart[NP + 1], bOff[NP + 1], blkPiv[NP], bDepN[NP], bDep[NP][NP]; double blkInv[NP], blkLU[NP * NP];   // bDep: for the port at position r the ports of earlier blocks it depends on; blkInv: reciprocal pivots
   void BuildBlocks()
@@ -341,11 +345,37 @@ template <class M> struct Voice
       }
     for (int i = 0; i < NU; ++i) u0[i] = M::kU0[i];
     bitsPrev = 0; for (int i = 0; i < NBITS; ++i) if (M::kU0[i] > 0.5 * M::kVhigh) bitsPrev |= (1u << i);
-    if constexpr (NR > 0) { bool moved = false; for (int m = 0; m < NR; ++m) if (std::fabs(resG[m] - M::kResG0[m]) > 1e-6 * M::kResG0[m]) moved = true; if (moved) { SettleResistors(); } }
+    if constexpr (NR > 0) { bool moved = false; for (int m = 0; m < NR; ++m) if (std::fabs(resG[m] - M::kResG0[m]) > 1e-6 * M::kResG0[m]) moved = true; if (moved && !LoadSettled()) { double target[NR]; std::memcpy(target, resG, sizeof target); SettleResistors(); StoreSettled(target); } }
     EvalF(p, f0, nullptr); lastOut = OutputNow(); period = 0; stepIdx = 0; layout = 0; newtonIts = 0; stepsDone = 0; outDc = OutputNow(); env = 0.0; peak = 1e-12; acLow = outDc; acEnv = 0.0; acPeak = 0.0; quietPeriods = 0; finished = false;
     for (int i = 0; i < 4; ++i) periodsByLayout[i] = 0;
     for (auto& c : jc) c.valid = false;   // a new hit starts with fresh Jacobians
+    denseSteps = 0;
     if constexpr (ND > 0) for (int m = 0; m < ND; ++m) dioMemoOk[m] = false;
+  }
+  // The settled idle states of the last kSettled combinations of accent, pot resistors and PCM period: settling takes longer than a host block, a later hit from rest with the same combination takes its state from here.
+  static constexpr int kSettled = NR > 0 ? 16 : 1;   // one per accent level of the plugin and a second pot position
+  struct Settled { double acc, T, g[NR > 0 ? NR : 1], gEnd[NR > 0 ? NR : 1], z[R], p[NP], vj[ND > 0 ? ND : 1], mv[ND > 0 ? ND : 1], mi[ND > 0 ? ND : 1], mg[ND > 0 ? ND : 1]; bool mok[ND > 0 ? ND : 1]; };   // g: the resistors asked for, gEnd: as the last settling stage left them (rounding)
+  Settled settled[kSettled]; int settledCount = 0, settledNext = 0;
+  bool LoadSettled()
+  {
+    for (int k = 0; k < settledCount; ++k)
+    {
+      const Settled& s = settled[k]; if (s.acc != acc || s.T != st.T) continue;
+      bool same = true; for (int m = 0; m < NR; ++m) if (s.g[m] != resG[m]) same = false;
+      if (!same) continue;
+      for (int m = 0; m < NR; ++m) resG[m] = s.gEnd[m];
+      std::memcpy(z, s.z, sizeof z); std::memcpy(p, s.p, sizeof p);
+      if constexpr (ND > 0) { std::memcpy(dioVj, s.vj, sizeof dioVj); std::memcpy(dioMemoV, s.mv, sizeof dioMemoV); std::memcpy(dioMemoI, s.mi, sizeof dioMemoI); std::memcpy(dioMemoG, s.mg, sizeof dioMemoG); std::memcpy(dioMemoOk, s.mok, sizeof dioMemoOk); }
+      return true;
+    }
+    return false;
+  }
+  void StoreSettled(const double* target)
+  {
+    Settled& s = settled[settledNext]; settledNext = (settledNext + 1) % kSettled; if (settledCount < kSettled) ++settledCount;
+    s.acc = acc; s.T = st.T; for (int m = 0; m < NR; ++m) { s.g[m] = target[m]; s.gEnd[m] = resG[m]; }
+    std::memcpy(s.z, z, sizeof z); std::memcpy(s.p, p, sizeof p);
+    if constexpr (ND > 0) { std::memcpy(s.vj, dioVj, sizeof dioVj); std::memcpy(s.mv, dioMemoV, sizeof dioMemoV); std::memcpy(s.mi, dioMemoI, sizeof dioMemoI); std::memcpy(s.mg, dioMemoG, sizeof dioMemoG); std::memcpy(s.mok, dioMemoOk, sizeof dioMemoOk); }
   }
   // Idle state for pot resistors away from their nominal values (the DC tables are for the nominal ones): the idle circuit (bits at their initial values, no trigger) runs
   // with a long PCM period (long steps, constant bits) until the slow nodes have settled; the step tables of the hit are restored afterwards.
@@ -472,7 +502,9 @@ template <class M> struct Voice
     double f1[NF]; const long itsBefore = newtonIts; bool fCurrent = false, reuse = false; JCache& jcj = jc[j];
     if (!noSolve)
     {
-    double J[NP][NP]; int piv[NP]; double jf[NB][4]; bool luOk = false; double lastMx = 0.0; bool denseLu = true; const bool useBlk = blockRel > 0.0 && !idleMode;
+    const bool blockMode = blockRel > 0.0 && !idleMode;
+    double J[NP][NP]; int piv[NP]; double jf[NB][4]; bool luOk = false; double lastMx = 0.0; bool denseLu = true; bool useBlk = blockMode && denseSteps == 0;
+    if (denseSteps > 0) --denseSteps;
     double pStart[NP]; for (int i = 0; i < NP; ++i) pStart[i] = p[i];
     if (useBlk && jReuse > 0 && jcj.valid && jcj.age < jReuse)   // Jacobian and block factors of this step type from an earlier period: the first iteration is a chord iteration
     {
@@ -488,6 +520,11 @@ template <class M> struct Voice
     for (int it = 0; it < (attempt ? 120 : 40); ++it)
     {
       double F[NP];
+      if (useBlk && stepsDone >= kBlkStartSteps && (it == kBlkSwitchIt || attempt == 1))   // switch to the dense Jacobian (see kBlkSwitchIt): this step starts again, the stored Jacobians are dropped
+      {
+        useBlk = false; reuse = false; luOk = false; lastMx = 0.0; denseSteps = kBlkDenseSteps; ++denseSwitches; for (auto& c : jc) c.valid = false;
+        for (int i = 0; i < NP; ++i) p[i] = pStart[i]; it = 0;
+      }
       if ((it == 0 && !reuse) || !luOk || lastMx > kChordMaxCorr)   // full Newton iteration (also while the correction is large: the Jacobian of the first iteration does not hold for a junction that moved far): currents, block Jacobians, factorization
       {
         EvalF(p, f1, jf); ++newtonIts;
@@ -566,7 +603,7 @@ template <class M> struct Voice
           }
         }
       for (int i = 0; i < NP; ++i) p[i] += F[i];
-      if (mx < (reuse ? newtonTol * jReuseTol : newtonTol) && !limited)   // converged: carry the currents to the corrected ports with the Jacobian of this step (error of second order in the correction)
+      if (mx < (reuse || (blockMode && !useBlk) ? newtonTol * jReuseTol : newtonTol) && !limited)   // converged (dense steps of block mode: the limit of the reused Jacobian): carry the currents to the corrected ports with the Jacobian of this step (error of second order in the correction)
       {
         for (int k = 0; k < NB; ++k)
         {
