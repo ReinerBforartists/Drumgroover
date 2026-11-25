@@ -125,12 +125,6 @@ iplug_add_plugin(${PROJECT_NAME}
   UI WEBVIEW
 )
 
-# The AVX2 hi-hat unit is always compiled with AVX2, independent of DGG_AVX2: 256-bit code mixed with legacy-SSE code is about nine times slower. The entry is only called after a run-time check of the CPU
-# (LanesAvailable909); the unit has its own namespace, so none of its AVX2 code is shared with the rest of the plugin.
-if(MSVC)
-  set_source_files_properties(source/dsp/909PcmHatAvx2.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
-endif()
-
 # DrumGroover.cpp includes the 909 circuit and PCM model tables through 909ModelRunner.h and 909CircuitBake.h: the object file exceeds the default section limit of MSVC (C1128).
 if(MSVC)
   set_source_files_properties(source/DrumGroover.cpp PROPERTIES COMPILE_OPTIONS "/bigobj")

@@ -6,18 +6,10 @@
 #include "909BakeHost.h"
 #include "909HitNoise.h"
 #include "909PcmHatAvx2.h"
-#if __has_include("909_rom_test_crash_pcm.h")
-// LOCAL TEST ONLY: hi-hat, crash and ride models with the original ROM data (folder is gitignored, never shipped; delete the folder to go back to the replacement samples)
-#include "909_rom_test_crash_pcm.h"
-#include "909_rom_test_ride_pcm.h"
-#include "909_rom_test_hh_pcm.h"
-#include "909_rom_test_hho_pcm.h"
-#else
 #include "909_crash_pcm.h"
 #include "909_ride_pcm.h"
 #include "909_hh_pcm.h"
 #include "909_hho_pcm.h"
-#endif
 #include "909PcmVoiceHost.h"
 #include "909PcmTune.h"
 #include "909PotParams.h"
@@ -68,7 +60,7 @@ private:
   struct PcmSlot : SlotBase
   {
     pcmfast::PcmVoiceHost<M> host; int hostFs = 0; long want_ = 0; double curPeriod = 0.0;
-    // Hats: the AVX2 unit (PcmHatAvx2.cpp) when the CPU supports it, else the baseline host above.
+    // Hats: the AVX2 unit (909PcmHatAvx2.cpp) when the CPU supports it, else the baseline host above.
     HatAvx2909* av = nullptr; bool avTried = false;
     ~PcmSlot() override { delete av; }
     bool UseAvx(Voice909 v)

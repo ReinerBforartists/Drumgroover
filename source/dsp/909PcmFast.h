@@ -132,6 +132,7 @@ template <class M> struct QTable
   }
 };
 #ifdef PCMFAST_DOT_AVX2
+// The unit that defines PCMFAST_DOT_AVX2 is compiled for the baseline instruction set: the only AVX2 code is that of the intrinsics in Dot and MatVecAdd, which clear the upper register halves before they return.
 #include <immintrin.h>
 inline double Dot(const double* a, const double* b, int n)   // AVX2/FMA dot product, four accumulators over 16 elements per pass
 {
@@ -142,9 +143,66 @@ inline double Dot(const double* a, const double* b, int n)   // AVX2/FMA dot pro
     s2 = _mm256_fmadd_pd(_mm256_loadu_pd(a + k + 8), _mm256_loadu_pd(b + k + 8), s2); s3 = _mm256_fmadd_pd(_mm256_loadu_pd(a + k + 12), _mm256_loadu_pd(b + k + 12), s3);
   }
   for (; k + 4 <= n; k += 4) s0 = _mm256_fmadd_pd(_mm256_loadu_pd(a + k), _mm256_loadu_pd(b + k), s0);
-  s0 = _mm256_add_pd(_mm256_add_pd(s0, s1), _mm256_add_pd(s2, s3)); __m128d h = _mm_add_pd(_mm256_castpd256_pd128(s0), _mm256_extractf128_pd(s0, 1)); double r = _mm_cvtsd_f64(_mm_add_sd(h, _mm_unpackhi_pd(h, h)));
+  s0 = _mm256_add_pd(_mm256_add_pd(s0, s1), _mm256_add_pd(s2, s3)); const __m128d h = _mm_add_pd(_mm256_castpd256_pd128(s0), _mm256_extractf128_pd(s0, 1));
+  _mm256_zeroupper();
+  double r = _mm_cvtsd_f64(_mm_add_sd(h, _mm_unpackhi_pd(h, h)));
   for (; k < n; ++k) r += a[k] * b[k];
   return r;
+}
+// y += A x for a row-major Rows x Cols matrix: eight (then four, then two) rows at a time share the loads of x and the final horizontal sum; the Cols % 4 rest of a row is read with a masked load.
+template <int Rows, int Cols> inline void MatVecAdd(const double* A, const double* x, double* y)
+{
+  constexpr int C4 = Cols & ~3, CT = Cols - C4;
+  const __m256i mask = _mm256_setr_epi64x(CT > 0 ? -1 : 0, CT > 1 ? -1 : 0, CT > 2 ? -1 : 0, 0);
+  __m256d xt = _mm256_setzero_pd(); if constexpr (CT != 0) xt = _mm256_maskload_pd(x + C4, mask);
+  int i = 0;
+  for (; i + 8 <= Rows; i += 8)
+  {
+    const double* r = A + static_cast<size_t>(i) * Cols;
+    __m256d s0 = _mm256_setzero_pd(), s1 = s0, s2 = s0, s3 = s0, s4 = s0, s5 = s0, s6 = s0, s7 = s0;
+    for (int k = 0; k < C4; k += 4)
+    {
+      const __m256d v = _mm256_loadu_pd(x + k);
+      s0 = _mm256_fmadd_pd(_mm256_loadu_pd(r + k), v, s0); s1 = _mm256_fmadd_pd(_mm256_loadu_pd(r + Cols + k), v, s1); s2 = _mm256_fmadd_pd(_mm256_loadu_pd(r + 2 * Cols + k), v, s2); s3 = _mm256_fmadd_pd(_mm256_loadu_pd(r + 3 * Cols + k), v, s3);
+      s4 = _mm256_fmadd_pd(_mm256_loadu_pd(r + 4 * Cols + k), v, s4); s5 = _mm256_fmadd_pd(_mm256_loadu_pd(r + 5 * Cols + k), v, s5); s6 = _mm256_fmadd_pd(_mm256_loadu_pd(r + 6 * Cols + k), v, s6); s7 = _mm256_fmadd_pd(_mm256_loadu_pd(r + 7 * Cols + k), v, s7);
+    }
+    if constexpr (CT != 0)
+    {
+      s0 = _mm256_fmadd_pd(_mm256_maskload_pd(r + C4, mask), xt, s0); s1 = _mm256_fmadd_pd(_mm256_maskload_pd(r + Cols + C4, mask), xt, s1); s2 = _mm256_fmadd_pd(_mm256_maskload_pd(r + 2 * Cols + C4, mask), xt, s2); s3 = _mm256_fmadd_pd(_mm256_maskload_pd(r + 3 * Cols + C4, mask), xt, s3);
+      s4 = _mm256_fmadd_pd(_mm256_maskload_pd(r + 4 * Cols + C4, mask), xt, s4); s5 = _mm256_fmadd_pd(_mm256_maskload_pd(r + 5 * Cols + C4, mask), xt, s5); s6 = _mm256_fmadd_pd(_mm256_maskload_pd(r + 6 * Cols + C4, mask), xt, s6); s7 = _mm256_fmadd_pd(_mm256_maskload_pd(r + 7 * Cols + C4, mask), xt, s7);
+    }
+    const __m256d h01 = _mm256_hadd_pd(s0, s1), h23 = _mm256_hadd_pd(s2, s3), h45 = _mm256_hadd_pd(s4, s5), h67 = _mm256_hadd_pd(s6, s7);
+    _mm256_storeu_pd(y + i, _mm256_add_pd(_mm256_loadu_pd(y + i), _mm256_add_pd(_mm256_permute2f128_pd(h01, h23, 0x21), _mm256_blend_pd(h01, h23, 0xC))));
+    _mm256_storeu_pd(y + i + 4, _mm256_add_pd(_mm256_loadu_pd(y + i + 4), _mm256_add_pd(_mm256_permute2f128_pd(h45, h67, 0x21), _mm256_blend_pd(h45, h67, 0xC))));
+  }
+  for (; i + 4 <= Rows; i += 4)
+  {
+    const double* r = A + static_cast<size_t>(i) * Cols;
+    __m256d s0 = _mm256_setzero_pd(), s1 = s0, s2 = s0, s3 = s0;
+    for (int k = 0; k < C4; k += 4)
+    {
+      const __m256d v = _mm256_loadu_pd(x + k);
+      s0 = _mm256_fmadd_pd(_mm256_loadu_pd(r + k), v, s0); s1 = _mm256_fmadd_pd(_mm256_loadu_pd(r + Cols + k), v, s1); s2 = _mm256_fmadd_pd(_mm256_loadu_pd(r + 2 * Cols + k), v, s2); s3 = _mm256_fmadd_pd(_mm256_loadu_pd(r + 3 * Cols + k), v, s3);
+    }
+    if constexpr (CT != 0)
+    {
+      s0 = _mm256_fmadd_pd(_mm256_maskload_pd(r + C4, mask), xt, s0); s1 = _mm256_fmadd_pd(_mm256_maskload_pd(r + Cols + C4, mask), xt, s1); s2 = _mm256_fmadd_pd(_mm256_maskload_pd(r + 2 * Cols + C4, mask), xt, s2); s3 = _mm256_fmadd_pd(_mm256_maskload_pd(r + 3 * Cols + C4, mask), xt, s3);
+    }
+    const __m256d h01 = _mm256_hadd_pd(s0, s1), h23 = _mm256_hadd_pd(s2, s3);
+    _mm256_storeu_pd(y + i, _mm256_add_pd(_mm256_loadu_pd(y + i), _mm256_add_pd(_mm256_permute2f128_pd(h01, h23, 0x21), _mm256_blend_pd(h01, h23, 0xC))));
+  }
+  if (i + 2 <= Rows)
+  {
+    const double* r = A + static_cast<size_t>(i) * Cols;
+    __m256d s0 = _mm256_setzero_pd(), s1 = s0;
+    for (int k = 0; k < C4; k += 4) { const __m256d v = _mm256_loadu_pd(x + k); s0 = _mm256_fmadd_pd(_mm256_loadu_pd(r + k), v, s0); s1 = _mm256_fmadd_pd(_mm256_loadu_pd(r + Cols + k), v, s1); }
+    if constexpr (CT != 0) { s0 = _mm256_fmadd_pd(_mm256_maskload_pd(r + C4, mask), xt, s0); s1 = _mm256_fmadd_pd(_mm256_maskload_pd(r + Cols + C4, mask), xt, s1); }
+    const __m256d h = _mm256_hadd_pd(s0, s1);
+    _mm_storeu_pd(y + i, _mm_add_pd(_mm_loadu_pd(y + i), _mm_add_pd(_mm256_castpd256_pd128(h), _mm256_extractf128_pd(h, 1))));
+    i += 2;
+  }
+  for (; i < Rows; ++i) y[i] += Dot(A + static_cast<size_t>(i) * Cols, x, Cols);   // a single last row
+  _mm256_zeroupper();
 }
 #elif !defined(PCMFAST_DOT_SCALAR)
 #include <emmintrin.h>
@@ -164,6 +222,39 @@ inline double Dot(const double* a, const double* b, int n)   // SSE2 dot product
 #else
 inline double Dot(const double* a, const double* b, int n) { double r = 0.0; for (int k = 0; k < n; ++k) r += a[k] * b[k]; return r; }
 #endif
+// The matrix-vector products of Step() (row-major, constant dimensions). The AVX2 build runs them over blocks of rows (MatVecAdd), the baseline build row by row.
+#if defined(_MSC_VER) && !defined(PCMFAST_DOT_AVX2)
+#define PCMFAST_ROWFN __forceinline   // baseline: the row loops belong inside Step() (MSVC leaves them out of line otherwise, about 2 % slower)
+#else
+#define PCMFAST_ROWFN inline
+#endif
+template <int Rows, int Cols> PCMFAST_ROWFN void AddProduct(const double* base, const double* A, const double* x, double* out)   // out = base + A x
+{
+#ifdef PCMFAST_DOT_AVX2
+  for (int i = 0; i < Rows; ++i) out[i] = base[i];
+  MatVecAdd<Rows, Cols>(A, x, out);
+#else
+  for (int i = 0; i < Rows; ++i) out[i] = base[i] + Dot(A + static_cast<size_t>(i) * Cols, x, Cols);
+#endif
+}
+template <int Rows, int Cols, int Cols2> PCMFAST_ROWFN void AddProduct2(const double* base, const double* A, const double* x, const double* B, const double* w, double* out)   // out = base + A x + B w
+{
+#ifdef PCMFAST_DOT_AVX2
+  for (int i = 0; i < Rows; ++i) out[i] = base[i];
+  MatVecAdd<Rows, Cols>(A, x, out); MatVecAdd<Rows, Cols2>(B, w, out);
+#else
+  for (int i = 0; i < Rows; ++i) { double a = base[i]; a += Dot(A + static_cast<size_t>(i) * Cols, x, Cols); a += Dot(B + static_cast<size_t>(i) * Cols2, w, Cols2); out[i] = a; }
+#endif
+}
+template <int Rows, int Cols> PCMFAST_ROWFN void Residual(const double* p, const double* pk, const double* A, const double* f, double* F)   // F = -(p - pk - A f)
+{
+#ifdef PCMFAST_DOT_AVX2
+  double af[Rows] = {}; MatVecAdd<Rows, Cols>(A, f, af);
+  for (int i = 0; i < Rows; ++i) F[i] = -(p[i] - pk[i] - af[i]);
+#else
+  for (int i = 0; i < Rows; ++i) { const double af = Dot(A + static_cast<size_t>(i) * Cols, f, Cols); F[i] = -(p[i] - pk[i] - af); }
+#endif
+}
 inline int Ctz(uint32_t m)
 {
 #ifdef _MSC_VER
@@ -476,12 +567,7 @@ template <class M> struct Voice
     const double* Phi = &st.phi[static_cast<size_t>(j) * R * R];
     const double* GaF = &st.gaF[static_cast<size_t>(j) * R * NF]; const double* GbF = &st.gbF[static_cast<size_t>(j) * R * NF]; const double* Cone = &coneEff[j * R]; const double* Zp = &st.zp[static_cast<size_t>(j) * NP * NF];
     double zk[R];
-    for (int i = 0; i < R; ++i)
-    {
-      double a = Cone[i];
-      a += Dot(Phi + i * R, z, R); a += Dot(GaF + i * NF, f0, NF);
-      zk[i] = a;
-    }
+    AddProduct2<R, R, NF>(Cone, Phi, z, GaF, f0, zk);
     if (stepIdx == 0)   // ramp: old bits ramp to the new bits
     {
       for (uint32_t m = bitsPrev; m; m &= m - 1) { const int k = Ctz(m); const double* c = &st.gaUc[(static_cast<size_t>(j) * NU + k) * R]; for (int i = 0; i < R; ++i) zk[i] += M::kVhigh * c[i]; }
@@ -491,12 +577,7 @@ template <class M> struct Voice
       for (uint32_t m = bitsNow; m; m &= m - 1) { const int k = Ctz(m); const double* c = &st.gsUc[(static_cast<size_t>(j) * NU + k) * R]; for (int i = 0; i < R; ++i) zk[i] += M::kVhigh * c[i]; }
     PF_LAP(0);
     double pk[NP];
-    for (int i = 0; i < NP; ++i)
-    {
-      double a = pd1Eff[i];
-      a += Dot(&M::kPXz[i * R], zk, R);
-      pk[i] = a;
-    }
+    AddProduct<NP, R>(pd1Eff, M::kPXz, zk, pk);
     for (uint32_t m = bitsNow; m; m &= m - 1) { const int k = Ctz(m); const double* c = &M::kPDuc[k * NP]; for (int i = 0; i < NP; ++i) pk[i] += M::kVhigh * c[i]; }
     PF_LAP(1);
     double f1[NF]; const long itsBefore = newtonIts; bool fCurrent = false, reuse = false; JCache& jcj = jc[j];
@@ -530,10 +611,10 @@ template <class M> struct Voice
         EvalF(p, f1, jf); ++newtonIts;
         for (int attempt = 0; attempt < 2; ++attempt)   // 1st: diagonal pivots (J = I - Zp Jf is diagonally dominant in practice); 2nd: partial pivoting if a pivot was small
         {
+          Residual<NP, NF>(p, pk, Zp, f1, F);
           for (int i = 0; i < NP; ++i)
           {
-            const double* zr = Zp + i * NF; const double zf = Dot(zr, f1, NF);
-            F[i] = -(p[i] - pk[i] - zf);
+            const double* zr = Zp + i * NF;
             for (int c = 0; c < NP; ++c) J[i][c] = (i == c ? 1.0 : 0.0);
             for (int k = 0; k < NB; ++k)
             {
@@ -573,7 +654,7 @@ template <class M> struct Voice
       else                    // chord iteration: Jacobian (and its factors) of the first iteration of the step; the correction is already small there
       {
         EvalF(p, f1, nullptr); ++newtonIts;
-        for (int i = 0; i < NP; ++i) { const double zf = Dot(Zp + i * NF, f1, NF); F[i] = -(p[i] - pk[i] - zf); }
+        Residual<NP, NF>(p, pk, Zp, f1, F);
       }
       if (denseLu) LuSolve<NP>(J, piv, F); else BlockSolve(J, F);
       double mx = 0.0; for (int i = 0; i < NP; ++i) mx = std::fmax(mx, std::fabs(F[i]));
@@ -636,7 +717,7 @@ template <class M> struct Voice
         tap[tapCount++] = y;
       }
     }
-    for (int i = 0; i < R; ++i) z[i] = zk[i] + Dot(GbF + i * NF, f1, NF);
+    AddProduct<R, NF>(zk, GbF, f1, z);
     double out = accOut;
     for (int k = 0; k < R; ++k) out += M::kXo[k] * z[k];
     for (uint32_t m = bitsNow; m; m &= m - 1) out += M::kVhigh * M::kDou[Ctz(m)];

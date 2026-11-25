@@ -1,14 +1,14 @@
-// Entry of the hi-hat voices (Closed / Open) computed by the AVX2 unit PcmHatAvx2.cpp: the same model and solver as pcmfast::PcmVoiceHost, with the AVX2/FMA dot products. The unit is compiled with /arch:AVX2 and
-// lives in its own namespace (256-bit code must not be mixed with legacy-SSE code); it is used only after the run-time check LanesAvailable909(). Without MSVC x64 (or with DGG_NO_LANES)
-// Create gives nullptr and the voices use the baseline implementation.
+// Entry of the hi-hat voices (Closed / Open) computed by the AVX2 unit PcmHatAvx2.cpp: the same model and solver as pcmfast::PcmVoiceHost, with AVX2/FMA matrix and dot products (intrinsics only, the unit itself
+// is compiled for the baseline instruction set). It lives in its own namespace and is used only after the run-time check LanesAvailable909(). Without MSVC x64 (or with DGG_NO_LANES)
+// Create gives nullptr and the voices use the baseline implementation. (clang-cl would need the target attribute on the intrinsic functions: baseline there.)
 #pragma once
-#if defined(_MSC_VER) && defined(_M_X64) && !defined(DGG_NO_LANES)
+#if defined(_MSC_VER) && !defined(__clang__) && defined(_M_X64) && !defined(DGG_NO_LANES)
 #include <intrin.h>
 #endif
 
 namespace dgg {
 
-#if defined(_MSC_VER) && defined(_M_X64) && !defined(DGG_NO_LANES)
+#if defined(_MSC_VER) && !defined(__clang__) && defined(_M_X64) && !defined(DGG_NO_LANES)
 // True when the CPU and the operating system support AVX2 and FMA (checked without executing any AVX instruction).
 inline bool LanesAvailable909()
 {
@@ -37,7 +37,7 @@ public:
   virtual bool Active() const = 0;
 };
 
-#if defined(_MSC_VER) && defined(_M_X64) && !defined(DGG_NO_LANES)
+#if defined(_MSC_VER) && !defined(__clang__) && defined(_M_X64) && !defined(DGG_NO_LANES)
 HatAvx2909* HatAvx2Create909(bool open);   // open: Open Hat, else Closed Hat; the caller deletes it
 #else
 inline HatAvx2909* HatAvx2Create909(bool) { return nullptr; }
