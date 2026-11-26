@@ -28,6 +28,8 @@ constexpr double kChordMaxCorr = 0.2;   // volts: above this correction the next
 // Block-triangular Jacobian (blockRel > 0, hi-hats): at some operating points (a quiet hit after a loud one) the dropped entries matter and the iteration fails step after step. A step that reaches kBlkSwitchIt
 // iterations (or fails) is solved again from its start with the dense Jacobian, and so are the following kBlkDenseSteps steps. Not in the first kBlkStartSteps steps of a hit from rest (about 10 ms).
 constexpr int kBlkSwitchIt = 30, kBlkDenseSteps = 200; constexpr long kBlkStartSteps = 2000;
+// Hi-hats: while the output envelope is below kQuietLevelHat the correction limit is kNewtonTolHatQuiet instead of kNewtonTolHat. With the loose limit alone the quiet tails of hits retriggered on a ringing voice deviate.
+constexpr double kQuietLevelHat = 0.05, kNewtonTolHatQuiet = 3e-3;   // volts of the envelope; volts on the port voltages
 constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kNewtonTolCym = 3e-3, kNewtonTolHat = 3e-2, kBlockRelHat = 1e-4, kJReuseHat = 100, kDioMemoHat = 1e-9, kTailRel = 0.0, kTailRelCym = 1e-2, kEnvDecay = 0.975, kAcAlpha = 0.0031, kAcEndLevel = 1e-3, kAcEndLevelHat = 2e-7; constexpr int kAcEndPeriods = 400;   // volts on the port voltages; the correction is applied before the test, so the error left is of the order of the square
 
 // Gummel-Poon static currents of one BJT in node orientation: ic = s*cc (leaving the collector node into the device), ib = s*cb, and the 2x2 Jacobian wrt (vbe, vbc)
@@ -359,6 +361,7 @@ template <class M> struct Voice
   bool qTable = false;   // charge channels from the Hermite table instead of the exact function
   int denseSteps = 0; long denseSwitches = 0;   // block mode: steps left with the dense Jacobian; number of switches
   int jReuse = 0; long jReuseUsed = 0; double jReuseTol = 0.1;   // jReuseTol: the correction limit of a step that starts with a reused Jacobian is newtonTol * jReuseTol
+  double quietLevel = 0.0, quietTol = 0.0;   // while the output envelope env is below quietLevel volts, quietTol replaces newtonTol (0: never)
   double blockRel = 0.0, blkT = -1.0; bool blkReady = false; int nBlk = 0, bOrd[NP], bStart[NP + 1], bOff[NP + 1], blkPiv[NP], bDepN[NP], bDep[NP][NP]; double blkInv[NP], blkLU[NP * NP];   // bDep: for the port at position r the ports of earlier blocks it depends on; blkInv: reciprocal pivots
   void BuildBlocks()
   {
@@ -629,6 +632,7 @@ template <class M> struct Voice
     if (!noSolve)
     {
     const bool blockMode = blockRel > 0.0 && !idleMode;
+    const double tol = !idleMode && env < quietLevel ? quietTol : newtonTol;   // correction limit of this step
     double J[NP][NP]; int piv[NP]; double jf[NB][4]; bool luOk = false; double lastMx = 0.0; bool denseLu = true; bool useBlk = blockMode && denseSteps == 0;
     if (denseSteps > 0) --denseSteps;
     double pStart[NP]; for (int i = 0; i < NP; ++i) pStart[i] = p[i];
@@ -729,7 +733,7 @@ template <class M> struct Voice
           }
         }
       for (int i = 0; i < NP; ++i) p[i] += F[i];
-      if (mx < (reuse || (blockMode && !useBlk) ? newtonTol * jReuseTol : newtonTol) && !limited)   // converged (dense steps of block mode: the limit of the reused Jacobian): carry the currents to the corrected ports with the Jacobian of this step (error of second order in the correction)
+      if (mx < (reuse || (blockMode && !useBlk) ? tol * jReuseTol : tol) && !limited)   // converged (dense steps of block mode: the limit of the reused Jacobian): carry the currents to the corrected ports with the Jacobian of this step (error of second order in the correction)
       {
         for (int k = 0; k < NB; ++k)
         {
