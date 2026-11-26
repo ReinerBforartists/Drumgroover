@@ -23,7 +23,7 @@
 
 namespace dgg { namespace pcmfast {
 
-constexpr double kSettlePeriod = 0.1; constexpr int kSettlePeriods = 300, kStagePeriods = 60, kRampPeriods = 100; constexpr double kStageLn = 0.4;   // idle settling: PCM period in seconds and number of periods
+constexpr double kDcPeriod = 0.1, kDcNewtonTol = 1e-5, kDcTol = 2e-5; constexpr int kDcSteps = 20;   // DC solve of the idle state: PCM period of the underlying step tables (s), correction limit of a step and largest change between two steps (V), number of steps
 constexpr double kChordMaxCorr = 0.2;   // volts: above this correction the next iteration is a full Newton iteration
 // Block-triangular Jacobian (blockRel > 0, hi-hats): at some operating points (a quiet hit after a loud one) the dropped entries matter and the iteration fails step after step. A step that reaches kBlkSwitchIt
 // iterations (or fails) is solved again from its start with the dense Jacobian, and so are the following kBlkDenseSteps steps. Not in the first kBlkStartSteps steps of a hit from rest (about 10 ms).
@@ -36,13 +36,13 @@ constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kNewtonTolCym
 struct BjtOut { double ic, ib, d[2][2]; };
 // Approximate evaluation for devices that stay below high injection (cbe/IKF < ~1e-3, checked by the generator) and have either vbc <= 0.1 V (the
 // collector junction carries a negligible current: IS*exp(vbc/Vt) < 5e-12 A) or are evaluated with the exact junction term: no division, no sqrt.
-// BjtFromExp is the algebra with the exponentials supplied: eE = exp(vbe/(NF Vt)) and eL = exp(vbe/(NE Vt)) (both 0 in deep cutoff), eC = exp(vbc/Vt) (read above vbc = 0.1 V only).
-inline BjtOut BjtFromExp(const double* P, double vbe, double vbc, double eE, double eL, double eC)
+// BjtFromExp is the algebra with the exponentials supplied: eE = exp(vbe/(NF Vt)) and eL = exp(vbe/(NE Vt)) (both 0 in deep cutoff), eC = exp(vbc/Vt) (read above vbc = vbcOn only).
+inline BjtOut BjtFromExp(const double* P, double vbe, double vbc, double eE, double eL, double eC, double vbcOn = 0.1)
 {
   const double s = P[0], IS = P[1], ISE = P[8], invNFVt = P[9], invNEVt = P[10], invVAF = P[11], invIKF = P[12], invBF = P[13], invBR = P[14];
   const double cbe = IS * (eE - 1.0) + kGmin * vbe, gbe = IS * eE * invNFVt + kGmin;
   double cbc = kGmin * vbc, gbc = kGmin;
-  if (vbc > 0.1) { cbc = IS * (eC - 1.0) + kGmin * vbc; gbc = IS * eC * (1.0 / kVt) + kGmin; }
+  if (vbc > vbcOn) { cbc = IS * (eC - 1.0) + kGmin * vbc; gbc = IS * eC * (1.0 / kVt) + kGmin; }
   double cben = 0.0, gben = 0.0;
   if (ISE != 0.0) { cben = ISE * (eL - 1.0); gben = ISE * eL * invNEVt; }
   const double iq1 = 1.0 - vbc * invVAF;                         // 1/q1 (Early effect)
@@ -56,13 +56,13 @@ inline BjtOut BjtFromExp(const double* P, double vbe, double vbc, double eE, dou
   return o;
 }
 
-inline BjtOut BjtEvalFast(const double* P, double vbe, double vbc)
+inline BjtOut BjtEvalFast(const double* P, double vbe, double vbc, double vbcOn = 0.1)
 {
   const double aE = vbe * P[9], aL = vbe * P[10];   // exp(a) < 2.4e-16 for a < -36: the junction is in deep cutoff, the exponential is dropped (change below the rounding of IS)
   const double eE = aE < -36.0 ? 0.0 : std::exp(std::fmin(aE, 80.0));
-  const double eC = vbc > 0.1 ? std::exp(std::fmin(vbc * (1.0 / kVt), 80.0)) : 0.0;
+  const double eC = vbc > vbcOn ? std::exp(std::fmin(vbc * (1.0 / kVt), 80.0)) : 0.0;
   const double eL = P[8] == 0.0 || aL < -36.0 ? 0.0 : std::exp(std::fmin(aL, 80.0));
-  return BjtFromExp(P, vbe, vbc, eE, eL, eC);
+  return BjtFromExp(P, vbe, vbc, eE, eL, eC, vbcOn);
 }
 
 inline BjtOut BjtEval(const double* P, double vbe, double vbc)
@@ -329,12 +329,6 @@ template <int N> inline void LuSolve(const double (&A)[N][N], const int (&piv)[N
   for (int i = N - 1; i >= 0; --i) { double sum = b[i]; for (int j = i + 1; j < N; ++j) sum -= A[i][j] * b[j]; b[i] = sum / A[i][i]; }
 }
 
-#ifdef PCMFAST_EXACT_BJT
-#define BjtEvalSel BjtEval
-#else
-#define BjtEvalSel BjtEvalFast
-#endif
-
 template <class M> struct Voice
 {
   static constexpr int R = M::kR, NU = M::kU, NP = M::kPorts, NF = M::kCur, NB = M::kNumBjt, NBITS = M::kBits, IACC = M::kAccentIdx, ND = DioCount<M>::value, NT = TanhCount<M>::value, NR = ResCount<M>::value, NQ = QCount<M>::value, Q0 = 2 * M::kNumBjt + DioCount<M>::value + TanhCount<M>::value + ResCount<M>::value;   // currents: 2 per BJT, then one per diode, then one per op-amp input stage (deviation from the linear gm)
@@ -421,12 +415,43 @@ template <class M> struct Voice
       for (int r = 0; r < n; ++r) F[bOrd[s + r]] = rhs[r];
     }
   }
-  struct IdleTables   // step tables of the three idle settling phases (built once per model type; building them takes about 20 ms each)
+  // Step tables whose single step lands on the DC point of the idle circuit (z = Phi z + c + (gaF + gbF) f solved for z once per model type, about 20 ms): Step() on them is a Newton iteration of the DC equations.
+  struct DcTables
   {
-    PcmSteps<M> t[3];
-    IdleTables() { const double ramp[3] = {kSettlePeriod * 0.01, kSettlePeriod * 0.1, kSettlePeriod}; for (int r = 0; r < 3; ++r) t[r].Build(ramp[r]); }
-    static const IdleTables& Get() { static const IdleTables inst; return inst; }
+    PcmSteps<M> t;
+    DcTables()
+    {
+      t.Build(kDcPeriod); constexpr int NC = 1 + NU + NF;   // right-hand sides: constant, inputs, currents
+      std::vector<double> A(static_cast<size_t>(R) * R), X(static_cast<size_t>(R) * NC);
+      for (int j = 0; j < M::kSteps; ++j)
+      {
+        double* phi = &t.phi[static_cast<size_t>(j) * R * R]; double* cone = &t.cone[static_cast<size_t>(j) * R]; double* gaF = &t.gaF[static_cast<size_t>(j) * R * NF]; double* gbF = &t.gbF[static_cast<size_t>(j) * R * NF];
+        double* gaU = &t.gaUc[static_cast<size_t>(j) * NU * R]; double* gbU = &t.gbUc[static_cast<size_t>(j) * NU * R]; double* gsU = &t.gsUc[static_cast<size_t>(j) * NU * R]; double* zp = &t.zp[static_cast<size_t>(j) * NP * NF];
+        for (int i = 0; i < R; ++i)
+        {
+          for (int k = 0; k < R; ++k) A[i * R + k] = (i == k ? 1.0 : 0.0) - phi[i * R + k];
+          X[i * NC] = cone[i]; for (int k = 0; k < NU; ++k) X[i * NC + 1 + k] = gsU[k * R + i]; for (int k = 0; k < NF; ++k) X[i * NC + 1 + NU + k] = gaF[i * NF + k] + gbF[i * NF + k];
+        }
+        for (int c = 0; c < R; ++c)   // Gauss-Jordan with partial pivoting: X becomes (I - Phi)^-1 X
+        {
+          int pr = c; for (int i = c + 1; i < R; ++i) if (std::fabs(A[i * R + c]) > std::fabs(A[pr * R + c])) pr = i;
+          if (pr != c) { for (int k = 0; k < R; ++k) std::swap(A[c * R + k], A[pr * R + k]); for (int k = 0; k < NC; ++k) std::swap(X[c * NC + k], X[pr * NC + k]); }
+          const double inv = 1.0 / A[c * R + c]; for (int k = 0; k < R; ++k) A[c * R + k] *= inv; for (int k = 0; k < NC; ++k) X[c * NC + k] *= inv;
+          for (int i = 0; i < R; ++i) { const double f = A[i * R + c]; if (i == c || f == 0.0) continue; for (int k = 0; k < R; ++k) A[i * R + k] -= f * A[c * R + k]; for (int k = 0; k < NC; ++k) X[i * NC + k] -= f * X[c * NC + k]; }
+        }
+        // ports: p = pk + Zp f with the state before the end currents (z - gbF f)
+        for (int i = 0; i < NP; ++i) for (int k = 0; k < NF; ++k) { double a = 0.0; for (int m = 0; m < R; ++m) a += M::kPXz[i * R + m] * (X[m * NC + 1 + NU + k] - gbF[m * NF + k]); zp[i * NF + k] += a; }
+        for (int i = 0; i < R; ++i)
+        {
+          cone[i] = X[i * NC]; for (int k = 0; k < NU; ++k) { gsU[k * R + i] = gbU[k * R + i] = X[i * NC + 1 + k]; gaU[k * R + i] = 0.0; }
+          for (int k = 0; k < NF; ++k) { gbF[i * NF + k] = X[i * NC + 1 + NU + k]; gaF[i * NF + k] = 0.0; } for (int k = 0; k < R; ++k) phi[i * R + k] = 0.0;
+        }
+      }
+    }
+    static const DcTables& Get() { static const DcTables inst; return inst; }
   };
+  PcmSteps<M> dcSt;   // working copy of the DC tables, swapped in while the idle state is solved
+  void PrepareSettle() { if (dcSt.T == 0.0) dcSt = DcTables::Get().t; }   // not on the audio thread (builds and copies tables)
   PcmSteps<M> st;  // step tables of the PCM period of the hit (built from the nominal period unless SetPeriod() was called)
   void SetPeriod(double period) { st.Build(period); }
   double ClockPeriod() const { return st.T; }
@@ -435,6 +460,7 @@ template <class M> struct Voice
   int freezeAH = -1;   // period whose address bits are held (default: the last one)
   int freezeA = -1;   // diagnosis only: from this period on the address bits (6..11) are at their final value
   int freezeP = -1;   // diagnosis only: from the period after freezeP on, the data bits (0..5) stay at their value in period freezeP
+  bool lastConverged = true;   // the Newton iteration of the last Step reached its correction limit
   long newtonIts = 0, newtonFallbacks = 0, stepsDone = 0; long itsByStep[8] = {0,0,0,0,0,0,0,0}, nByStep[8] = {0,0,0,0,0,0,0,0}, itHist[12] = {0,0,0,0,0,0,0,0,0,0,0,0};
 
   void RefreshAccent()
@@ -470,16 +496,16 @@ template <class M> struct Voice
       }
     for (int i = 0; i < NU; ++i) u0[i] = M::kU0[i];
     bitsPrev = 0; for (int i = 0; i < NBITS; ++i) if (M::kU0[i] > 0.5 * M::kVhigh) bitsPrev |= (1u << i);
-    if constexpr (NR > 0) { bool moved = false; for (int m = 0; m < NR; ++m) if (std::fabs(resG[m] - M::kResG0[m]) > 1e-6 * M::kResG0[m]) moved = true; if (moved && !LoadSettled()) { double target[NR]; std::memcpy(target, resG, sizeof target); SettleResistors(); StoreSettled(target); } }
+    if constexpr (NR > 0) { bool moved = false; for (int m = 0; m < NR; ++m) if (std::fabs(resG[m] - M::kResG0[m]) > 1e-6 * M::kResG0[m]) moved = true; if (moved && !LoadSettled()) { SettleResistors(); StoreSettled(); } }
     EvalF(p, f0, nullptr); lastOut = OutputNow(); period = 0; stepIdx = 0; layout = 0; newtonIts = 0; stepsDone = 0; outDc = OutputNow(); env = 0.0; peak = 1e-12; acLow = outDc; acEnv = 0.0; acPeak = 0.0; quietPeriods = 0; finished = false;
     for (int i = 0; i < 4; ++i) periodsByLayout[i] = 0;
     for (auto& c : jc) c.valid = false;   // a new hit starts with fresh Jacobians
     denseSteps = 0;
     if constexpr (ND > 0) for (int m = 0; m < ND; ++m) dioMemoOk[m] = false;
   }
-  // The settled idle states of the last kSettled combinations of accent, pot resistors and PCM period: settling takes longer than a host block, a later hit from rest with the same combination takes its state from here.
+  // The idle states of the last kSettled combinations of accent, pot resistors and PCM period: a later hit from rest with the same combination takes its state from here instead of solving it again.
   static constexpr int kSettled = NR > 0 ? 16 : 1;   // one per accent level of the plugin and a second pot position
-  struct Settled { double acc, T, g[NR > 0 ? NR : 1], gEnd[NR > 0 ? NR : 1], z[R], p[NP], vj[ND > 0 ? ND : 1], mv[ND > 0 ? ND : 1], mi[ND > 0 ? ND : 1], mg[ND > 0 ? ND : 1]; bool mok[ND > 0 ? ND : 1]; };   // g: the resistors asked for, gEnd: as the last settling stage left them (rounding)
+  struct Settled { double acc, T, g[NR > 0 ? NR : 1], z[R], p[NP], vj[ND > 0 ? ND : 1]; };
   Settled settled[kSettled]; int settledCount = 0, settledNext = 0;
   bool LoadSettled()
   {
@@ -488,52 +514,37 @@ template <class M> struct Voice
       const Settled& s = settled[k]; if (s.acc != acc || s.T != st.T) continue;
       bool same = true; for (int m = 0; m < NR; ++m) if (s.g[m] != resG[m]) same = false;
       if (!same) continue;
-      for (int m = 0; m < NR; ++m) resG[m] = s.gEnd[m];
       std::memcpy(z, s.z, sizeof z); std::memcpy(p, s.p, sizeof p);
-      if constexpr (ND > 0) { std::memcpy(dioVj, s.vj, sizeof dioVj); std::memcpy(dioMemoV, s.mv, sizeof dioMemoV); std::memcpy(dioMemoI, s.mi, sizeof dioMemoI); std::memcpy(dioMemoG, s.mg, sizeof dioMemoG); std::memcpy(dioMemoOk, s.mok, sizeof dioMemoOk); }
+      if constexpr (ND > 0) std::memcpy(dioVj, s.vj, sizeof dioVj);
       return true;
     }
     return false;
   }
-  void StoreSettled(const double* target)
+  void StoreSettled()
   {
     Settled& s = settled[settledNext]; settledNext = (settledNext + 1) % kSettled; if (settledCount < kSettled) ++settledCount;
-    s.acc = acc; s.T = st.T; for (int m = 0; m < NR; ++m) { s.g[m] = target[m]; s.gEnd[m] = resG[m]; }
+    s.acc = acc; s.T = st.T; for (int m = 0; m < NR; ++m) s.g[m] = resG[m];
     std::memcpy(s.z, z, sizeof z); std::memcpy(s.p, p, sizeof p);
-    if constexpr (ND > 0) { std::memcpy(s.vj, dioVj, sizeof dioVj); std::memcpy(s.mv, dioMemoV, sizeof dioMemoV); std::memcpy(s.mi, dioMemoI, sizeof dioMemoI); std::memcpy(s.mg, dioMemoG, sizeof dioMemoG); std::memcpy(s.mok, dioMemoOk, sizeof dioMemoOk); }
+    if constexpr (ND > 0) std::memcpy(s.vj, dioVj, sizeof dioVj);
   }
-  // Idle state for pot resistors away from their nominal values (the DC tables are for the nominal ones): the idle circuit (bits at their initial values, no trigger) runs
-  // with a long PCM period (long steps, constant bits) until the slow nodes have settled; the step tables of the hit are restored afterwards.
-  // The pot resistors move from their nominal values to the target in geometric stages (a jump of the conductance can make the Newton iteration of the idle steps diverge); the last stage settles completely.
+  // Idle state for pot resistors away from their nominal values (the DC tables of the header are for the nominal ones): the DC point of the idle circuit (bits at their initial values, no trigger) at the
+  // present resistors, solved by Newton from the nominal one on the DC step tables (on the audio thread, shorter than a host block). Without convergence the nominal state stays.
   void SettleResistors()
   {
     if constexpr (NR > 0)
     {
-      double tgt[NR]; double lnMax = 0.0, zNom = 1.0;
-      for (int m = 0; m < NR; ++m) { tgt[m] = resG[m]; lnMax = std::max(lnMax, std::fabs(std::log(tgt[m] / M::kResG0[m]))); }
-      for (int i = 0; i < R; ++i) zNom = std::max(zNom, std::fabs(z[i]));
-      static const double stageScale[4] = {1.0, 1.7, 2.9, 5.0};
-      for (int attempt = 0; attempt < 4; ++attempt)   // the Newton iteration of the idle steps can diverge at isolated resistor values: a different path of stages is tried then
+      PrepareSettle();
+      const double tol = newtonTol, memo = dioMemoThr; newtonTol = kDcNewtonTol; dioMemoThr = 0.0; idleMode = true; std::swap(st, dcSt); RefreshAccent(); EvalF(p, f0, nullptr);
+      bool ok = false;
+      for (int k = 0; k < kDcSteps && !ok; ++k)
       {
-        if (attempt > 0) LoadDc();
-        const int stages = std::max(1, static_cast<int>(std::ceil(lnMax / (kStageLn / stageScale[attempt])))); bool healthy = true;
-        for (int s = 1; s <= stages; ++s)
-        {
-          for (int m = 0; m < NR; ++m) resG[m] = M::kResG0[m] * std::pow(tgt[m] / M::kResG0[m], static_cast<double>(s) / stages);
-          EvalF(p, f0, nullptr); SettleIdle(s == stages ? kSettlePeriods : kStagePeriods);
-        }
-        for (int i = 0; i < R; ++i) if (!(std::fabs(z[i]) < 10.0 * zNom)) healthy = false;
-        if (healthy) break;
+        double q[NP]; std::memcpy(q, p, sizeof q); stepIdx = 0; Step();
+        double mx = 0.0; for (int i = 0; i < NP; ++i) mx = std::fmax(mx, std::fabs(p[i] - q[i]));
+        ok = k > 0 && lastConverged && mx < kDcTol;
       }
+      std::swap(st, dcSt); RefreshAccent(); idleMode = false; newtonTol = tol; dioMemoThr = memo;
+      if (!ok) LoadDc();
     }
-  }
-  void SettleIdle(int periods = kSettlePeriods)
-  {
-    const PcmSteps<M> saved = st; idleMode = true;
-    const int count[3] = {kRampPeriods, kRampPeriods, periods};   // short steps first (the Newton iteration starts from the previous state), then the long ones
-    const IdleTables& it = IdleTables::Get();
-    for (int r = 0; r < 3; ++r) { st = it.t[r]; RefreshAccent(); for (int i = 0; i < count[r] * M::kLayoutN[0]; ++i) Step(); }
-    idleMode = false; st = saved; RefreshAccent();
   }
   // restart of the PCM sequence while the analog state continues (the digital counters are reset, the capacitors keep their charge)
   void Retrigger()
@@ -543,6 +554,7 @@ template <class M> struct Voice
   // currents f (and the block Jacobians when jf != nullptr) at the port voltages q
   void EvalF(const double* q, double* f, double (*jf)[4]) const
   {
+    const double vbcOn = idleMode ? 0.0 : 0.1;   // DC solve: the junction current of the fast form starts at 0 V, where it is zero (a floating node has no DC point across its step at 0.1 V)
 #if defined(PCMFAST_DOT_AVX2) && !defined(PCMFAST_EXACT_BJT)
     constexpr int NX = (3 * NB + 3) / 4 * 4;   // the three exponentials of all devices at once (those a device does not need are computed and ignored)
     double xa[NX] = {}, xe[NX];
@@ -557,9 +569,11 @@ template <class M> struct Voice
     {
       const double vbe = q[M::kPortBe[k]], vbc = M::kPortBc[k] >= 0 ? q[M::kPortBc[k]] : vbcFix[k];
 #if defined(PCMFAST_DOT_AVX2) && !defined(PCMFAST_EXACT_BJT)
-      const BjtOut o = BjtFromExp(bp[k], vbe, vbc, xa[3 * k] < -36.0 ? 0.0 : xe[3 * k], xa[3 * k + 1] < -36.0 ? 0.0 : xe[3 * k + 1], xe[3 * k + 2]);   // deep cutoff as in BjtEvalFast
+      const BjtOut o = BjtFromExp(bp[k], vbe, vbc, xa[3 * k] < -36.0 ? 0.0 : xe[3 * k], xa[3 * k + 1] < -36.0 ? 0.0 : xe[3 * k + 1], xe[3 * k + 2], vbcOn);   // deep cutoff as in BjtEvalFast
+#elif defined(PCMFAST_EXACT_BJT)
+      const BjtOut o = BjtEval(bp[k], vbe, vbc);
 #else
-      const BjtOut o = BjtEvalSel(bp[k], vbe, vbc);
+      const BjtOut o = BjtEvalFast(bp[k], vbe, vbc, vbcOn);
 #endif
       if (M::kHasLinPart)   // semi-linear devices: the linear part about the DC point is in the linear model, only the remainder is nonlinear
       {
@@ -750,7 +764,7 @@ template <class M> struct Voice
     }
     }
     PF_LAP(2);
-    if (!fCurrent) EvalF(p, f1, nullptr);
+    lastConverged = fCurrent; if (!fCurrent) EvalF(p, f1, nullptr);
     { long c = newtonIts - itsBefore; if (reuse && (c > 2 || !fCurrent)) jcj.valid = false; itsByStep[stepIdx] += c; ++nByStep[stepIdx]; ++itHist[c < 11 ? c : 11]; }
     tapCount = 0;
     if constexpr (M::kTapN > 0)   // uniformly spaced output taps inside this step (state at the step start, currents at both ends, no state update)

@@ -13,7 +13,7 @@ namespace dgg { namespace pcmfast {
 template <class M> class PcmVoiceHost
 {
 public:
-  void Init(double fsHost) { QTable<M>::Get(); if constexpr (ResCount<M>::value > 0) Voice<M>::IdleTables::Get(); fs = fsHost; dec.Init(fsHost); if (voice.st.T == 0.0) voice.SetPeriod(M::kPeriod); RecomputeCum(); state = Idle; nOut = 0; }
+  void Init(double fsHost) { QTable<M>::Get(); if constexpr (ResCount<M>::value > 0) voice.PrepareSettle(); fs = fsHost; dec.Init(fsHost); if (voice.st.T == 0.0) voice.SetPeriod(M::kPeriod); RecomputeCum(); state = Idle; nOut = 0; }
   // PCM clock period of the hits (seconds; the nominal M::kPeriod scaled by the Tune pot): not while a hit plays.
   void SetPeriod(double period) { voice.SetPeriod(period); RecomputeCum(); }
   void SetAccent(double a) { accent = a; }                     // volts at the accent input, applied at the next Trigger
