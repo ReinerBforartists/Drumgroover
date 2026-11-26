@@ -357,6 +357,7 @@ template <class M> struct Voice
   int jReuse = 0; long jReuseUsed = 0; double jReuseTol = 0.1;   // jReuseTol: the correction limit of a step that starts with a reused Jacobian is newtonTol * jReuseTol
   double quietLevel = 0.0, quietTol = 0.0;   // while the output envelope env is below quietLevel volts, quietTol replaces newtonTol (0: never)
   double blockRel = 0.0, blkT = -1.0; bool blkReady = false; int nBlk = 0, bOrd[NP], bStart[NP + 1], bOff[NP + 1], blkPiv[NP], bDepN[NP], bDep[NP][NP]; double blkInv[NP], blkLU[NP * NP];   // bDep: for the port at position r the ports of earlier blocks it depends on; blkInv: reciprocal pivots
+  void PrepareBlocks() { if (blockRel > 0.0 && (!blkReady || blkT != st.T)) BuildBlocks(); }   // builds the block structure before the first step; allocates, so call it off the audio thread
   void BuildBlocks()
   {
     std::vector<std::vector<int>> deps(NF);

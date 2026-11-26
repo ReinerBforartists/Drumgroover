@@ -23,6 +23,7 @@ public:
       h[n] = s * w; sum += h[n];
     }
     for (double& c : h) c /= sum;   // unity gain at DC
+    outQ.reserve(kOutKeep + 128);   // Pop() drops the consumed samples beyond kOutKeep: Push() does not allocate while a hit plays
     Reset();
   }
   void Reset() { Restart(0.0); }
@@ -45,9 +46,10 @@ public:
       EmitGrid(Lagrange4(tg)); ++grid;
     }
   }
-  bool Pop(double& out) { if (outHead >= (int)outQ.size()) return false; out = outQ[outHead++]; if (outHead > 4096) { outQ.erase(outQ.begin(), outQ.begin() + outHead); outHead = 0; } return true; }
+  bool Pop(double& out) { if (outHead >= (int)outQ.size()) return false; out = outQ[outHead++]; if (outHead > kOutKeep) { outQ.erase(outQ.begin(), outQ.begin() + outHead); outHead = 0; } return true; }
 
 private:
+  static constexpr int kOutKeep = 4096;
   static double I0(double x) { double s = 1.0, t = 1.0; for (int k = 1; k < 60; ++k) { t *= (x / (2.0 * k)) * (x / (2.0 * k)); s += t; if (t < 1e-18 * s) break; } return s; }
   double Lagrange4(double tq)
   {
