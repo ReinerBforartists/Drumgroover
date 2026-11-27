@@ -60,17 +60,14 @@ private:
   struct PcmSlot : SlotBase
   {
     pcmfast::PcmVoiceHost<M> host; int hostFs = 0; long want_ = 0; double curPeriod = 0.0;
-    // Hats: the AVX2 unit (909PcmHatAvx2.cpp) when the CPU supports it, else the baseline host above.
-    HatAvx2909* av = nullptr; bool avTried = false;
+    // Hats and Crash: the AVX2 unit (909PcmHatAvx2.cpp) when the CPU supports it, else the baseline host above.
+    PcmAvx2909* av = nullptr; bool avTried = false;
     ~PcmSlot() override { delete av; }
     bool UseAvx(Voice909 v)
     {
-      if constexpr (pcmfast::ResCount<M>::value > 0)
-      {
-        if (!avTried) { avTried = true; if (LanesAvailable909()) av = HatAvx2Create909(v == Voice909::Ho); }
-        return av != nullptr;
-      }
-      else return false;
+      if (v == Voice909::Ri) return false;
+      if (!avTried) { avTried = true; if (LanesAvailable909()) av = v == Voice909::Cr ? CrashAvx2Create909() : HatAvx2Create909(v == Voice909::Ho); }
+      return av != nullptr;
     }
     void Prepare(Voice909 v, uint64_t params, int fs, int accentCode)
     {
