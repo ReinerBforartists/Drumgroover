@@ -456,11 +456,7 @@ template <class M> struct Voice
   PcmSteps<M> st;  // step tables of the PCM period of the hit (built from the nominal period unless SetPeriod() was called)
   void SetPeriod(double period) { st.Build(period); }
   double ClockPeriod() const { return st.T; }
-  uint32_t flipMask = 0;   // diagnosis only: address bits inverted while held
   double tap[16]; int tapCount = 0;   // output taps of the last Step (uniform instants m*T/kTaps inside the step)
-  int freezeAH = -1;   // period whose address bits are held (default: the last one)
-  int freezeA = -1;   // diagnosis only: from this period on the address bits (6..11) are at their final value
-  int freezeP = -1;   // diagnosis only: from the period after freezeP on, the data bits (0..5) stay at their value in period freezeP
   bool lastConverged = true;   // the Newton iteration of the last Step reached its correction limit
   long newtonIts = 0, newtonFallbacks = 0, stepsDone = 0; long itsByStep[8] = {0,0,0,0,0,0,0,0}, nByStep[8] = {0,0,0,0,0,0,0,0}, itHist[12] = {0,0,0,0,0,0,0,0,0,0,0,0};
 
@@ -622,8 +618,6 @@ template <class M> struct Voice
     if (stepIdx == 0)   // new PCM period: new bits at the end of the ramp; the layout of the period follows the signal level
     {
       bitsNow = idleMode ? bitsPrev : ((period < M::kPeriods) ? M::kPcm[period] : M::kPcm[M::kPeriods - 1]);
-      if (freezeA >= 0 && period >= freezeA) bitsNow = (bitsNow & 0x3Fu) | (M::kPcm[freezeAH >= 0 ? freezeAH : M::kPeriods - 1] & ~0x3Fu), bitsNow ^= flipMask;
-      if (freezeP >= 0 && period > freezeP) bitsNow = (bitsNow & ~0x3Fu) | (M::kPcm[freezeP] & 0x3Fu);
       layout = (M::kLayouts > 1 && env < tailRel * peak) ? 1 : 0; ++periodsByLayout[layout];
     }
     const int j = M::kLayoutFirst[layout] + stepIdx; lastH = st.h[j];
