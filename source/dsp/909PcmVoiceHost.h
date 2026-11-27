@@ -51,13 +51,13 @@ public:
   Voice<M> voice;
 
 private:
-  void RecomputeCum() { double c = 0; for (int i = 0; i < M::kLayoutN[0]; ++i) { c += voice.st.h[M::kLayoutFirst[0] + i]; cum[i + 1] = c; } cum[0] = 0; }
+  void RecomputeCum() { for (int l = 0; l < M::kLayouts; ++l) { double c = 0; cum[l][0] = 0; for (int i = 0; i < M::kLayoutN[l]; ++i) { c += voice.st.h[M::kLayoutFirst[l] + i]; cum[l][i + 1] = c; } } }   // end time of each step within the PCM period, per step layout
   enum State { Idle, Playing, Fading };
   void Advance()
   {
     if (state == Playing)
     {
-      const int p0 = voice.period, s0 = voice.stepIdx; const double y = voice.Step(); tLast = tBase + p0 * voice.ClockPeriod() + cum[s0 + 1]; dec.Push(tLast, y);
+      const int p0 = voice.period, s0 = voice.stepIdx; const double y = voice.Step(); tLast = tBase + p0 * voice.ClockPeriod() + cum[voice.layout][s0 + 1]; dec.Push(tLast, y);
       if (voice.finished) { state = Fading; tFade = 0.0; flushNodes = 0; yEnd = y; }
     }
     else   // after the hit: the remaining output offset relaxes with the slow time constant of the circuit (0.22 s, measured for CRASH and RIDE); then idle nodes until the filter has flushed
@@ -68,7 +68,7 @@ private:
     }
   }
   static constexpr double kFadeStep = 5e-4, kRelaxTau = 0.22, kOffsetFloor = 2e-6;
-  HostDecimator dec; double relaxTau = kRelaxTau, fs = 48000.0, cum[8] = {0}, accent = 4.064, level = 0.5, yRef = 0.0, yEnd = 0.0, tBase = 0.0, tLast = 0.0; long long nOut = 0; int flushNodes = 0; double tFade = 0.0; State state = Idle;
+  HostDecimator dec; double relaxTau = kRelaxTau, fs = 48000.0, cum[M::kLayouts][9] = {}, accent = 4.064, level = 0.5, yRef = 0.0, yEnd = 0.0, tBase = 0.0, tLast = 0.0; long long nOut = 0; int flushNodes = 0; double tFade = 0.0; State state = Idle;
 };
 
 }}  // namespace dgg::pcmfast
