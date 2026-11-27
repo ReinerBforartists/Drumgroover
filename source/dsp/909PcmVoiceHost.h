@@ -47,7 +47,7 @@ public:
     }
     return any;
   }
-  long Position() const { return nOut; }
+  long long Position() const { return nOut; }
   Voice<M> voice;
 
 private:
@@ -68,7 +68,7 @@ private:
     }
   }
   static constexpr double kFadeStep = 5e-4, kRelaxTau = 0.22, kOffsetFloor = 2e-6;
-  HostDecimator dec; double relaxTau = kRelaxTau, fs = 48000.0, cum[8] = {0}, accent = 4.064, level = 0.5, yRef = 0.0, yEnd = 0.0, tBase = 0.0, tLast = 0.0; long nOut = 0; int flushNodes = 0; double tFade = 0.0; State state = Idle;
+  HostDecimator dec; double relaxTau = kRelaxTau, fs = 48000.0, cum[8] = {0}, accent = 4.064, level = 0.5, yRef = 0.0, yEnd = 0.0, tBase = 0.0, tLast = 0.0; long long nOut = 0; int flushNodes = 0; double tFade = 0.0; State state = Idle;
 };
 
 }}  // namespace dgg::pcmfast

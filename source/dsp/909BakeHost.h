@@ -48,8 +48,8 @@ public:
   virtual bool Active() const = 0;
   // Position of the trigger in the shared noise stream (knot, HitNoise::kNoStream: none) for the next Start(); default: ignored.
   virtual void SetStreamKnot(uint64_t knot) { (void)knot; }
-  // Builds the tables a first hit of the PCM voices would build (default: nothing); never on the audio thread.
-  virtual void Prebuild(int sampleRateHz) { (void)sampleRateHz; }
+  // Builds the tables a first hit of the voice would build, without starting a hit (default: nothing); never on the audio thread.
+  virtual void Prebuild(Voice909 voice, int sampleRateHz) { (void)voice; (void)sampleRateHz; }
 };
 
 enum class BakeResult909 { Ok, AccentNotValidated, RunFailed };

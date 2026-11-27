@@ -33,9 +33,9 @@ public:
   // start a new stream at the voice time tStart (a multiple of 1/fsHost is rounded): the first output sample is the signal at that instant
   void Restart(double tStart)
   {
-    cnt = 0; bi = 1; gridStart = (long)std::llround(tStart * fsh) * os; grid = gridStart; cachedBi = -1; line.assign(2 * ntaps, 0.0); linePos = 0; outQ.clear(); outHead = 0;
+    cnt = 0; bi = 1; gridStart = std::llround(tStart * fsh) * os; grid = gridStart; cachedBi = -1; line.assign(2 * ntaps, 0.0); linePos = 0; outQ.clear(); outHead = 0;
   }
-  long GridStart() const { return gridStart; }
+  long long GridStart() const { return gridStart; }
   // delay of the filter in seconds: output sample k is the low-passed signal at the voice time k / fsHost
   double GroupDelay() const { return ((ntaps - 1) / 2.0) / (os * fsh); }
   void Push(double t, double y)
@@ -74,8 +74,8 @@ private:
   {
     if (grid == gridStart) { for (int i = 0; i < 2 * ntaps; ++i) line[i] = v; }   // the signal before the voice start is constant
     line[linePos] = v; line[linePos + ntaps] = v; linePos = linePos + 1 == ntaps ? 0 : linePos + 1;
-    const long mid = (ntaps - 1) / 2;
-    if (grid - gridStart >= mid && (grid - gridStart - mid) % os == 0)
+    const long long mid = (ntaps - 1) / 2;
+    if (grid - gridStart >= mid && ((grid - gridStart - mid) & (os - 1)) == 0)   // os is 2 or 4
     {
       const double* x = &line[linePos];   // x[0] oldest ... x[ntaps - 1] newest; h is symmetric
       double acc = h[mid] * x[mid];
@@ -83,7 +83,8 @@ private:
       outQ.push_back(acc);
     }
   }
-  double fsh = 48000.0; int os = 4, ntaps = 129; std::vector<double> h, line, outQ; double nT[8] = {0}, nY[8] = {0}; long cnt = 0, bi = 1, grid = 0, gridStart = 0, cachedBi = -1; double tt[4] = {0}, dd[4] = {0}; bool linear = false; int linePos = 0, outHead = 0;
+  double fsh = 48000.0; int os = 4, ntaps = 129; std::vector<double> h, line, outQ; double nT[8] = {0}, nY[8] = {0}; long long cnt = 0, bi = 1, grid = 0, gridStart = 0, cachedBi = -1;   // 64 bit: the host counts on over all blocks it renders
+  double tt[4] = {0}, dd[4] = {0}; bool linear = false; int linePos = 0, outHead = 0;
 };
 
 }}  // namespace dgg::rmfast

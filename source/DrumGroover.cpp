@@ -4692,6 +4692,8 @@ void DrumGroover::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
       pos = nextOffset;
     }
   }
+  dgg::LiveSynth909::Instance().Advance(mStreamBlockStart);   // live 909 hits that nobody plays any more run on with the block (the end of this block)
+  dgg::LiveBank909::Instance().Advance(mStreamBlockStart);
 
   // Focus meter (Drum Engine tab): family peaks from the channel buffers.
   // The 'custom' family is the Custom mixer channel (custom instruments).

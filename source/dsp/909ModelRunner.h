@@ -27,9 +27,9 @@ public:
     SlotBase* slot = SlotFor(req.voice); if (!slot) return false;
     return slot->Render(req.voice, req.params, req.seconds, req.sampleRateHz, out, req.anchorCode);
   }
-  void Prebuild(int sampleRateHz) override   // the slots of the PCM voices with their tables, so that the first live hit builds nothing on the audio thread; call from a non-audio thread
+  void Prebuild(Voice909 v, int sampleRateHz) override   // the slot of a PCM voice with its tables, so that the first live hit builds nothing on the audio thread; call from a non-audio thread
   {
-    for (const Voice909 v : { Voice909::Hh, Voice909::Ho, Voice909::Cr, Voice909::Ri }) if (SlotBase* s = SlotFor(v)) s->Prebuild(v, sampleRateHz);
+    if (SlotBase* s = SlotFor(v)) s->Prebuild(v, sampleRateHz);
   }
   bool Warm(Voice909 v, int, NoisePath909, uint64_t = 0) override { return SlotFor(v) != nullptr; }
   bool Start(Voice909 v, int accentCode, NoisePath909, uint64_t, int sampleRateHz, double seconds, uint64_t params = 0) override

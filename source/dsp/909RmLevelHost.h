@@ -298,7 +298,8 @@ private:
     }
     else if (c.st == Relaxing)
     {
-      while (c.tm < tNow - 1e-12) { int j = kRelaxJ; while (j > 0 && c.tm + kHc * (double)(1 << j) > tNow + 1e-12) --j; c.m->Step(pj[j], 0.0, 0.0, 0.0); c.tm += kHc * (double)(1 << j); }
+      const double tol = 0.5 * kHc;   // both times lie on the base grid; the rounding of the model clock grows with the run time of the host
+      while (c.tm < tNow - tol) { int j = kRelaxJ; while (j > 0 && c.tm + kHc * (double)(1 << j) > tNow + tol) --j; c.m->Step(pj[j], 0.0, 0.0, 0.0); c.tm += kHc * (double)(1 << j); }
       c.dec.Restart(tNow); c.dec.Push(tNow - 5e-5, 0.0); c.dec.Push(tNow - 2.5e-5, 0.0); c.dec.Push(c.tm, 0.0);
     }
     if (c.st == Dormant || c.accCur < 0.0) c.m->SetAccent(accent);
@@ -348,7 +349,7 @@ private:
   void Relax(Chan& c, double tOut)
   {
     const double hb = kHc * (double)(1 << kRelaxJ);
-    while (c.tm + hb <= tOut) { c.m->Step(pj[kRelaxJ], 0.0, 0.0, 0.0); c.tm += hb; }
+    while (c.tm + hb <= tOut + 0.5 * kHc) { c.m->Step(pj[kRelaxJ], 0.0, 0.0, 0.0); c.tm += hb; }
     if (tOut - c.tEnd > kRelaxSeconds) { c.st = Dormant; c.w = 0.0; }
   }
   bool Next(Chan& c, double& o)

@@ -2,11 +2,17 @@
 // Local 4-point Lagrange interpolation on the non-uniform nodes to a uniform grid of OS x fsHost, linear-phase Kaiser FIR low-pass, decimation by OS.
 // Usage: Init(fsHost); Push(tEnd, y) for every step end (strictly increasing times, seconds since the voice start); Pop(out) returns the next host sample if available.
 #pragma once
+#include "909PcmFast.h"   // Dot
 #include <cmath>
 namespace { constexpr double kPiDec = 3.14159265358979323846; }
 #include <vector>
 
 namespace dgg { namespace pcmfast {
+
+#ifdef _MSC_VER
+__declspec(noinline)
+#endif
+inline double FirDot(const double* h, const double* x, int n) { return Dot(h, x, n); }   // the FIR sum as a function of its own, not inlined into Push()
 
 class HostDecimator
 {
@@ -30,9 +36,9 @@ public:
   // start a new stream at the voice time tStart (a multiple of 1/fsHost is rounded): the first output sample is the signal at that instant
   void Restart(double tStart)
   {
-    cnt = 0; bi = 1; gridStart = (long)std::llround(tStart * fsh) * os; grid = gridStart; cachedBi = -1; line.assign(2 * ntaps, 0.0); linePos = 0; outQ.clear(); outHead = 0;
+    cnt = 0; bi = 1; gridStart = std::llround(tStart * fsh) * os; grid = gridStart; cachedBi = -1; line.assign(2 * ntaps, 0.0); linePos = 0; outQ.clear(); outHead = 0;
   }
-  long GridStart() const { return gridStart; }
+  long long GridStart() const { return gridStart; }
   // delay of the filter in seconds: output sample k is the low-passed signal at the voice time k / fsHost
   double GroupDelay() const { return ((ntaps - 1) / 2.0) / (os * fsh); }
   void Push(double t, double y)
@@ -67,16 +73,12 @@ private:
   {
     if (grid == gridStart) { for (int i = 0; i < 2 * ntaps; ++i) line[i] = v; }   // the signal before the voice start is constant
     line[linePos] = v; line[linePos + ntaps] = v; linePos = linePos + 1 == ntaps ? 0 : linePos + 1;
-    const long mid = (ntaps - 1) / 2;
-    if (grid - gridStart >= mid && (grid - gridStart - mid) % os == 0)
-    {
-      const double* x = &line[linePos];   // x[0] oldest ... x[ntaps - 1] newest; h is symmetric
-      double acc = h[mid] * x[mid];
-      for (int n = 0; n < mid; ++n) acc += h[n] * (x[n] + x[ntaps - 1 - n]);
-      outQ.push_back(acc);
-    }
+    const long long mid = (ntaps - 1) / 2;
+    if (grid - gridStart >= mid && ((grid - gridStart - mid) & (os - 1)) == 0)   // os is 2 or 4
+      outQ.push_back(FirDot(h.data(), &line[linePos], ntaps));   // the line from linePos on: oldest ... newest; h is symmetric
   }
-  double fsh = 48000.0; int os = 4, ntaps = 129; std::vector<double> h, line, outQ; double nT[8] = {0}, nY[8] = {0}; long cnt = 0, bi = 1, grid = 0, gridStart = 0, cachedBi = -1; double tt[4] = {0}, dd[4] = {0}; int linePos = 0, outHead = 0;
+  double fsh = 48000.0; int os = 4, ntaps = 129; std::vector<double> h, line, outQ; double nT[8] = {0}, nY[8] = {0}; long long cnt = 0, bi = 1, grid = 0, gridStart = 0, cachedBi = -1;   // 64 bit: a source counts on over all hits it renders
+  double tt[4] = {0}, dd[4] = {0}; int linePos = 0, outHead = 0;
 };
 
 }}  // namespace dgg::pcmfast

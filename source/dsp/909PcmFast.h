@@ -345,7 +345,7 @@ template <class M> struct Voice
   int period = 0, stepIdx = 0, layout = 0; uint32_t bitsNow = 0, bitsPrev = 0;   // stepIdx counts within the layout of the current period
   double acLow = 0.0, acEnv = 0.0, acPeak = 0.0; long quietPeriods = 0; bool finished = false;   // audio end: 20 Hz high-passed output envelope below acEndLevel for acEndPeriods periods after its peak
   double lastOut = 0.0, lastH = 0.0, outDc = 0.0, env = 0.0, peak = 1e-12;   // last step length, DC output, level envelope and its maximum (layout choice)
-  long periodsByLayout[4] = {0, 0, 0, 0}; double tailRel = kTailRel, newtonTol = kNewtonTol, acEndLevel = kAcEndLevel; int noSolve = 0;   // noSolve: timing probe only (no nonlinear solve); tailRel: switch to the cheaper layout below this fraction of the loudest envelope
+  long long periodsByLayout[4] = {0, 0, 0, 0}; double tailRel = kTailRel, newtonTol = kNewtonTol, acEndLevel = kAcEndLevel; int noSolve = 0;   // noSolve: timing probe only (no nonlinear solve); tailRel: switch to the cheaper layout below this fraction of the loudest envelope
   double prof[6] = {0, 0, 0, 0, 0, 0};
   // Block-triangular factorization of the Newton Jacobian: the port graph (row i depends on port c where a current with a Zp entry above blockRel*max|Zp| depends on c) is split into
   // strongly connected blocks ordered so that a block depends only on earlier blocks; entries outside the structure are dropped from the Jacobian (the residual stays exact). blockRel = 0: dense LU.
@@ -353,8 +353,8 @@ template <class M> struct Voice
   JCache jc[M::kSteps];   // Jacobian and block factors per step type (jReuse > 0): reused for up to jReuse periods; invalidated when the reused Jacobian needs more than one extra iteration
   double dioMemoThr = 0.0; mutable double dioMemoV[ND > 0 ? ND : 1], dioMemoI[ND > 0 ? ND : 1], dioMemoG[ND > 0 ? ND : 1]; mutable bool dioMemoOk[ND > 0 ? ND : 1] = {};   // diode evaluation memo (HH-K17): reuse within |dv| <= dioMemoThr volts
   bool qTable = false;   // charge channels from the Hermite table instead of the exact function
-  int denseSteps = 0; long denseSwitches = 0;   // block mode: steps left with the dense Jacobian; number of switches
-  int jReuse = 0; long jReuseUsed = 0; double jReuseTol = 0.1;   // jReuseTol: the correction limit of a step that starts with a reused Jacobian is newtonTol * jReuseTol
+  int denseSteps = 0; long long denseSwitches = 0;   // block mode: steps left with the dense Jacobian; number of switches
+  int jReuse = 0; long long jReuseUsed = 0; double jReuseTol = 0.1;   // jReuseTol: the correction limit of a step that starts with a reused Jacobian is newtonTol * jReuseTol
   double quietLevel = 0.0, quietTol = 0.0;   // while the output envelope env is below quietLevel volts, quietTol replaces newtonTol (0: never)
   double blockRel = 0.0, blkT = -1.0; bool blkReady = false; int nBlk = 0, bOrd[NP], bStart[NP + 1], bOff[NP + 1], blkPiv[NP], bDepN[NP], bDep[NP][NP]; double blkInv[NP], blkLU[NP * NP];   // bDep: for the port at position r the ports of earlier blocks it depends on; blkInv: reciprocal pivots
   void PrepareBlocks() { if (blockRel > 0.0 && (!blkReady || blkT != st.T)) BuildBlocks(); }   // builds the block structure before the first step; allocates, so call it off the audio thread
@@ -458,7 +458,7 @@ template <class M> struct Voice
   double ClockPeriod() const { return st.T; }
   double tap[16]; int tapCount = 0;   // output taps of the last Step (uniform instants m*T/kTaps inside the step)
   bool lastConverged = true;   // the Newton iteration of the last Step reached its correction limit
-  long newtonIts = 0, newtonFallbacks = 0, stepsDone = 0; long itsByStep[8] = {0,0,0,0,0,0,0,0}, nByStep[8] = {0,0,0,0,0,0,0,0}, itHist[12] = {0,0,0,0,0,0,0,0,0,0,0,0};
+  long long newtonIts = 0, newtonFallbacks = 0, stepsDone = 0; long long itsByStep[8] = {0,0,0,0,0,0,0,0}, nByStep[8] = {0,0,0,0,0,0,0,0}, itHist[12] = {0,0,0,0,0,0,0,0,0,0,0,0};   // 64 bit: a retrigger does not reset them
 
   void RefreshAccent()
   {
@@ -637,7 +637,7 @@ template <class M> struct Voice
     AddProduct<NP, R>(pd1Eff, M::kPXz, zk, pk);
     for (uint32_t m = bitsNow; m; m &= m - 1) { const int k = Ctz(m); const double* c = &M::kPDuc[k * NP]; for (int i = 0; i < NP; ++i) pk[i] += M::kVhigh * c[i]; }
     PF_LAP(1);
-    double f1[NF]; const long itsBefore = newtonIts; bool fCurrent = false, reuse = false; JCache& jcj = jc[j];
+    double f1[NF]; const long long itsBefore = newtonIts; bool fCurrent = false, reuse = false; JCache& jcj = jc[j];
     if (!noSolve)
     {
     const bool blockMode = blockRel > 0.0 && !idleMode;
@@ -760,7 +760,7 @@ template <class M> struct Voice
     }
     PF_LAP(2);
     lastConverged = fCurrent; if (!fCurrent) EvalF(p, f1, nullptr);
-    { long c = newtonIts - itsBefore; if (reuse && (c > 2 || !fCurrent)) jcj.valid = false; itsByStep[stepIdx] += c; ++nByStep[stepIdx]; ++itHist[c < 11 ? c : 11]; }
+    { long long c = newtonIts - itsBefore; if (reuse && (c > 2 || !fCurrent)) jcj.valid = false; itsByStep[stepIdx] += c; ++nByStep[stepIdx]; ++itHist[c < 11 ? c : 11]; }
     tapCount = 0;
     if constexpr (M::kTapN > 0)   // uniformly spaced output taps inside this step (state at the step start, currents at both ends, no state update)
     {
