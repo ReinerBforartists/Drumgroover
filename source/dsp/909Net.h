@@ -154,7 +154,7 @@ class Net {
   // evaluating the device again (SPICE 'bypass'). The linearisation of the old point is stamped (error second order in the voltage change); the charge elements are re-stamped from the recorded (q, c, v) with the present voltages and the
   // present step coefficients / charge history, so the integration stays consistent. Only in transient mode without homotopy (gminExtra 0, opGain 1).
   struct Rec { std::vector<std::pair<int, double>> a, b; struct Chg { int a, b, slot; double q0, c0, v0; int iaa = -1, ibb = -1, iab = -1, iba = -1, ra = -1, rb = -1; };  /* iaa..iba: matrix indices of the four conductance entries, ra / rb: right-hand-side rows (-1: ground node); set by fillChg */ std::vector<Chg> c; double v[8] = {0}; int nv = 0; bool valid = false; };
-  double bypassTol = 0.0; long nBypassed = 0, nEvaluated = 0; bool compactRec = false, recOnly = false, replayOrder = std::getenv("N909_REPLAYORDER") != nullptr;   // recOnly: a device evaluation only records its stamp, the replay writes it (same summation order for evaluated and replayed devices; needed by the partial refactorisation)
+  double bypassTol = 0.0; long long nBypassed = 0, nEvaluated = 0; bool compactRec = false, recOnly = false, replayOrder = std::getenv("N909_REPLAYORDER") != nullptr;   // recOnly: a device evaluation only records its stamp, the replay writes it (same summation order for evaluated and replayed devices; needed by the partial refactorisation)
   // partial refactorisation (needs bypassTol > 0): the columns of A that a re-evaluated device changed are marked; only the LU columns that depend on a marked column (their own or one in their U pattern) are recomputed
   std::vector<double> Alast; bool partialLU = false; std::vector<char> colDirty, dirtyK; long nPartialLU = 0, nColsRefactored = 0, nColsTotal = 0;
   // ---- pre-stamped linear part (off by default): Gmin, resistors and the capacitor companion models are stamped once per step coefficients (matrix) and once per Newton solve (right-hand side, charge history); every iteration copies them
@@ -330,10 +330,10 @@ class Net {
     }
   }
   // ---- full assembly ----
-  long asmEvaluated = 0; bool asmDyn = false; double asmKey[4] = {0, 0, 0, 0}; bool luValid = false; double luKey[4] = {0, 0, 0, 0}; long nLuReused = 0, nChord = 0; int jacReuseMax = 0, luAge = 0, newtonIt = 0; std::vector<double> chordR;   // jacReuseMax > 0: modified Newton, at most that many consecutive solves with a stale factorisation (needs bypassTol > 0)
+  long long asmEvaluated = 0; bool asmDyn = false; double asmKey[4] = {0, 0, 0, 0}; bool luValid = false; double luKey[4] = {0, 0, 0, 0}; long nLuReused = 0, nChord = 0; int jacReuseMax = 0, luAge = 0, newtonIt = 0; std::vector<double> chordR;   // jacReuseMax > 0: modified Newton, at most that many consecutive solves with a stale factorisation (needs bypassTol > 0)
     // bypass: the matrix of this assembly equals the factored one when no device was evaluated and the step coefficients are the same
   void assemble(double tNow) {
-    const long evalBefore = nEvaluated;
+    const long long evalBefore = nEvaluated;
 #ifdef N909_PROFILE
     const auto tpA0 = std::chrono::steady_clock::now();
 #endif
