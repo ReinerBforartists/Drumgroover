@@ -23,26 +23,27 @@
 
 namespace dgg { namespace pcmfast {
 
-constexpr double kDcPeriod = 0.1, kDcNewtonTol = 1e-5, kDcTol = 2e-5; constexpr int kDcSteps = 20;   // DC solve of the idle state: PCM period of the underlying step tables (s), correction limit of a step and largest change between two steps (V), number of steps
+constexpr double kDcTol = 1e-9, kDcDamp = 0.2; constexpr int kDcIts = 40;   // DC solve of the idle state: largest port correction at convergence (V; the slowest states need the ports to this accuracy), largest port correction of one iteration (V), iterations
 constexpr double kChordMaxCorr = 0.2;   // volts: above this correction the next iteration is a full Newton iteration
 // Block-triangular Jacobian (blockRel > 0, hi-hats): at some operating points (a quiet hit after a loud one) the dropped entries matter and the iteration fails step after step. A step that reaches kBlkSwitchIt
 // iterations (or fails) is solved again from its start with the dense Jacobian, and so are the following kBlkDenseSteps steps. Not in the first kBlkStartSteps steps of a hit from rest (about 10 ms).
 constexpr int kBlkSwitchIt = 30, kBlkDenseSteps = 200; constexpr long kBlkStartSteps = 2000;
 // Hi-hats: while the output envelope is below kQuietLevelHat the correction limit is kNewtonTolHatQuiet instead of kNewtonTolHat. With the loose limit alone the quiet tails of hits retriggered on a ringing voice deviate.
 constexpr double kQuietLevelHat = 0.05, kNewtonTolHatQuiet = 3e-3;   // volts of the envelope; volts on the port voltages
+constexpr double kVtPcm = 0.025864917;   // thermal voltage of the PCM voices: the NGSpice reference at its 27 degC (300.15 K)
 constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kNewtonTolCym = 3e-3, kNewtonTolHat = 3e-2, kBlockRelHat = 1e-4, kJReuseHat = 100, kDioMemoHat = 1e-9, kTailRel = 0.0, kTailRelCym = 1e-2, kMidRelCym = 0.12, kEnvDecay = 0.975, kAcAlpha = 0.0031, kAcEndLevel = 1e-3, kAcEndRelCym = 1e-3, kAcEndLevelHat = 2e-7; constexpr int kAcEndPeriods = 400;   // volts on the port voltages; the correction is applied before the test, so the error left is of the order of the square
 
 // Gummel-Poon static currents of one BJT in node orientation: ic = s*cc (leaving the collector node into the device), ib = s*cb, and the 2x2 Jacobian wrt (vbe, vbc)
 struct BjtOut { double ic, ib, d[2][2]; };
 // Approximate evaluation for devices that stay below high injection (cbe/IKF < ~1e-3, checked by the generator) and have either vbc <= 0.1 V (the
 // collector junction carries a negligible current: IS*exp(vbc/Vt) < 5e-12 A) or are evaluated with the exact junction term: no division, no sqrt.
-// BjtFromExp is the algebra with the exponentials supplied: eE = exp(vbe/(NF Vt)) and eL = exp(vbe/(NE Vt)) (both 0 in deep cutoff), eC = exp(vbc/Vt) (read above vbc = vbcOn only).
-inline BjtOut BjtFromExp(const double* P, double vbe, double vbc, double eE, double eL, double eC, double vbcOn = 0.1)
+// BjtFromExp is the algebra with the exponentials supplied: eE = exp(vbe/(NF Vt)) and eL = exp(vbe/(NE Vt)) (both 0 in deep cutoff), eC = exp(vbc/Vt) (read above vbc = 0.1 V only).
+inline BjtOut BjtFromExp(const double* P, double vbe, double vbc, double eE, double eL, double eC)
 {
   const double s = P[0], IS = P[1], ISE = P[8], invNFVt = P[9], invNEVt = P[10], invVAF = P[11], invIKF = P[12], invBF = P[13], invBR = P[14];
   const double cbe = IS * (eE - 1.0), gbe = IS * eE * invNFVt;
   double cbc = -IS, gbc = 0.0;
-  if (vbc > vbcOn) { cbc = IS * (eC - 1.0); gbc = IS * eC * (1.0 / kVt); }
+  if (vbc > 0.1) { cbc = IS * (eC - 1.0); gbc = IS * eC * (1.0 / kVtPcm); }
   double cben = kGmin * vbe, gben = kGmin;   // gmin as in ngspice: on the two leakage branches of the base current only
   if (ISE != 0.0) { cben += ISE * (eL - 1.0); gben += ISE * eL * invNEVt; }
   const double iq1 = 1.0 - vbc * invVAF;                         // 1/q1 (Early effect)
@@ -56,21 +57,21 @@ inline BjtOut BjtFromExp(const double* P, double vbe, double vbc, double eE, dou
   return o;
 }
 
-inline BjtOut BjtEvalFast(const double* P, double vbe, double vbc, double vbcOn = 0.1)
+inline BjtOut BjtEvalFast(const double* P, double vbe, double vbc)
 {
   const double aE = vbe * P[9], aL = vbe * P[10];   // exp(a) < 2.4e-16 for a < -36: the junction is in deep cutoff, the exponential is dropped (change below the rounding of IS)
   const double eE = aE < -36.0 ? 0.0 : std::exp(std::fmin(aE, 80.0));
-  const double eC = vbc > vbcOn ? std::exp(std::fmin(vbc * (1.0 / kVt), 80.0)) : 0.0;
+  const double eC = vbc > 0.1 ? std::exp(std::fmin(vbc * (1.0 / kVtPcm), 80.0)) : 0.0;
   const double eL = P[8] == 0.0 || aL < -36.0 ? 0.0 : std::exp(std::fmin(aL, 80.0));
-  return BjtFromExp(P, vbe, vbc, eE, eL, eC, vbcOn);
+  return BjtFromExp(P, vbe, vbc, eE, eL, eC);
 }
 
-inline BjtOut BjtEval(const double* P, double vbe, double vbc)
+inline BjtOut BjtEval(const double* P, double vbe, double vbc, double vt = kVt)   // vt: kVtPcm for the PCM voices (P[9], P[10] are built with it)
 {
   const double s = P[0], IS = P[1], BR = P[3], ISE = P[8], invNFVt = P[9], invNEVt = P[10], invVAF = P[11], invIKF = P[12], invBF = P[13], invBR = P[14];
-  const double eE = std::exp(std::fmin(vbe * invNFVt, 80.0)), eC = std::exp(std::fmin(vbc * (1.0 / kVt), 80.0));
+  const double eE = std::exp(std::fmin(vbe * invNFVt, 80.0)), eC = std::exp(std::fmin(vbc * (1.0 / vt), 80.0));
   const double cbe = IS * (eE - 1.0), gbe = IS * eE * invNFVt;
-  const double cbc = IS * (eC - 1.0), gbc = IS * eC * (1.0 / kVt);
+  const double cbc = IS * (eC - 1.0), gbc = IS * eC * (1.0 / vt);
   double cben = kGmin * vbe, gben = kGmin;
   if (ISE != 0.0) { const double eL = std::exp(std::fmin(vbe * invNEVt, 80.0)); cben += ISE * (eL - 1.0); gben += ISE * eL * invNEVt; }
   const double q1 = 1.0 / (1.0 - vbc * invVAF), dq1 = q1 * q1 * invVAF;
@@ -88,14 +89,19 @@ inline BjtOut BjtEval(const double* P, double vbe, double vbc)
 
 // Diode with series resistance (Net909 dioJunction / dioRs): current and conductance at the terminal voltage v; vj is the internal junction voltage (warm start, updated).
 // P = {Is, N*Vt, Rs, knee of the breakdown branch}
+inline void DioReverse(const double* P, double vd, double& i, double& g)   // between the breakdown knee and -3 N Vt, as NGSpice computes it: -Is (1 + (3 N Vt / (e vd))^3) plus gmin
+{
+  const double a = 3.0 * P[1] / (2.718281828459045 * vd), a3 = a * a * a; i = -P[0] * (1.0 + a3) + kGmin * vd; g = P[0] * 3.0 * a3 / vd + kGmin;
+}
 inline void DioJunction(const double* P, double vd, double& i, double& g)
 {
-  if (vd > -P[3]) { const double e = std::exp(std::fmin(vd / P[1], 80.0)); i = P[0] * (e - 1.0) + kGmin * vd; g = P[0] * e / P[1] + kGmin; }
+  if (vd < -3.0 * P[1] && vd > -P[3]) DioReverse(P, vd, i, g);
+  else if (vd > -P[3]) { const double e = std::exp(std::fmin(vd / P[1], 80.0)); i = P[0] * (e - 1.0) + kGmin * vd; g = P[0] * e / P[1] + kGmin; }
   else { const double e = std::exp(std::fmin(-(P[3] + vd) / P[1], 80.0)); i = -P[0] * e + kGmin * vd; g = P[0] * e / P[1] + kGmin; }
 }
 inline void DioEval(const double* P, double v, double& vj, double& i, double& g)
 {
-  if (v < -36.0 * P[1] && v > -P[3]) { vj = v; i = -P[0] + kGmin * v; g = kGmin; return; }   // deep reverse bias (exp(-36) < 3e-16, below the breakdown knee): constant saturation current plus gmin, the exponential term is far below gmin
+  if (v < -36.0 * P[1] && v > -P[3]) { vj = v; DioReverse(P, v, i, g); return; }   // deep reverse bias (above the breakdown knee): no iteration, the drop over the series resistance is below 1e-8 V
   if (P[2] <= 0.0) { vj = v; DioJunction(P, v, i, g); return; }
   double ii, gg;
   for (int k = 0; k < 60; ++k)
@@ -336,7 +342,7 @@ template <class M> struct Voice
   static constexpr int R = M::kR, NU = M::kU, NP = M::kPorts, NF = M::kCur, NB = M::kNumBjt, NBITS = M::kBits, IACC = M::kAccentIdx, ND = DioCount<M>::value, NT = TanhCount<M>::value, NR = ResCount<M>::value, NQ = QCount<M>::value, Q0 = 2 * M::kNumBjt + DioCount<M>::value + TanhCount<M>::value + ResCount<M>::value;   // currents: 2 per BJT, then one per diode, then one per op-amp input stage (deviation from the linear gm)
   double resG[NR > 0 ? NR : 1];   // conductances of the pot resistors (run-time parameters; the nominal values are the header's kResG0)
   void SetResG(int m, double g) { if constexpr (NR > 0) { if (!resInit) { for (int i = 0; i < NR; ++i) resG[i] = M::kResG0[i]; resInit = true; } resG[m] = g; } }
-  bool resInit = false, idleMode = false;
+  bool resInit = false;
   mutable double qG[NQ > 0 ? NQ : 1];   // slope of the excess junction charge channels at the last full evaluation
   mutable double tanhG[NT > 0 ? NT : 1];   // slope of the op-amp stage currents at the last full evaluation
   mutable double dp[ND > 0 ? ND : 1][5], dioVj[ND > 0 ? ND : 1], dioG[ND > 0 ? ND : 1];   // diode constants {Is, N Vt, Rs, breakdown knee, critical voltage}, internal junction voltage (warm start), conductance of the last full evaluation
@@ -418,43 +424,21 @@ template <class M> struct Voice
       for (int r = 0; r < n; ++r) F[bOrd[s + r]] = rhs[r];
     }
   }
-  // Step tables whose single step lands on the DC point of the idle circuit (z = Phi z + c + (gaF + gbF) f solved for z once per model type, about 20 ms): Step() on them is a Newton iteration of the DC equations.
-  struct DcTables
+  // Couplings of the currents into the state equations (bw, R x NF) and the port equations (df, NP x NF) of the model, for the DC solve of the idle state; built once per model type.
+  struct DcMatrices
   {
-    PcmSteps<M> t;
-    DcTables()
+    double bw[R * NF], df[NP * NF];
+    DcMatrices()
     {
-      t.Build(kDcPeriod); constexpr int NC = 1 + NU + NF;   // right-hand sides: constant, inputs, currents
-      std::vector<double> A(static_cast<size_t>(R) * R), X(static_cast<size_t>(R) * NC);
-      for (int j = 0; j < M::kSteps; ++j)
-      {
-        double* phi = &t.phi[static_cast<size_t>(j) * R * R]; double* cone = &t.cone[static_cast<size_t>(j) * R]; double* gaF = &t.gaF[static_cast<size_t>(j) * R * NF]; double* gbF = &t.gbF[static_cast<size_t>(j) * R * NF];
-        double* gaU = &t.gaUc[static_cast<size_t>(j) * NU * R]; double* gbU = &t.gbUc[static_cast<size_t>(j) * NU * R]; double* gsU = &t.gsUc[static_cast<size_t>(j) * NU * R]; double* zp = &t.zp[static_cast<size_t>(j) * NP * NF];
-        for (int i = 0; i < R; ++i)
-        {
-          for (int k = 0; k < R; ++k) A[i * R + k] = (i == k ? 1.0 : 0.0) - phi[i * R + k];
-          X[i * NC] = cone[i]; for (int k = 0; k < NU; ++k) X[i * NC + 1 + k] = gsU[k * R + i]; for (int k = 0; k < NF; ++k) X[i * NC + 1 + NU + k] = gaF[i * NF + k] + gbF[i * NF + k];
-        }
-        for (int c = 0; c < R; ++c)   // Gauss-Jordan with partial pivoting: X becomes (I - Phi)^-1 X
-        {
-          int pr = c; for (int i = c + 1; i < R; ++i) if (std::fabs(A[i * R + c]) > std::fabs(A[pr * R + c])) pr = i;
-          if (pr != c) { for (int k = 0; k < R; ++k) std::swap(A[c * R + k], A[pr * R + k]); for (int k = 0; k < NC; ++k) std::swap(X[c * NC + k], X[pr * NC + k]); }
-          const double inv = 1.0 / A[c * R + c]; for (int k = 0; k < R; ++k) A[c * R + k] *= inv; for (int k = 0; k < NC; ++k) X[c * NC + k] *= inv;
-          for (int i = 0; i < R; ++i) { const double f = A[i * R + c]; if (i == c || f == 0.0) continue; for (int k = 0; k < R; ++k) A[i * R + k] -= f * A[c * R + k]; for (int k = 0; k < NC; ++k) X[i * NC + k] -= f * X[c * NC + k]; }
-        }
-        // ports: p = pk + Zp f with the state before the end currents (z - gbF f)
-        for (int i = 0; i < NP; ++i) for (int k = 0; k < NF; ++k) { double a = 0.0; for (int m = 0; m < R; ++m) a += M::kPXz[i * R + m] * (X[m * NC + 1 + NU + k] - gbF[m * NF + k]); zp[i * NF + k] += a; }
-        for (int i = 0; i < R; ++i)
-        {
-          cone[i] = X[i * NC]; for (int k = 0; k < NU; ++k) { gsU[k * R + i] = gbU[k * R + i] = X[i * NC + 1 + k]; gaU[k * R + i] = 0.0; }
-          for (int k = 0; k < NF; ++k) { gbF[i * NF + k] = X[i * NC + 1 + NU + k]; gaF[i * NF + k] = 0.0; } for (int k = 0; k < R; ++k) phi[i * R + k] = 0.0;
-        }
-      }
+      constexpr int NS = M::kNS, NG = M::kNg;
+      std::vector<double> t(static_cast<size_t>(NS) * NF);   // node currents of the currents f: DgSW Tc
+      for (int a = 0; a < NS; ++a) for (int c = 0; c < NF; ++c) { double s = 0.0; for (int k = 0; k < NS; ++k) s += M::kDgSW[a * NS + k] * M::kTc[k * NF + c]; t[a * NF + c] = s; }
+      for (int i = 0; i < NP; ++i) for (int c = 0; c < NF; ++c) { double s = 0.0; for (int a = 0; a < NS; ++a) s += M::kPpA[i * NS + a] * t[a * NF + c]; df[i * NF + c] = s; }
+      for (int i = 0; i < R; ++i) for (int c = 0; c < NF; ++c) { double s = 0.0; for (int k = 0; k < NS; ++k) s += M::kBg[i * NG + NU + k] * M::kTc[k * NF + c]; bw[i * NF + c] = s; }
     }
-    static const DcTables& Get() { static const DcTables inst; return inst; }
+    static const DcMatrices& Get() { static const DcMatrices inst; return inst; }
   };
-  PcmSteps<M> dcSt;   // working copy of the DC tables, swapped in while the idle state is solved
-  void PrepareSettle() { if (dcSt.T == 0.0) dcSt = DcTables::Get().t; }   // not on the audio thread (builds and copies tables)
+  void PrepareSettle() { DcMatrices::Get(); }   // not on the audio thread (builds the matrices)
   PcmSteps<M> st;  // step tables of the PCM period of the hit (built from the nominal period unless SetPeriod() was called)
   // After the end of a hit the circuit is computed on with long step tables (PCM bits held, dense solve), so that a following hit starts from the state of the circuit at its instant. While tracking, st holds the
   // long tables and trk the tables of the hit.
@@ -467,6 +451,7 @@ template <class M> struct Voice
   double ClockPeriod() const { return HitSteps().T; }
   double tap[16]; int tapCount = 0;   // output taps of the last Step (uniform instants m*T/kTaps inside the step)
   bool lastConverged = true;   // the Newton iteration of the last Step reached its correction limit
+  bool dcSolved = true; int dcIts = 0;   // result and iterations of the last DC solve of the idle state
   long long newtonIts = 0, newtonFallbacks = 0, stepsDone = 0; long long itsByStep[M::kSteps > 8 ? M::kSteps : 8] = {}, nByStep[M::kSteps > 8 ? M::kSteps : 8] = {}, itHist[12] = {0,0,0,0,0,0,0,0,0,0,0,0};   // 64 bit: a retrigger does not reset them
 
   void RefreshAccent()
@@ -476,7 +461,7 @@ template <class M> struct Voice
     for (int i = 0; i < NP; ++i) pd1Eff[i] = M::kPD1[i] + acc * M::kPDuc[IACC * NP + i];
     accOut = M::kDo1 + acc * M::kDou[IACC];
   }
-  void LoadDc()   // initial state of the hit: DC solution at the accent, interpolated linearly in the accent grid
+  void LoadDc()   // state of the header: DC solution at the accent (nominal pot resistors), interpolated linearly in the accent grid; idle state of the models without pot resistors, start of the solve of the others
   {
     int g = 0; while (g < M::kAccGrid - 2 && acc >= M::kAccV[g + 1]) ++g;
     double t = (acc - M::kAccV[g]) / (M::kAccV[g + 1] - M::kAccV[g]); t = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
@@ -490,34 +475,34 @@ template <class M> struct Voice
     for (int k = 0; k < NB; ++k)
     {
       const double* q = &M::kBjt[9 * k]; for (int i = 0; i < 9; ++i) bp[k][i] = q[i];
-      bp[k][9] = 1.0 / (q[4] * kVt); bp[k][10] = 1.0 / (q[7] * kVt); bp[k][11] = 1.0 / q[5]; bp[k][12] = 1.0 / q[6]; bp[k][13] = 1.0 / q[2]; bp[k][14] = 1.0 / q[3]; bp[k][15] = kVt * std::log(kVt / (1.4142135623730951 * q[1]));   // [15]: critical junction voltage (limiting)
+      bp[k][9] = 1.0 / (q[4] * kVtPcm); bp[k][10] = 1.0 / (q[7] * kVtPcm); bp[k][11] = 1.0 / q[5]; bp[k][12] = 1.0 / q[6]; bp[k][13] = 1.0 / q[2]; bp[k][14] = 1.0 / q[3]; bp[k][15] = kVtPcm * std::log(kVtPcm / (1.4142135623730951 * q[1]));   // [15]: critical junction voltage (limiting)
     }
     if constexpr (NR > 0) { if (!resInit) { for (int m = 0; m < NR; ++m) resG[m] = M::kResG0[m]; resInit = true; } }
     if constexpr (ND > 0)
       for (int m = 0; m < ND; ++m)
       {
-        const double* q = &M::kDio[5 * m]; const double nvt = q[1] * kVt;
+        const double* q = &M::kDio[5 * m]; const double nvt = q[1] * kVtPcm;
         dp[m][0] = q[0]; dp[m][1] = nvt; dp[m][2] = q[2]; dp[m][3] = q[3] > 1e20 ? 1e30 : q[3] - nvt * std::log(std::fmax(q[4] / q[0], 1.0)); dp[m][4] = nvt * std::log(nvt / (1.4142135623730951 * q[0]));
         dioVj[m] = p[M::kPortD[m]]; dioG[m] = 0.0;
       }
     for (int i = 0; i < NU; ++i) u0[i] = M::kU0[i];
     bitsPrev = 0; for (int i = 0; i < NBITS; ++i) if (M::kU0[i] > 0.5 * M::kVhigh) bitsPrev |= (1u << i);
-    if constexpr (NR > 0) { bool moved = false; for (int m = 0; m < NR; ++m) if (std::fabs(resG[m] - M::kResG0[m]) > 1e-6 * M::kResG0[m]) moved = true; if (moved && !LoadSettled()) { SettleResistors(); StoreSettled(); } }
+    if constexpr (NR > 0) { if (!LoadSettled()) { SettleResistors(); StoreSettled(); } }
     EvalF(p, f0, nullptr); lastOut = OutputNow(); period = 0; stepIdx = 0; layout = 0; newtonIts = 0; stepsDone = 0; outDc = OutputNow(); env = 0.0; peak = 1e-12; acLow = outDc; acEnv = 0.0; acPeak = 0.0; quietPeriods = 0; finished = false;
     for (int i = 0; i < 4; ++i) periodsByLayout[i] = 0;
     for (auto& c : jc) c.valid = false;   // a new hit starts with fresh Jacobians
     denseSteps = 0;
     if constexpr (ND > 0) for (int m = 0; m < ND; ++m) dioMemoOk[m] = false;
   }
-  // The idle states of the last kSettled combinations of accent, pot resistors and PCM period: a later hit from rest with the same combination takes its state from here instead of solving it again.
+  // The idle states of the last kSettled combinations of accent and pot resistors: a later hit from rest with the same combination takes its state from here instead of solving it again.
   static constexpr int kSettled = NR > 0 ? 16 : 1;   // one per accent level of the plugin and a second pot position
-  struct Settled { double acc, T, g[NR > 0 ? NR : 1], z[R], p[NP], vj[ND > 0 ? ND : 1]; };
+  struct Settled { double acc, g[NR > 0 ? NR : 1], z[R], p[NP], vj[ND > 0 ? ND : 1]; };
   Settled settled[kSettled]; int settledCount = 0, settledNext = 0;
   bool LoadSettled()
   {
     for (int k = 0; k < settledCount; ++k)
     {
-      const Settled& s = settled[k]; if (s.acc != acc || s.T != st.T) continue;
+      const Settled& s = settled[k]; if (s.acc != acc) continue;
       bool same = true; for (int m = 0; m < NR; ++m) if (s.g[m] != resG[m]) same = false;
       if (!same) continue;
       std::memcpy(z, s.z, sizeof z); std::memcpy(p, s.p, sizeof p);
@@ -529,27 +514,65 @@ template <class M> struct Voice
   void StoreSettled()
   {
     Settled& s = settled[settledNext]; settledNext = (settledNext + 1) % kSettled; if (settledCount < kSettled) ++settledCount;
-    s.acc = acc; s.T = st.T; for (int m = 0; m < NR; ++m) s.g[m] = resG[m];
+    s.acc = acc; for (int m = 0; m < NR; ++m) s.g[m] = resG[m];
     std::memcpy(s.z, z, sizeof z); std::memcpy(s.p, p, sizeof p);
     if constexpr (ND > 0) std::memcpy(s.vj, dioVj, sizeof dioVj);
   }
-  // Idle state for pot resistors away from their nominal values (the DC tables of the header are for the nominal ones): the DC point of the idle circuit (bits at their initial values, no trigger) at the
-  // present resistors, solved by Newton from the nominal one on the DC step tables (on the audio thread, shorter than a host block). Without convergence the nominal state stays.
+  // Idle state of a model with pot resistors: the DC point of its own equations at rest (bits at their initial values, no trigger) at the present resistors, 0 = A z + Bg (u, Tc f(p), 1) and
+  // p = PXz z + PD1 + PDuc u + df f(p), solved by Newton for state z and port voltages p together, starting at the state of the header (nominal resistors; on the audio thread).
+  // Nothing is eliminated: the slow states (isolated nodes of the circuit, balanced by gmin leakage only) are fixed by their own equations through the port voltages, which a division by their
+  // eigenvalue cannot resolve. The rows differ by many orders of magnitude and are scaled to their largest entry. Without convergence the state of the header stays.
   void SettleResistors()
   {
     if constexpr (NR > 0)
     {
-      PrepareSettle();
-      const double tol = newtonTol, memo = dioMemoThr; newtonTol = kDcNewtonTol; dioMemoThr = 0.0; idleMode = true; std::swap(st, dcSt); RefreshAccent(); EvalF(p, f0, nullptr);
+      constexpr int N = R + NP, NG = M::kNg;
+      const DcMatrices& dc = DcMatrices::Get();
+      const double memo = dioMemoThr; dioMemoThr = 0.0;
+      double u[NU]; for (int i = 0; i < NU; ++i) u[i] = i == IACC ? acc : (((bitsPrev >> i) & 1u) ? M::kVhigh : 0.0);
+      double x[N]; for (int i = 0; i < R; ++i) x[i] = z[i]; for (int i = 0; i < NP; ++i) x[R + i] = p[i];
       bool ok = false;
-      for (int k = 0; k < kDcSteps && !ok; ++k)
+      for (int it = 0; it < kDcIts && !ok; ++it)
       {
-        double q[NP]; std::memcpy(q, p, sizeof q); stepIdx = 0; Step();
-        double mx = 0.0; for (int i = 0; i < NP; ++i) mx = std::fmax(mx, std::fabs(p[i] - q[i]));
-        ok = k > 0 && lastConverged && mx < kDcTol;
+        double f[NF], jf[NB][4]; EvalF(x + R, f, jf);
+        double J[N][N] = {}, b[N];
+        for (int i = 0; i < R; ++i)
+        {
+          double s = M::kBg[i * NG + NG - 1]; for (int k = 0; k < R; ++k) { s += M::kA[i * R + k] * x[k]; J[i][k] = M::kA[i * R + k]; }
+          for (int k = 0; k < NU; ++k) s += M::kBg[i * NG + k] * u[k]; for (int c = 0; c < NF; ++c) s += dc.bw[i * NF + c] * f[c]; b[i] = -s;
+        }
+        for (int i = 0; i < NP; ++i)
+        {
+          double s = M::kPD1[i]; for (int k = 0; k < R; ++k) { s += M::kPXz[i * R + k] * x[k]; J[R + i][k] = -M::kPXz[i * R + k]; }
+          for (int k = 0; k < NU; ++k) s += M::kPDuc[k * NP + i] * u[k]; for (int c = 0; c < NF; ++c) s += dc.df[i * NF + c] * f[c]; b[R + i] = s - x[R + i]; J[R + i][R + i] = 1.0;
+        }
+        auto slope = [&](int c, int q, double g) { for (int i = 0; i < R; ++i) J[i][R + q] += dc.bw[i * NF + c] * g; for (int i = 0; i < NP; ++i) J[R + i][R + q] -= dc.df[i * NF + c] * g; };   // current c depends on port q
+        for (int k = 0; k < NB; ++k) for (int r = 0; r < 2; ++r) { slope(2 * k + r, M::kPortBe[k], jf[k][2 * r]); if (M::kPortBc[k] >= 0) slope(2 * k + r, M::kPortBc[k], jf[k][2 * r + 1]); }
+        if constexpr (ND > 0) for (int m = 0; m < ND; ++m) slope(2 * NB + m, M::kPortD[m], dioG[m]);
+        if constexpr (NT > 0) for (int m = 0; m < NT; ++m) slope(2 * NB + ND + m, M::kPortT[m], tanhG[m]);
+        for (int m = 0; m < NR; ++m) slope(2 * NB + ND + NT + m, M::kPortR[m], resG[m]);
+        if constexpr (NQ > 0) for (int m = 0; m < NQ; ++m) slope(Q0 + m, M::kQPort[m], qG[m]);
+        for (int i = 0; i < N; ++i) { double s = 0.0; for (int k = 0; k < N; ++k) s = std::fmax(s, std::fabs(J[i][k])); if (s > 0.0) { const double inv = 1.0 / s; for (int k = 0; k < N; ++k) J[i][k] *= inv; b[i] *= inv; } }
+        bool singular = false;
+        for (int c = 0; c < N && !singular; ++c)   // elimination with partial pivoting
+        {
+          int pr = c; for (int r = c + 1; r < N; ++r) if (std::fabs(J[r][c]) > std::fabs(J[pr][c])) pr = r;
+          if (pr != c) { for (int k = c; k < N; ++k) std::swap(J[c][k], J[pr][k]); std::swap(b[c], b[pr]); }
+          if (!(std::fabs(J[c][c]) > 0.0)) { singular = true; break; }
+          const double inv = 1.0 / J[c][c];
+          for (int r = c + 1; r < N; ++r) { const double m = J[r][c] * inv; if (m == 0.0) continue; for (int k = c + 1; k < N; ++k) J[r][k] -= m * J[c][k]; b[r] -= m * b[c]; }
+        }
+        if (singular) break;
+        for (int c = N - 1; c >= 0; --c) { double s = b[c]; for (int k = c + 1; k < N; ++k) s -= J[c][k] * b[k]; b[c] = s / J[c][c]; }
+        double mx = 0.0, sum = 0.0; for (int i = 0; i < N; ++i) sum += std::fabs(b[i]); for (int i = 0; i < NP; ++i) mx = std::fmax(mx, std::fabs(b[R + i]));
+        if (!(sum < 1e30)) break;
+        const double sc = mx > kDcDamp ? kDcDamp / mx : 1.0; for (int i = 0; i < N; ++i) x[i] += sc * b[i];
+        ok = mx < kDcTol; dcIts = it + 1;
       }
-      std::swap(st, dcSt); RefreshAccent(); idleMode = false; newtonTol = tol; dioMemoThr = memo;
-      if (!ok) LoadDc();
+      dioMemoThr = memo;
+      if (ok) { for (int i = 0; i < R; ++i) z[i] = x[i]; for (int i = 0; i < NP; ++i) p[i] = x[R + i]; }
+      else LoadDc();
+      dcSolved = ok;
     }
   }
   // restart of the PCM sequence while the analog state continues (the digital counters are reset, the capacitors keep their charge)
@@ -560,14 +583,13 @@ template <class M> struct Voice
   // currents f (and the block Jacobians when jf != nullptr) at the port voltages q
   void EvalF(const double* q, double* f, double (*jf)[4]) const
   {
-    const double vbcOn = idleMode ? 0.0 : 0.1;   // DC solve: the junction current of the fast form starts at 0 V, where it is zero (a floating node has no DC point across its step at 0.1 V)
 #if defined(PCMFAST_DOT_AVX2) && !defined(PCMFAST_EXACT_BJT)
     constexpr int NX = (3 * NB + 3) / 4 * 4;   // the three exponentials of all devices at once (those a device does not need are computed and ignored)
     double xa[NX] = {}, xe[NX];
     for (int k = 0; k < NB; ++k)
     {
       const double vbe = q[M::kPortBe[k]], vbc = M::kPortBc[k] >= 0 ? q[M::kPortBc[k]] : vbcFix[k];
-      xa[3 * k] = vbe * bp[k][9]; xa[3 * k + 1] = vbe * bp[k][10]; xa[3 * k + 2] = vbc * (1.0 / kVt);
+      xa[3 * k] = vbe * bp[k][9]; xa[3 * k + 1] = vbe * bp[k][10]; xa[3 * k + 2] = vbc * (1.0 / kVtPcm);
     }
     ExpBatch(xa, xe);
 #endif
@@ -575,11 +597,11 @@ template <class M> struct Voice
     {
       const double vbe = q[M::kPortBe[k]], vbc = M::kPortBc[k] >= 0 ? q[M::kPortBc[k]] : vbcFix[k];
 #if defined(PCMFAST_DOT_AVX2) && !defined(PCMFAST_EXACT_BJT)
-      const BjtOut o = BjtFromExp(bp[k], vbe, vbc, xa[3 * k] < -36.0 ? 0.0 : xe[3 * k], xa[3 * k + 1] < -36.0 ? 0.0 : xe[3 * k + 1], xe[3 * k + 2], vbcOn);   // deep cutoff as in BjtEvalFast
+      const BjtOut o = BjtFromExp(bp[k], vbe, vbc, xa[3 * k] < -36.0 ? 0.0 : xe[3 * k], xa[3 * k + 1] < -36.0 ? 0.0 : xe[3 * k + 1], xe[3 * k + 2]);   // deep cutoff as in BjtEvalFast
 #elif defined(PCMFAST_EXACT_BJT)
-      const BjtOut o = BjtEval(bp[k], vbe, vbc);
+      const BjtOut o = BjtEval(bp[k], vbe, vbc, kVtPcm);
 #else
-      const BjtOut o = BjtEvalFast(bp[k], vbe, vbc, vbcOn);
+      const BjtOut o = BjtEvalFast(bp[k], vbe, vbc);
 #endif
       if (M::kHasLinPart)   // semi-linear devices: the linear part about the DC point is in the linear model, only the remainder is nonlinear
       {
@@ -626,7 +648,7 @@ template <class M> struct Voice
     PF_T0;
     if (stepIdx == 0)   // new PCM period: new bits at the end of the ramp; the layout of the period follows the signal level (the first period of a hit, with the gate edge, always runs the full layout)
     {
-      bitsNow = (idleMode || tracking) ? bitsPrev : ((period < M::kPeriods) ? M::kPcm[period] : M::kPcm[M::kPeriods - 1]);
+      bitsNow = tracking ? bitsPrev : ((period < M::kPeriods) ? M::kPcm[period] : M::kPcm[M::kPeriods - 1]);
       const bool coarse = M::kLayouts > 1 && period > 0 && !((bitsNow ^ bitsPrev) & GateMask<M>::value);   // layout 0: full; the last one: tail; a third one in between (below kMidRelCym of the loudest envelope)
       layout = coarse && env < tailRel * peak ? M::kLayouts - 1 : (M::kLayouts > 2 && coarse && env < kMidRelCym * peak ? 1 : 0); ++periodsByLayout[layout];
     }
@@ -650,8 +672,8 @@ template <class M> struct Voice
     double f1[NF]; const long long itsBefore = newtonIts; bool fCurrent = false, reuse = false; JCache& jcj = jc[j];
     if (!noSolve)
     {
-    const bool blockMode = blockRel > 0.0 && !idleMode && !tracking;
-    const double tol = !idleMode && env < quietLevel ? quietTol : newtonTol;   // correction limit of this step
+    const bool blockMode = blockRel > 0.0 && !tracking;
+    const double tol = env < quietLevel ? quietTol : newtonTol;   // correction limit of this step
     double J[NP][NP]; int piv[NP]; double jf[NB][4]; bool luOk = false; double lastMx = 0.0; bool denseLu = true; bool useBlk = blockMode && denseSteps == 0;
     if (denseSteps > 0) --denseSteps;
     double pStart[NP]; for (int i = 0; i < NP; ++i) pStart[i] = p[i];
@@ -735,9 +757,9 @@ template <class M> struct Voice
         {
           const int idx = pt == 0 ? M::kPortBe[k] : M::kPortBc[k]; if (idx < 0) continue;
           const double vold = p[idx], vnew = vold + F[idx];
-          if (vnew > bp[k][15] && std::fabs(vnew - vold) > 2.0 * kVt)
+          if (vnew > bp[k][15] && std::fabs(vnew - vold) > 2.0 * kVtPcm)
           {
-            double vl; if (vold > 0.0) { const double arg = 1.0 + (vnew - vold) / kVt; vl = arg > 0.0 ? vold + kVt * std::log(arg) : bp[k][15]; } else vl = kVt * std::log(vnew / kVt);
+            double vl; if (vold > 0.0) { const double arg = 1.0 + (vnew - vold) / kVtPcm; vl = arg > 0.0 ? vold + kVtPcm * std::log(arg) : bp[k][15]; } else vl = kVtPcm * std::log(vnew / kVtPcm);
             F[idx] = vl - vold; limited = true;
           }
         }
