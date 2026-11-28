@@ -30,7 +30,7 @@ constexpr double kChordMaxCorr = 0.2;   // volts: above this correction the next
 constexpr int kBlkSwitchIt = 30, kBlkDenseSteps = 200; constexpr long kBlkStartSteps = 2000;
 // Hi-hats: while the output envelope is below kQuietLevelHat the correction limit is kNewtonTolHatQuiet instead of kNewtonTolHat. With the loose limit alone the quiet tails of hits retriggered on a ringing voice deviate.
 constexpr double kQuietLevelHat = 0.05, kNewtonTolHatQuiet = 3e-3;   // volts of the envelope; volts on the port voltages
-constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kNewtonTolCym = 3e-3, kNewtonTolHat = 3e-2, kBlockRelHat = 1e-4, kJReuseHat = 100, kDioMemoHat = 1e-9, kTailRel = 0.0, kTailRelCym = 1e-2, kEnvDecay = 0.975, kAcAlpha = 0.0031, kAcEndLevel = 1e-3, kAcEndLevelHat = 2e-7; constexpr int kAcEndPeriods = 400;   // volts on the port voltages; the correction is applied before the test, so the error left is of the order of the square
+constexpr double kVt = 0.025852, kGmin = 1e-12, kNewtonTol = 1e-3, kNewtonTolCym = 3e-3, kNewtonTolHat = 3e-2, kBlockRelHat = 1e-4, kJReuseHat = 100, kDioMemoHat = 1e-9, kTailRel = 0.0, kTailRelCym = 1e-2, kMidRelCym = 0.12, kEnvDecay = 0.975, kAcAlpha = 0.0031, kAcEndLevel = 1e-3, kAcEndRelCym = 1e-3, kAcEndLevelHat = 2e-7; constexpr int kAcEndPeriods = 400;   // volts on the port voltages; the correction is applied before the test, so the error left is of the order of the square
 
 // Gummel-Poon static currents of one BJT in node orientation: ic = s*cc (leaving the collector node into the device), ib = s*cb, and the 2x2 Jacobian wrt (vbe, vbc)
 struct BjtOut { double ic, ib, d[2][2]; };
@@ -40,18 +40,18 @@ struct BjtOut { double ic, ib, d[2][2]; };
 inline BjtOut BjtFromExp(const double* P, double vbe, double vbc, double eE, double eL, double eC, double vbcOn = 0.1)
 {
   const double s = P[0], IS = P[1], ISE = P[8], invNFVt = P[9], invNEVt = P[10], invVAF = P[11], invIKF = P[12], invBF = P[13], invBR = P[14];
-  const double cbe = IS * (eE - 1.0) + kGmin * vbe, gbe = IS * eE * invNFVt + kGmin;
-  double cbc = kGmin * vbc, gbc = kGmin;
-  if (vbc > vbcOn) { cbc = IS * (eC - 1.0) + kGmin * vbc; gbc = IS * eC * (1.0 / kVt) + kGmin; }
-  double cben = 0.0, gben = 0.0;
-  if (ISE != 0.0) { cben = ISE * (eL - 1.0); gben = ISE * eL * invNEVt; }
+  const double cbe = IS * (eE - 1.0), gbe = IS * eE * invNFVt;
+  double cbc = -IS, gbc = 0.0;
+  if (vbc > vbcOn) { cbc = IS * (eC - 1.0); gbc = IS * eC * (1.0 / kVt); }
+  double cben = kGmin * vbe, gben = kGmin;   // gmin as in ngspice: on the two leakage branches of the base current only
+  if (ISE != 0.0) { cben += ISE * (eL - 1.0); gben += ISE * eL * invNEVt; }
   const double iq1 = 1.0 - vbc * invVAF;                         // 1/q1 (Early effect)
   const double q2 = cbe * invIKF, dq2 = gbe * invIKF;
   const double g = 1.0 - q2 + 2.0 * q2 * q2, dg = (-1.0 + 4.0 * q2) * dq2;    // 1/(1 + q2 - q2^2), series in the small q2
   const double iq = iq1 * g, x = cbe - cbc;
-  const double cc = x * iq - cbc * invBR, cb = cbe * invBF + cben + cbc * invBR;
-  const double dccbe = gbe * iq + x * iq1 * dg, dccbc = -gbc * iq - x * (-invVAF) * 0.0 + x * (-invVAF) * g - gbc * invBR;
-  const double dcbbe = gbe * invBF + gben, dcbbc = gbc * invBR;
+  const double cc = x * iq - cbc * invBR - kGmin * vbc, cb = cbe * invBF + cben + cbc * invBR + kGmin * vbc;
+  const double dccbe = gbe * iq + x * iq1 * dg, dccbc = -gbc * iq - x * (-invVAF) * 0.0 + x * (-invVAF) * g - gbc * invBR - kGmin;
+  const double dcbbe = gbe * invBF + gben, dcbbc = gbc * invBR + kGmin;
   BjtOut o; o.ic = s * cc; o.ib = s * cb; o.d[0][0] = s * dccbe; o.d[0][1] = s * dccbc; o.d[1][0] = s * dcbbe; o.d[1][1] = s * dcbbc;
   return o;
 }
@@ -69,18 +69,18 @@ inline BjtOut BjtEval(const double* P, double vbe, double vbc)
 {
   const double s = P[0], IS = P[1], BR = P[3], ISE = P[8], invNFVt = P[9], invNEVt = P[10], invVAF = P[11], invIKF = P[12], invBF = P[13], invBR = P[14];
   const double eE = std::exp(std::fmin(vbe * invNFVt, 80.0)), eC = std::exp(std::fmin(vbc * (1.0 / kVt), 80.0));
-  const double cbe = IS * (eE - 1.0) + kGmin * vbe, gbe = IS * eE * invNFVt + kGmin;
-  const double cbc = IS * (eC - 1.0) + kGmin * vbc, gbc = IS * eC * (1.0 / kVt) + kGmin;
-  double cben = 0.0, gben = 0.0;
-  if (ISE != 0.0) { const double eL = std::exp(std::fmin(vbe * invNEVt, 80.0)); cben = ISE * (eL - 1.0); gben = ISE * eL * invNEVt; }
+  const double cbe = IS * (eE - 1.0), gbe = IS * eE * invNFVt;
+  const double cbc = IS * (eC - 1.0), gbc = IS * eC * (1.0 / kVt);
+  double cben = kGmin * vbe, gben = kGmin;
+  if (ISE != 0.0) { const double eL = std::exp(std::fmin(vbe * invNEVt, 80.0)); cben += ISE * (eL - 1.0); gben += ISE * eL * invNEVt; }
   const double q1 = 1.0 / (1.0 - vbc * invVAF), dq1 = q1 * q1 * invVAF;
   const double q2 = cbe * invIKF, arg = std::fmax(0.0, 1.0 + 4.0 * q2), sq = std::sqrt(arg), qb = q1 * (1.0 + sq) * 0.5;
   const double dsqbe = arg > 0.0 ? (2.0 * gbe * invIKF) / std::fmax(sq, 1e-12) : 0.0;
   const double dqbe = q1 * 0.5 * dsqbe, dqbc = dq1 * (1.0 + sq) * 0.5;
   const double iq = 1.0 / qb, x = cbe - cbc;
-  const double cc = x * iq - cbc * invBR, cb = cbe * invBF + cben + cbc * invBR;
-  const double dccbe = gbe * iq - x * iq * iq * dqbe, dccbc = -gbc * iq - x * iq * iq * dqbc - gbc * invBR;
-  const double dcbbe = gbe * invBF + gben, dcbbc = gbc * invBR;
+  const double cc = x * iq - cbc * invBR - kGmin * vbc, cb = cbe * invBF + cben + cbc * invBR + kGmin * vbc;
+  const double dccbe = gbe * iq - x * iq * iq * dqbe, dccbc = -gbc * iq - x * iq * iq * dqbc - gbc * invBR - kGmin;
+  const double dcbbe = gbe * invBF + gben, dcbbc = gbc * invBR + kGmin;
   BjtOut o; o.ic = s * cc; o.ib = s * cb; o.d[0][0] = s * dccbe; o.d[0][1] = s * dccbc; o.d[1][0] = s * dcbbe; o.d[1][1] = s * dcbbc;
   (void)BR;
   return o;
@@ -125,6 +125,8 @@ inline void QCharge(const double* P, double v, double& dq, double& dc)
 }
 
 // Cubic Hermite table of the excess-charge channels (HH-K10): per channel dq(v) and its slope dc(v) on a uniform grid; dc is the derivative of the interpolating polynomial. Outside the grid the exact function is used.
+template<class M, class = void> struct GateMask { static constexpr uint32_t value = 0; };   // the period in which the mute gate switches runs the full layout
+template<class M> struct GateMask<M, std::void_t<decltype(M::kGateBit)>> { static constexpr uint32_t value = 1u << M::kGateBit; };
 template <class M> struct QTable
 {
   static constexpr double kV0 = -20.0, kV1 = 1.2, kH = 0.005; static constexpr int kN = static_cast<int>((kV1 - kV0) / kH + 0.5) + 1;
@@ -343,9 +345,9 @@ template <class M> struct Voice
     // acc: accent voltage of the hit (run-time input)
   double bp[NB][16];   // BJT parameters with precomputed reciprocals (BjtEval)
   int period = 0, stepIdx = 0, layout = 0; uint32_t bitsNow = 0, bitsPrev = 0;   // stepIdx counts within the layout of the current period
-  double acLow = 0.0, acEnv = 0.0, acPeak = 0.0; long quietPeriods = 0; bool finished = false;   // audio end: 20 Hz high-passed output envelope below acEndLevel for acEndPeriods periods after its peak
+  double acLow = 0.0, acEnv = 0.0, acPeak = 0.0; long quietPeriods = 0; bool finished = false;   // audio end: 20 Hz high-passed output envelope below the end level for kAcEndPeriods periods after its peak (acEndRel > 0: only after the PCM sequence, level = min(acEndLevel, acEndRel * peak))
   double lastOut = 0.0, lastH = 0.0, outDc = 0.0, env = 0.0, peak = 1e-12;   // last step length, DC output, level envelope and its maximum (layout choice)
-  long long periodsByLayout[4] = {0, 0, 0, 0}; double tailRel = kTailRel, newtonTol = kNewtonTol, acEndLevel = kAcEndLevel; int noSolve = 0;   // noSolve: timing probe only (no nonlinear solve); tailRel: switch to the cheaper layout below this fraction of the loudest envelope
+  long long periodsByLayout[4] = {0, 0, 0, 0}; double tailRel = kTailRel, newtonTol = kNewtonTol, acEndLevel = kAcEndLevel, acEndRel = 0.0; int noSolve = 0;   // noSolve: timing probe only (no nonlinear solve); tailRel: switch to the cheaper layout below this fraction of the loudest envelope
   double prof[6] = {0, 0, 0, 0, 0, 0};
   // Block-triangular factorization of the Newton Jacobian: the port graph (row i depends on port c where a current with a Zp entry above blockRel*max|Zp| depends on c) is split into
   // strongly connected blocks ordered so that a block depends only on earlier blocks; entries outside the structure are dropped from the Jacobian (the residual stays exact). blockRel = 0: dense LU.
@@ -454,11 +456,18 @@ template <class M> struct Voice
   PcmSteps<M> dcSt;   // working copy of the DC tables, swapped in while the idle state is solved
   void PrepareSettle() { if (dcSt.T == 0.0) dcSt = DcTables::Get().t; }   // not on the audio thread (builds and copies tables)
   PcmSteps<M> st;  // step tables of the PCM period of the hit (built from the nominal period unless SetPeriod() was called)
-  void SetPeriod(double period) { st.Build(period); }
-  double ClockPeriod() const { return st.T; }
+  // After the end of a hit the circuit is computed on with long step tables (PCM bits held, dense solve), so that a following hit starts from the state of the circuit at its instant. While tracking, st holds the
+  // long tables and trk the tables of the hit.
+  PcmSteps<M> trk; bool tracking = false;
+  void PrepareTrack(double period) { if (!tracking && trk.T != period) trk.Build(period); }   // not on the audio thread
+  void BeginTrack() { if (tracking) return; std::swap(st, trk); tracking = true; stepIdx = 0; RefreshAccent(); }
+  void EndTrack() { if (!tracking) return; std::swap(st, trk); tracking = false; stepIdx = 0; RefreshAccent(); }
+  const PcmSteps<M>& HitSteps() const { return tracking ? trk : st; }
+  void SetPeriod(double period) { (tracking ? trk : st).Build(period); }
+  double ClockPeriod() const { return HitSteps().T; }
   double tap[16]; int tapCount = 0;   // output taps of the last Step (uniform instants m*T/kTaps inside the step)
   bool lastConverged = true;   // the Newton iteration of the last Step reached its correction limit
-  long long newtonIts = 0, newtonFallbacks = 0, stepsDone = 0; long long itsByStep[8] = {0,0,0,0,0,0,0,0}, nByStep[8] = {0,0,0,0,0,0,0,0}, itHist[12] = {0,0,0,0,0,0,0,0,0,0,0,0};   // 64 bit: a retrigger does not reset them
+  long long newtonIts = 0, newtonFallbacks = 0, stepsDone = 0; long long itsByStep[M::kSteps > 8 ? M::kSteps : 8] = {}, nByStep[M::kSteps > 8 ? M::kSteps : 8] = {}, itHist[12] = {0,0,0,0,0,0,0,0,0,0,0,0};   // 64 bit: a retrigger does not reset them
 
   void RefreshAccent()
   {
@@ -477,7 +486,7 @@ template <class M> struct Voice
   }
   void Reset()
   {
-    RefreshAccent(); LoadDc();
+    EndTrack(); RefreshAccent(); LoadDc();
     for (int k = 0; k < NB; ++k)
     {
       const double* q = &M::kBjt[9 * k]; for (int i = 0; i < 9; ++i) bp[k][i] = q[i];
@@ -615,10 +624,11 @@ template <class M> struct Voice
   double Step()
   {
     PF_T0;
-    if (stepIdx == 0)   // new PCM period: new bits at the end of the ramp; the layout of the period follows the signal level
+    if (stepIdx == 0)   // new PCM period: new bits at the end of the ramp; the layout of the period follows the signal level (the first period of a hit, with the gate edge, always runs the full layout)
     {
-      bitsNow = idleMode ? bitsPrev : ((period < M::kPeriods) ? M::kPcm[period] : M::kPcm[M::kPeriods - 1]);
-      layout = (M::kLayouts > 1 && env < tailRel * peak) ? 1 : 0; ++periodsByLayout[layout];
+      bitsNow = (idleMode || tracking) ? bitsPrev : ((period < M::kPeriods) ? M::kPcm[period] : M::kPcm[M::kPeriods - 1]);
+      const bool coarse = M::kLayouts > 1 && period > 0 && !((bitsNow ^ bitsPrev) & GateMask<M>::value);   // layout 0: full; the last one: tail; a third one in between (below kMidRelCym of the loudest envelope)
+      layout = coarse && env < tailRel * peak ? M::kLayouts - 1 : (M::kLayouts > 2 && coarse && env < kMidRelCym * peak ? 1 : 0); ++periodsByLayout[layout];
     }
     const int j = M::kLayoutFirst[layout] + stepIdx; lastH = st.h[j];
     const double* Phi = &st.phi[static_cast<size_t>(j) * R * R];
@@ -640,7 +650,7 @@ template <class M> struct Voice
     double f1[NF]; const long long itsBefore = newtonIts; bool fCurrent = false, reuse = false; JCache& jcj = jc[j];
     if (!noSolve)
     {
-    const bool blockMode = blockRel > 0.0 && !idleMode;
+    const bool blockMode = blockRel > 0.0 && !idleMode && !tracking;
     const double tol = !idleMode && env < quietLevel ? quietTol : newtonTol;   // correction limit of this step
     double J[NP][NP]; int piv[NP]; double jf[NB][4]; bool luOk = false; double lastMx = 0.0; bool denseLu = true; bool useBlk = blockMode && denseSteps == 0;
     if (denseSteps > 0) --denseSteps;
@@ -789,7 +799,8 @@ template <class M> struct Voice
       stepIdx = 0; ++period;
       const double dev = std::fabs(out - outDc); env = dev > env * kEnvDecay ? dev : env * kEnvDecay; if (env > peak) peak = env;
       acLow += kAcAlpha * (out - acLow); const double ac = std::fabs(out - acLow); acEnv = ac > acEnv * kEnvDecay ? ac : acEnv * kEnvDecay; if (acEnv > acPeak) acPeak = acEnv;
-      if (acPeak > 0.0 && acEnv < acEndLevel && period > M::kPeriods / 2) { if (++quietPeriods >= kAcEndPeriods) finished = true; } else quietPeriods = 0;
+      const bool quiet = acEndRel > 0.0 ? period >= M::kPeriods && acEnv < std::fmin(acEndLevel, acEndRel * acPeak) : acEnv < acEndLevel && period > M::kPeriods / 2;
+      if (acPeak > 0.0 && quiet) { if (++quietPeriods >= kAcEndPeriods) finished = true; } else quietPeriods = 0;
     }
     return out;
   }

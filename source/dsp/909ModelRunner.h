@@ -23,19 +23,19 @@ class PcmModelRunner909 : public ModelRunner909, public LiveSource909
 public:
   bool Run(const RunRequest909& req, std::vector<float>& out) override
   {
-    if (req.voice >= Voice909::kCount || !IsPcmVoice909(req.voice)) return false;   // the PCM voices have one model, the accent is its run-time input
+    if (req.voice >= Voice909::kCount || !IsPcmVoice909(req.voice)) return false;   // the PCM voices have one model and no accent dependence (kPcmAccentInputVolts909)
     SlotBase* slot = SlotFor(req.voice); if (!slot) return false;
-    return slot->Render(req.voice, req.params, req.seconds, req.sampleRateHz, out, req.anchorCode);
+    return slot->Render(req.voice, req.params, req.seconds, req.sampleRateHz, out);
   }
   void Prebuild(Voice909 v, int sampleRateHz) override   // the slot of a PCM voice with its tables, so that the first live hit builds nothing on the audio thread; call from a non-audio thread
   {
     if (SlotBase* s = SlotFor(v)) s->Prebuild(v, sampleRateHz);
   }
   bool Warm(Voice909 v, int, NoisePath909, uint64_t = 0) override { return SlotFor(v) != nullptr; }
-  bool Start(Voice909 v, int accentCode, NoisePath909, uint64_t, int sampleRateHz, double seconds, uint64_t params = 0) override
+  bool Start(Voice909 v, int, NoisePath909, uint64_t, int sampleRateHz, double seconds, uint64_t params = 0) override
   {
     live_ = nullptr; SlotBase* s = SlotFor(v); if (!s) return false;
-    if (!s->Begin(v, params, seconds, sampleRateHz, accentCode)) return false;
+    if (!s->Begin(v, params, seconds, sampleRateHz)) return false;
     live_ = s; return true;
   }
   int Pull(float* out, int n) override
@@ -49,30 +49,29 @@ private:
   struct SlotBase
   {
     virtual ~SlotBase() = default;
-    virtual bool Render(Voice909 v, uint64_t params, double seconds, int fs, std::vector<float>& out, int accentCode) = 0;
-    virtual bool Begin(Voice909 v, uint64_t params, double seconds, int fs, int accentCode) = 0;
+    virtual bool Render(Voice909 v, uint64_t params, double seconds, int fs, std::vector<float>& out) = 0;
+    virtual bool Begin(Voice909 v, uint64_t params, double seconds, int fs) = 0;
     virtual int Pull(float* out, int n) = 0;
     virtual void Prebuild(Voice909, int) {}   // builds what the first hit would build (tables of the model at the sample rate), without starting a hit
   };
 
-  // A PCM voice (Crash, Ride): the reduced model with the ROM replacement inside, run through PcmVoiceHost (host rate decimator, Level = the output pot as an exact gain). The accent code is the accent input of the hit.
+  // A PCM voice (Crash, Ride): the reduced model with the ROM replacement inside, run through PcmVoiceHost (host rate decimator, Level = the output pot as an exact gain). The accent input is the constant kPcmAccentInputVolts909: the velocity has no effect.
   template <class M>
   struct PcmSlot : SlotBase
   {
     pcmfast::PcmVoiceHost<M> host; int hostFs = 0; long want_ = 0; double curPeriod = 0.0;
-    // Hats and Crash: the AVX2 unit (909PcmHatAvx2.cpp) when the CPU supports it, else the baseline host above.
+    // The AVX2 unit (909PcmHatAvx2.cpp) when the CPU supports it, else the baseline host above.
     PcmAvx2909* av = nullptr; bool avTried = false;
     ~PcmSlot() override { delete av; }
     bool UseAvx(Voice909 v)
     {
-      if (v == Voice909::Ri) return false;
-      if (!avTried) { avTried = true; if (LanesAvailable909()) av = v == Voice909::Cr ? CrashAvx2Create909() : HatAvx2Create909(v == Voice909::Ho); }
+      if (!avTried) { avTried = true; if (LanesAvailable909()) av = v == Voice909::Cr ? CrashAvx2Create909() : v == Voice909::Ri ? RideAvx2Create909() : HatAvx2Create909(v == Voice909::Ho); }
       return av != nullptr;
     }
-    void Prepare(Voice909 v, uint64_t params, int fs, int accentCode)
+    void Prepare(Voice909 v, uint64_t params, int fs)
     {
       double p[8]; UnpackPots909(v, params, p);
-      if (UseAvx(v)) { av->Prepare(fs, p[1], p[0], AccentVolts909(accentCode)); return; }
+      if (UseAvx(v)) { av->Prepare(fs, p[1], p[0], kPcmAccentInputVolts909); return; }
       // Crash / Ride: p[1] is the Tune pot (the PCM clock of the voice). Hats: p[1] is the Decay pot, a circuit resistor of the model (VR21 for the Closed Hat, VR23 for the Open Hat), the PCM clock is fixed.
       const bool hat = pcmfast::ResCount<M>::value > 0;
       const double period = hat ? M::kPeriod : M::kPeriod / PcmClockRatio909(p[1], v == Voice909::Ri);
@@ -83,11 +82,11 @@ private:
         const double g21 = v == Voice909::Hh ? 1.0 / (100e3 * x) : 1.0 / (100e3 * xn), g23 = v == Voice909::Ho ? 1.0 / (1e6 * std::pow(x, 2.74)) : 1.0 / (1e6 * std::pow(xn, 2.74));
         host.voice.SetResG(0, g21); host.voice.SetResG(1, g23);
       }
-      host.SetHatMode(hat); host.SetAccent(AccentVolts909(accentCode)); host.SetLevel(p[0]);
+      host.SetHatMode(hat); host.SetAccent(kPcmAccentInputVolts909); host.SetLevel(p[0]);
     }
-    bool Render(Voice909 v, uint64_t params, double seconds, int fs, std::vector<float>& out, int accentCode) override
+    bool Render(Voice909 v, uint64_t params, double seconds, int fs, std::vector<float>& out) override
     {
-      Prepare(v, params, fs, accentCode); Trigger(); out.clear();
+      Prepare(v, params, fs); Trigger(); out.clear();
       const long maxN = static_cast<long>(seconds * fs); float buf[512];
       while (IsActive() && static_cast<long>(out.size()) < maxN)
       {
@@ -96,8 +95,8 @@ private:
       }
       return !out.empty();
     }
-    void Prebuild(Voice909 v, int fs) override { Prepare(v, 0, fs, 127); }
-    bool Begin(Voice909 v, uint64_t params, double seconds, int fs, int accentCode) override { Prepare(v, params, fs, accentCode); Trigger(); want_ = static_cast<long>(seconds * fs); return true; }
+    void Prebuild(Voice909 v, int fs) override { Prepare(v, 0, fs); }
+    bool Begin(Voice909 v, uint64_t params, double seconds, int fs) override { Prepare(v, params, fs); Trigger(); want_ = static_cast<long>(seconds * fs); return true; }
     int Pull(float* out, int n) override
     {
       if (!IsActive() || want_ <= 0) return 0;

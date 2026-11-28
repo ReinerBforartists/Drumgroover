@@ -17,7 +17,7 @@ namespace dgg {
 
 enum class Voice909 : int { Bd = 0, Sd, Lt, Mt, Ht, Hc, Cr, Ri, Hh, Ho, kCount };   // Cr: Crash, Ri: Ride, Hh: Closed Hat, Ho: Open Hat (PCM voices)
 
-// The PCM voices (Crash, Ride) play a ROM replacement through an analog path: the accent is a run-time input of the model, there is no noise source (every variant of a set is the same hit).
+// The PCM voices (hi-hats, Crash, Ride) play a ROM replacement through an analog path: there is no noise source (every variant of a set is the same hit) and their output does not depend on the accent (kPcmAccentInputVolts909).
 inline bool IsPcmVoice909(Voice909 v) { return v == Voice909::Cr || v == Voice909::Ri || v == Voice909::Hh || v == Voice909::Ho; }
 // Length of a rendered hit in seconds (the PCM voices ring until the circuit has settled: this is the cap).
 // Number of variants of a set: the PCM voices have no noise, every variant would be the same hit, so a set has one.
@@ -40,6 +40,12 @@ inline bool VoiceFromName909(const char* s, Voice909& v)
 constexpr int kMaxAccentCode909 = 127;
 inline double AccentVolts909(int code) { return 0.032 * std::clamp(code, 0, kMaxAccentCode909); }
 inline int AccentCode909(double volts) { return std::clamp(static_cast<int>(std::lround(volts / 0.032)), 0, kMaxAccentCode909); }
+
+// PCM voices: accent input of the models. On the Nava board the accent nets of these voices are channels of the 4051 multiplexers without a hold capacitor, selected for 5 us before the trigger; in the NGSpice
+// simulation of that drive the node is open while the voice sounds and the output is the same for every DAC value (references at 0.98 V and 5 V). The velocity therefore has no effect on these voices. The firmware
+// assumes a sample-and-hold on these nets: this contradiction between firmware and schematic is open (tools: CR-06).
+// The models keep the open node behind a 1 Gohm source at this value; its remaining influence on the output is below -85 dB.
+constexpr double kPcmAccentInputVolts909 = 5.0;
 
 // Anchors whose models exist (accent 0.8, 1.6, 2.4, 3.2, 4.064 V as codes 25, 50, 75, 100, 127).
 constexpr int kAnchors909[] = {25, 50, 75, 100, 127};
@@ -68,7 +74,7 @@ inline AccentPlan909 PlanAccent909(Voice909 v, int code)
 {
   AccentPlan909 p;
   code = std::clamp(code, 0, kMaxAccentCode909);
-  if (IsPcmVoice909(v))   // the accent is a run-time input of the model: any code from the lowest anchor up is an exact run
+  if (IsPcmVoice909(v))   // the output of these voices does not depend on the code: every code from the lowest anchor up is an exact run
   {
     if (code >= kAnchors909[0]) { p.kind = AccentKind909::Exact; p.loAnchor = p.hiAnchor = code; }
     return p;

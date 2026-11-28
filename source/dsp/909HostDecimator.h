@@ -19,8 +19,9 @@ class HostDecimator
 public:
   void Init(double fsHost)
   {
-    fsh = fsHost; os = fsHost > 60000.0 ? 2 : 4; ntaps = fsHost > 60000.0 ? 65 : (fsHost > 46000.0 ? 129 : 257); const double beta = fsHost > 60000.0 ? 8.0 : (fsHost > 46000.0 ? 9.0 : 10.0);
-    const double fso = os * fsh, cut = 0.5 * fsh * (fsHost > 60000.0 ? 0.93 : (fsHost > 46000.0 ? 0.93 : 0.95)) / fso;   // cut-off, fraction of the oversampled rate
+    fsh = fsHost; os = fsHost > 60000.0 ? 2 : 4; ntaps = fsHost > 60000.0 ? 65 : (fsHost > 46000.0 ? 129 : 257); const double beta = fsHost > 60000.0 ? 8.0 : (fsHost > 46000.0 ? 8.0 : 9.0);
+    // cut-off, fraction of the oversampled rate; at 44.1 and 48 kHz the response is flat to 20 kHz and what folds back below 20 kHz is attenuated by more than 80 dB
+    const double fso = os * fsh, cut = 0.5 * fsh * (fsHost > 60000.0 ? 0.93 : (fsHost > 46000.0 ? 0.99 : 1.0)) / fso;
     h.assign(ntaps, 0.0); const int mid = (ntaps - 1) / 2; double sum = 0.0;
     for (int n = 0; n < ntaps; ++n)
     {

@@ -1,9 +1,9 @@
 // Host-rate PCM voice (CRASH / RIDE): reduced model + host decimator + parameter inputs.
 // Trigger(): starts a hit at the present position of the output stream (the first rendered sample is the instant of the trigger; the filter look-ahead is paid by
-// simulating the voice ahead of the output, no audible latency). Retrigger while a hit plays restarts the PCM sequence and keeps the analog state.
+// simulating the voice ahead of the output, no audible latency). Retrigger while a hit plays or relaxes restarts the PCM sequence and keeps the analog state.
 // Level (0..1, the output potentiometer in the feedback of the output stage, 0.5 = the reference position) is a gain on the AC-coupled output: out = 2 * level * (y - yIdle).
-// The output is in volts relative to the idle output of the voice at the accent of the hit (the slow DC drift of the circuit is part of the signal); after the voice has ended the
-// remaining offset relaxes exponentially (tau 0.22 s) to zero.
+// The output is in volts relative to the idle output of the voice at its accent input (the slow DC drift of the circuit is part of the signal); after the voice has ended the
+// remaining offset relaxes exponentially (tau 0.22 s) to zero, while the circuit is computed on with long steps (kTrackPeriod) for the state a following hit starts from.
 #pragma once
 #include "909PcmFast.h"
 #include "909HostDecimator.h"
@@ -13,19 +13,19 @@ namespace dgg { namespace pcmfast {
 template <class M> class PcmVoiceHost
 {
 public:
-  void Init(double fsHost) { QTable<M>::Get(); if constexpr (ResCount<M>::value > 0) voice.PrepareSettle(); fs = fsHost; dec.Init(fsHost); if (voice.st.T == 0.0) voice.SetPeriod(M::kPeriod); RecomputeCum(); state = Idle; nOut = 0; }
+  void Init(double fsHost) { QTable<M>::Get(); if constexpr (ResCount<M>::value > 0) voice.PrepareSettle(); fs = fsHost; dec.Init(fsHost); voice.EndTrack(); if (voice.st.T == 0.0) voice.SetPeriod(M::kPeriod); voice.PrepareTrack(kTrackPeriod); RecomputeCum(); state = Idle; nOut = 0; }
   // PCM clock period of the hits (seconds; the nominal M::kPeriod scaled by the Tune pot): not while a hit plays.
   void SetPeriod(double period) { voice.SetPeriod(period); RecomputeCum(); }
   void SetAccent(double a) { accent = a; }                     // volts at the accent input, applied at the next Trigger
   // Hi-hat voices: the circuit is simulated down to a much lower level before the voice ends, and no synthetic relaxation of the output offset follows (kRelaxTau was measured on Crash and Ride only).
-  void SetHatMode(bool hat) { voice.acEndLevel = hat ? kAcEndLevelHat : kAcEndLevel; voice.newtonTol = hat ? kNewtonTolHat : kNewtonTolCym; voice.tailRel = hat ? kTailRel : kTailRelCym; voice.blockRel = hat ? kBlockRelHat : 0.0; voice.jReuse = hat ? kJReuseHat : 0; voice.qTable = hat; voice.dioMemoThr = hat ? kDioMemoHat : 0.0; voice.quietLevel = hat ? kQuietLevelHat : 0.0; voice.quietTol = kNewtonTolHatQuiet; relaxTau = hat ? 0.0 : kRelaxTau; voice.PrepareBlocks(); }
+  void SetHatMode(bool hat) { voice.acEndLevel = hat ? kAcEndLevelHat : kAcEndLevel; voice.acEndRel = hat ? 0.0 : kAcEndRelCym; voice.newtonTol = hat ? kNewtonTolHat : kNewtonTolCym; voice.tailRel = hat ? kTailRel : kTailRelCym; voice.blockRel = hat ? kBlockRelHat : 0.0; voice.jReuse = hat ? kJReuseHat : 0; voice.qTable = true; voice.dioMemoThr = hat ? kDioMemoHat : 0.0; voice.quietLevel = hat ? kQuietLevelHat : 0.0; voice.quietTol = kNewtonTolHatQuiet; relaxTau = hat ? 0.0 : kRelaxTau; voice.PrepareBlocks(); }
   void SetLevel(double lv) { level = lv < 0.001 ? 0.001 : (lv > 1.0 ? 1.0 : lv); }
   bool Active() const { return state != Idle; }
   void Trigger()
   {
     if (state == Playing || state == Fading)   // retrigger: digital restart, analog state continues
     {
-      voice.acc = accent; voice.RefreshAccent(); voice.Retrigger(); state = Playing; tBase = tLast; return;   // the accent of the new hit is applied, the analog state continues
+      voice.EndTrack(); voice.acc = accent; voice.RefreshAccent(); voice.Retrigger(); state = Playing; tBase = tLast; return;   // the accent of the new hit is applied, the analog state continues
     }
     voice.acc = accent; voice.Reset(); yRef = voice.OutputNow(); state = Playing; tBase = nOut / fs; tLast = tBase;
     dec.Restart(tBase); dec.Push(tBase - 5e-5, yRef); dec.Push(tBase - 2.5e-5, yRef); dec.Push(tBase, yRef); tLast = tBase;
@@ -51,24 +51,24 @@ public:
   Voice<M> voice;
 
 private:
-  void RecomputeCum() { for (int l = 0; l < M::kLayouts; ++l) { double c = 0; cum[l][0] = 0; for (int i = 0; i < M::kLayoutN[l]; ++i) { c += voice.st.h[M::kLayoutFirst[l] + i]; cum[l][i + 1] = c; } } }   // end time of each step within the PCM period, per step layout
+  void RecomputeCum() { for (int l = 0; l < M::kLayouts; ++l) { double c = 0; cum[l][0] = 0; for (int i = 0; i < M::kLayoutN[l]; ++i) { c += voice.HitSteps().h[M::kLayoutFirst[l] + i]; cum[l][i + 1] = c; } } }   // end time of each step within the PCM period, per step layout
   enum State { Idle, Playing, Fading };
   void Advance()
   {
     if (state == Playing)
     {
       const int p0 = voice.period, s0 = voice.stepIdx; const double y = voice.Step(); tLast = tBase + p0 * voice.ClockPeriod() + cum[voice.layout][s0 + 1]; dec.Push(tLast, y);
-      if (voice.finished) { state = Fading; tFade = 0.0; flushNodes = 0; yEnd = y; }
+      if (voice.finished) { state = Fading; tFade = 0.0; tFlush = 0.0; yEnd = y; voice.BeginTrack(); }
     }
-    else   // after the hit: the remaining output offset relaxes with the slow time constant of the circuit (0.22 s, measured for CRASH and RIDE); then idle nodes until the filter has flushed
+    else   // after the hit: the remaining output offset relaxes with the slow time constant of the circuit (0.22 s, measured for CRASH and RIDE), then idle nodes until the filter has flushed (kFlushSeconds); the circuit is computed on
     {
-      tLast += kFadeStep; tFade += kFadeStep; const double off = relaxTau > 0.0 ? (yEnd - yRef) * std::exp(-tFade / relaxTau) : 0.0;
+      voice.Step(); tLast += voice.lastH; tFade += voice.lastH; const double off = relaxTau > 0.0 ? (yEnd - yRef) * std::exp(-tFade / relaxTau) : 0.0;
       dec.Push(tLast, yRef + off);
-      if (std::fabs(off) < kOffsetFloor && ++flushNodes > 200) state = Idle;
+      if (std::fabs(off) < kOffsetFloor && (tFlush += voice.lastH) > kFlushSeconds) { state = Idle; voice.EndTrack(); }
     }
   }
-  static constexpr double kFadeStep = 5e-4, kRelaxTau = 0.22, kOffsetFloor = 2e-6;
-  HostDecimator dec; double relaxTau = kRelaxTau, fs = 48000.0, cum[M::kLayouts][9] = {}, accent = 4.064, level = 0.5, yRef = 0.0, yEnd = 0.0, tBase = 0.0, tLast = 0.0; long long nOut = 0; int flushNodes = 0; double tFade = 0.0; State state = Idle;
+  static constexpr double kTrackPeriod = 1e-3, kFlushSeconds = 0.1, kRelaxTau = 0.22, kOffsetFloor = 2e-6;
+  HostDecimator dec; double relaxTau = kRelaxTau, fs = 48000.0, cum[M::kLayouts][M::kSteps + 1] = {}, accent = 4.064, level = 0.5, yRef = 0.0, yEnd = 0.0, tBase = 0.0, tLast = 0.0; long long nOut = 0; double tFade = 0.0, tFlush = 0.0; State state = Idle;
 };
 
 }}  // namespace dgg::pcmfast

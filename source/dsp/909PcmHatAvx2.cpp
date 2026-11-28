@@ -1,4 +1,4 @@
-// PCM voices of the 909 (Closed Hat, Open Hat, Crash) with AVX2/FMA matrix and dot products and BJT exponentials (see PcmHatAvx2.h). This unit is compiled for the baseline instruction set like the rest of the plugin: only the intrinsics in
+// PCM voices of the 909 (Closed Hat, Open Hat, Crash, Ride) with AVX2/FMA matrix and dot products and BJT exponentials (see PcmHatAvx2.h). This unit is compiled for the baseline instruction set like the rest of the plugin: only the intrinsics in
 // pcmfast::Dot / MatVecAdd / ExpBatch are AVX2 code. Do not compile it with /arch:AVX2: the compiler would then emit AVX2 copies of shared library functions (std::max, std::fill, ...), which the linker may use anywhere.
 // Everything it includes lives in the namespace dgg_hat (the macro below), so its copy of PcmFast / PcmVoiceHost is separate from the one of the rest of the plugin.
 #include "909PcmHatAvx2.h"
@@ -17,6 +17,7 @@
 #include "909_hh_pcm.h"
 #include "909_hho_pcm.h"
 #include "909_crash_pcm.h"
+#include "909_ride_pcm.h"
 #include "909PcmTune.h"
 #undef dgg
 
@@ -42,12 +43,13 @@ private:
   dgg_hat::pcmfast::PcmVoiceHost<M> host; int hostFs = 0;
 };
 
-class CrashImpl final : public PcmAvx2909
+template <class M, bool Ride>
+class CymbalImpl final : public PcmAvx2909
 {
 public:
   void Prepare(int fs, double tune, double level, double accentVolts) override
   {
-    const double period = CrashModelA0::kPeriod / dgg_hat::PcmClockRatio909(tune, false);
+    const double period = M::kPeriod / dgg_hat::PcmClockRatio909(tune, Ride);
     if (hostFs != fs || period != curPeriod) { host.Init(static_cast<double>(fs)); hostFs = fs; host.SetPeriod(period); curPeriod = period; }
     host.SetHatMode(false); host.SetAccent(accentVolts); host.SetLevel(level);
   }
@@ -55,7 +57,7 @@ public:
   void Render(float* out, int n) override { host.Render(out, n); }
   bool Active() const override { return host.Active(); }
 private:
-  dgg_hat::pcmfast::PcmVoiceHost<CrashModelA0> host; int hostFs = 0; double curPeriod = 0.0;
+  dgg_hat::pcmfast::PcmVoiceHost<M> host; int hostFs = 0; double curPeriod = 0.0;
 };
 
 }  // namespace
@@ -66,7 +68,8 @@ PcmAvx2909* HatAvx2Create909(bool open)
   return new HatImpl<HhModelA0, false>();
 }
 
-PcmAvx2909* CrashAvx2Create909() { return new CrashImpl(); }
+PcmAvx2909* CrashAvx2Create909() { return new CymbalImpl<CrashModelA0, false>(); }
+PcmAvx2909* RideAvx2Create909() { return new CymbalImpl<RideModelA0, true>(); }
 
 }  // namespace dgg
 #endif
